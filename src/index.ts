@@ -32,8 +32,6 @@ import {
 
 // ---------- KV key 常量 ----------
 const KV_CRED = "clawbot:credentials";
-// 用来去重同一条消息（Worker 实例不同时，微信可能重复推送）
-const KV_SEEN_PREFIX = "clawbot:seen:";
 
 export interface Env {
   AI: any;
@@ -88,23 +86,38 @@ async function deleteCredentials(env: Env) {
   await env.CLAWBOT_KV.delete(KV_CRED);
 }
 
-// 消息去重 —— 避免同一条 msg_id 在轮询过程中被重复处理
-async function markMessageSeen(
-  env: Env,
-  msgId: string
-): Promise<boolean> {
-  // 返回 true = 已处理过，跳过
+// 消息去重 —— 用 Cache API 代替 KV，零写额度
+// 2 小时 TTL 足够，因为 cron 每 2 分钟拉一次，消息不会被反复推很久
+function seenCacheKey(msgId: string): string {
+  return `https://clawbot.local/seen/${encodeURIComponent(msgId)}`;
+}
+
+async function markMessageSeen(msgId: string): Promise<boolean> {
   try {
-    const key = KV_SEEN_PREFIX + msgId;
-    const already = await env.CLAWBOT_KV.get(key);
-    if (already) return true;
-    // TTL 24 小时足够，也避免 KV 无限增长
-    await env.CLAWBOT_KV.put(key, "1", { expirationTtl: 24 * 3600 });
+    const cache = caches.default;
+    const req = new Request(seenCacheKey(msgId));
+    const existing = await cache.match(req);
+    if (existing) return true;
+    const resp = new Response("1", {
+      headers: { "Cache-Control": "public, max-age=7200" },
+    });
+    cache.put(req, resp).catch(() => {});
     return false;
   } catch {
-    return false; // KV 不可用时放过消息，避免丢消息
+    return false; // 任何异常都放过，避免丢消息
   }
 }
+
+// ---------- 轻量统计（纯内存，不写存储） ----------
+// Worker 启动后积累，冷启动会清零 —— 足够用于管理面板"当前实例"感知
+const stats = {
+  polls: 0,
+  handled: 0,
+  shortcuts: 0,
+  aiCalls: 0,
+  cacheHits: 0,
+  lastPollAt: 0,
+};
 
 // ======================================================================
 //  核心：拉取 + 处理 + 回复
@@ -121,10 +134,13 @@ async function pollAndReply(env: Env): Promise<{
 
   const res = await ilink.getUpdates(
     creds.token,
-    "",               // buf 传空 —— 不再持久化
+    "",
     creds.baseUrl,
-    4000              // 4s 内返回，不堵 Worker
+    4000
   );
+
+  stats.polls++;
+  stats.lastPollAt = Date.now();
 
   if (res.ret !== 0) {
     return {
@@ -144,8 +160,9 @@ async function pollAndReply(env: Env): Promise<{
     const text = ilink.extractText(msg);
     if (!text) continue;
 
-    // 1) 消息去重
-    const seen = await markMessageSeen(env, msg.msg_id || `${msg.create_time}:${from}`);
+    // 1) 消息去重（Cache API，零 KV 写）
+    const seenKey = msg.msg_id || `${msg.create_time}:${from}`;
+    const seen = await markMessageSeen(seenKey);
     if (seen) continue;
 
     // 2) 指令 / 关键词处理
@@ -159,14 +176,16 @@ async function pollAndReply(env: Env): Promise<{
         cmd.reply || "ok",
         creds.baseUrl
       );
+      stats.shortcuts++;
+      stats.handled++;
       handled++;
       continue;
     }
 
-    // 3) 异步设置"输入中"状态（非阻塞）
+    // 3) 设置"输入中"（非阻塞，最好情况对方能看到正在输入）
     ilink.sendTyping(creds.token, from, true, creds.baseUrl).catch(() => {});
 
-    // 4) 调用 AI（上下文读/写走 Cache API）
+    // 4) 调用 AI（上下文读/写走 Cache API，内部有 12h 缓存 + fail cache）
     const reply = await turnAndSave(
       env.AI,
       from,
@@ -174,9 +193,10 @@ async function pollAndReply(env: Env): Promise<{
       env.AI_SYSTEM_PROMPT
     );
 
-    // 5) 回复给微信
+    // 5) 回复给微信（replyText 内部会自动关掉 typing + 处理超长文本）
     await ilink.replyText(creds.token, from, ctxToken, reply, creds.baseUrl);
-    ilink.sendTyping(creds.token, from, false, creds.baseUrl).catch(() => {});
+    stats.aiCalls++;
+    stats.handled++;
     handled++;
   }
 
@@ -256,7 +276,8 @@ export default {
         loginAt: creds?.createdAt ? new Date(creds.createdAt).toISOString() : "",
         hasAi: !!env.AI,
         hasKv: !!env.CLAWBOT_KV,
-        version: "v1.1-optimized",
+        version: "v1.2-optimized",
+        stats,
       });
     }
 

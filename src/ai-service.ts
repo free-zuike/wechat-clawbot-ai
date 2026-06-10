@@ -28,12 +28,16 @@ export interface ChatContext {
   updatedAt: number;
 }
 
-// ---------------- 配置 ----------------
+// ---------------- 配置（v1.2 优化版） ----------------
 const DEFAULT_MODEL = "@cf/meta/llama-3-8b-instruct";
-const MAX_TURNS = 12;             // 每用户最多保留 6 轮对话
-const CONTEXT_TTL = 3 * 3600;     // 上下文 TTL 3 小时（与 Cache 一致）
+const MAX_TURNS = 6;               // 每用户保留最近 3 轮 user + 3 轮 assistant
+const MAX_TURN_CHARS = 240;        // 单轮内容字符上限，超过就截断（省 Prompt Token）
+const CONTEXT_TTL = 3 * 3600;      // 上下文 TTL 3 小时
 const REPLY_CACHE_TTL = 12 * 3600; // 简单问题回复缓存 12 小时
-const MAX_TOKENS = 400;           // 控制 AI 输出长度，省 Token
+const AI_FAIL_CACHE_TTL = 30 * 60; // 同一问题 AI 失败 -> 30 分钟内不再调用
+const MAX_TOKENS = 320;            // 控制 AI 输出长度（约 200 中文字，微信一条内搞定）
+const AI_TIMEOUT_MS = 15000;       // AI 调用 15 秒超时，避免 Worker 被卡住
+const HARD_OUTPUT_LIMIT = 700;     // 硬上限 700 字（超过就截断，防止生成超长文本）
 
 // 系统提示词
 const DEFAULT_SYSTEM_PROMPT =
@@ -100,6 +104,26 @@ function formatNow(): string {
 }
 function formatWeekday(): string {
   return "星期" + ["日", "一", "二", "三", "四", "五", "六"][new Date().getDay()];
+}
+
+// 敏感词过滤（极简版，仅拦截明显不当内容，避免 AI 被诱导生成违规文本）
+// 返回 null 表示通过，非空 string 表示命中并直接返回该兜底回复
+const SENSITIVE_PATTERNS: readonly RegExp[] = [
+  /赌博|博彩|赌场|网赌|赌球|百家乐|外围/i,
+  /色情|黄片|裸聊|成人影片|自慰/i,
+  /毒品|大麻|可卡因|海洛因|冰毒|摇头丸/i,
+  /代开发票|代开票|洗钱|黑产|灰色产业/i,
+  /(如何|怎么|教我|告诉我|办法).*(诈骗|黑客|盗取|破解|盗号|入侵|ddos|薅羊毛|刷单)/i,
+];
+
+const BLOCKED_REPLY =
+  "抱歉，我不能帮你处理这类内容 😶。\n如果你有其他问题（写代码 / 写邮件 / 查资料 / 日常聊天），随时问我。";
+
+function checkSensitive(text: string): string | null {
+  const t = text.trim().toLowerCase();
+  if (!t) return null;
+  for (const p of SENSITIVE_PATTERNS) if (p.test(t)) return BLOCKED_REPLY;
+  return null;
 }
 
 // ---------------- 指令处理 ----------------
@@ -177,6 +201,29 @@ function simpleHash(s: string): string {
   return (h >>> 0).toString(16);
 }
 
+function failCacheKey(message: string): string {
+  const clean = message.trim().slice(0, 200).toLowerCase();
+  return `https://clawbot.local/ai-fail/${simpleHash(clean)}`;
+}
+
+// ---------- 上下文管理 ----------
+
+// 单轮内容压缩：超过 MAX_TURN_CHARS 就截断，在末尾加"…"
+function compressTurnContent(s: string): string {
+  if (s.length <= MAX_TURN_CHARS) return s;
+  // 在截断点附近找一个自然断句（换行/句号/逗号/空格）
+  const cut = s.slice(0, MAX_TURN_CHARS);
+  const br = Math.max(
+    cut.lastIndexOf("\n"),
+    cut.lastIndexOf("。"),
+    cut.lastIndexOf("."),
+    cut.lastIndexOf("，"),
+    cut.lastIndexOf(",")
+  );
+  const endAt = br >= MAX_TURN_CHARS - 80 ? br : MAX_TURN_CHARS - 8;
+  return cut.slice(0, endAt).trim() + "…";
+}
+
 export async function loadContext(userId: string): Promise<ChatContext> {
   try {
     const cache = caches.default;
@@ -199,16 +246,20 @@ export async function loadContext(userId: string): Promise<ChatContext> {
 export async function saveContext(ctx: ChatContext): Promise<void> {
   try {
     const cache = caches.default;
+    // 应用 MAX_TURNS + 单轮压缩
     const trimmed: ChatContext = {
       ...ctx,
-      turns: ctx.turns.slice(-MAX_TURNS),
+      turns: ctx.turns
+        .slice(-MAX_TURNS)
+        .map((t) => ({ ...t, content: compressTurnContent(t.content) })),
       updatedAt: Date.now(),
     };
     const resp = new Response(JSON.stringify(trimmed), {
-      headers: { "Cache-Control": `public, max-age=${CONTEXT_TTL}`, "Content-Type": "application/json" },
+      headers: {
+        "Cache-Control": `public, max-age=${CONTEXT_TTL}`,
+        "Content-Type": "application/json",
+      },
     });
-    // Cache.put 不需要 await 完成，不阻塞主流程
-    // 但为了稳妥我们 try/catch + fire-and-forget
     cache.put(new Request(ctxCacheKey(ctx.userId)), resp).catch(() => {});
   } catch {
     // cache 不可用时静默失败，不影响回复
@@ -224,9 +275,7 @@ export async function clearContext(userId: string): Promise<void> {
   }
 }
 
-// ======================================================================
-//  AI 调用（含 Cache API 回复缓存）
-// ======================================================================
+// ---------- AI 调用缓存辅助 ----------
 
 async function tryGetCachedReply(message: string): Promise<string | null> {
   try {
@@ -253,58 +302,134 @@ async function putCachedReply(message: string, reply: string): Promise<void> {
   }
 }
 
+async function checkFailMarker(message: string): Promise<boolean> {
+  try {
+    const cache = caches.default;
+    const r = await cache.match(new Request(failCacheKey(message)));
+    return !!r;
+  } catch {
+    return false;
+  }
+}
+
+function putFailMarker(message: string): void {
+  try {
+    const cache = caches.default;
+    const resp = new Response("1", {
+      headers: { "Cache-Control": `public, max-age=${AI_FAIL_CACHE_TTL}` },
+    });
+    cache.put(new Request(failCacheKey(message)), resp).catch(() => {});
+  } catch {
+    // 静默
+  }
+}
+
+// 在不依赖 Promise.withResolvers 的情况下，给 AI 调用加超时
+function runWithTimeout<T>(p: Promise<T>, ms: number, msg: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(msg)), ms);
+    p.then(
+      (v) => {
+        clearTimeout(timer);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(timer);
+        reject(e);
+      }
+    );
+  });
+}
+
+const FALLBACK_REPLIES = [
+  "抱歉，我刚才脑子转不动了，能换个说法再问一次吗 😊",
+  "哎呀，我刚刚走神了，麻烦你再讲一遍？",
+  "抱歉，我暂时答不上来 😅。换个角度问我试试？",
+];
+function randomFallback(): string {
+  return FALLBACK_REPLIES[Math.floor(Math.random() * FALLBACK_REPLIES.length)];
+}
+
 export async function aiReply(
   aiBinding: any,
   userMessage: string,
   ctx: ChatContext,
   systemPrompt: string = DEFAULT_SYSTEM_PROMPT
 ): Promise<string> {
-  // 1) 先尝试命中"简单问题缓存"（仅对短问题生效，避免上下文相关问题被错用）
-  if (userMessage.length <= 40 && ctx.turns.length === 0) {
-    const cached = await tryGetCachedReply(userMessage);
+  const cleanMsg = (userMessage || "").trim();
+
+  // 1) 敏感词拦截 —— 零 AI 调用
+  const blocked = checkSensitive(cleanMsg);
+  if (blocked) return blocked;
+
+  // 2) 简单问题缓存（仅对无上下文的短问题生效，避免上下文对话被错误缓存）
+  if (cleanMsg.length > 0 && cleanMsg.length <= 40 && ctx.turns.length === 0) {
+    const cached = await tryGetCachedReply(cleanMsg);
     if (cached) return cached;
+    // 如果同一问题近期 AI 失败过，直接走兜底，避免反复调用
+    if (await checkFailMarker(cleanMsg)) return randomFallback();
   }
 
-  // 2) 正常走 Worker AI
+  // 3) 正常走 Worker AI（加超时 + 输出硬上限）
   try {
     const ai = new Ai(aiBinding);
-    const history = ctx.turns.slice(-8).map((t) => ({
-      role: t.role,
-      content: t.content,
-    }));
+
+    // 3a) 构建压缩后的历史（每个 turn 最多 MAX_TURN_CHARS 字）
+    const history = ctx.turns
+      .slice(-6)
+      .map((t) => ({ role: t.role, content: compressTurnContent(t.content) }));
 
     const messages: { role: string; content: string }[] = [
       { role: "system", content: systemPrompt },
       ...history,
-      { role: "user", content: userMessage },
+      { role: "user", content: compressTurnContent(cleanMsg) },
     ];
 
-    const response = await ai.run(DEFAULT_MODEL, {
-      messages,
-      max_tokens: MAX_TOKENS,
-    });
+    // 3b) 调用 + 超时控制
+    const response = await runWithTimeout(
+      ai.run(DEFAULT_MODEL, { messages, max_tokens: MAX_TOKENS }),
+      AI_TIMEOUT_MS,
+      "ai timeout"
+    );
 
+    // 3c) 统一读 text
     let text: string;
     if (typeof response === "string") text = response;
-    else if (response && typeof response === "object")
+    else if (response && typeof response === "object") {
       text =
         response.response ||
         response.message ||
         response.reply ||
-        (typeof response.result === "string" ? response.result : JSON.stringify(response));
-    else text = String(response);
-
+        (typeof response.result === "string" ? response.result : "");
+    } else {
+      text = "";
+    }
     const clean = (text || "").trim() || "（AI 没有返回内容）";
 
-    // 3) 对短问题 & 非上下文对话写入缓存
-    if (userMessage.length <= 40 && ctx.turns.length === 0 && clean.length < 600) {
-      putCachedReply(userMessage, clean); // fire-and-forget
+    // 3d) 硬上限截断
+    const final = clean.length > HARD_OUTPUT_LIMIT
+      ? clean.slice(0, HARD_OUTPUT_LIMIT).trimEnd() + "…"
+      : clean;
+
+    // 3e) 对"短问题 + 无上下文 + 短回复"写入缓存（下次零 Token）
+    if (
+      cleanMsg.length > 0 &&
+      cleanMsg.length <= 40 &&
+      ctx.turns.length === 0 &&
+      final.length > 0 &&
+      final.length < 600
+    ) {
+      putCachedReply(cleanMsg, final); // fire-and-forget
     }
 
-    return clean;
+    return final;
   } catch (e) {
     console.error("[ai] error:", e);
-    return "抱歉，AI 现在有点忙，稍后再试试 😊";
+    // 失败时写入 fail marker —— 30 分钟内同问题不再浪费 Token
+    if (cleanMsg.length > 0 && cleanMsg.length <= 40 && ctx.turns.length === 0) {
+      putFailMarker(cleanMsg);
+    }
+    return randomFallback();
   }
 }
 
@@ -320,6 +445,6 @@ export async function turnAndSave(
   ctx.turns.push({ role: "user", content: userMessage, ts: Date.now() });
   ctx.turns.push({ role: "assistant", content: reply, ts: Date.now() });
   // 上下文异步写 Cache，不阻塞返回
-  saveContext(ctx);
+  saveContext(ctx).catch(() => {});
   return reply;
 }

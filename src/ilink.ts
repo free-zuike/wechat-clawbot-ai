@@ -114,6 +114,43 @@ function buildHeaders(token?: string): Record<string, string> {
   return headers;
 }
 
+// 带 1 次重试的 fetch —— 防止网络抖动导致整轮拉取失败
+async function fetchOnce(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number
+): Promise<Response> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: ctrl.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function fetchWithRetry(
+  url: string,
+  init: RequestInit,
+  timeoutMs = 5000,
+  tries = 2
+): Promise<Response> {
+  let lastErr: unknown = null;
+  for (let i = 0; i < tries; i++) {
+    try {
+      const r = await fetchOnce(url, init, timeoutMs);
+      // 5xx 才重试，其他状态码返回给上层处理
+      if (r.status >= 500 && i < tries - 1) continue;
+      return r;
+    } catch (e) {
+      lastErr = e;
+      if (i < tries - 1) await new Promise((r) => setTimeout(r, 150 * (i + 1)));
+    }
+  }
+  // 全部失败 —— 抛出，由调用方兜底
+  throw lastErr instanceof Error ? lastErr : new Error("fetch failed");
+}
+
 // ---------------------- 扫码登录 ----------------------
 
 export async function getQRCode(): Promise<{ key: string; imgUrl: string }> {
@@ -158,15 +195,16 @@ export async function getUpdates(
 ): Promise<GetUpdatesResponse> {
   const url = `${baseUrl}/ilink/bot/getupdates`;
   try {
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
-    const r = await fetch(url, {
-      method: "POST",
-      headers: buildHeaders(token),
-      body: JSON.stringify({ get_updates_buf: buf }),
-      signal: ctrl.signal,
-    });
-    clearTimeout(timer);
+    const r = await fetchWithRetry(
+      url,
+      {
+        method: "POST",
+        headers: buildHeaders(token),
+        body: JSON.stringify({ get_updates_buf: buf }),
+      },
+      timeoutMs,
+      2
+    );
     if (r.status === 200) {
       const data = (await r.json()) as GetUpdatesResponse;
       return data || { ret: 0, msgs: [], get_updates_buf: buf };
@@ -186,11 +224,16 @@ export async function sendMessage(
 ): Promise<SendMessageResponse> {
   const url = `${baseUrl}/ilink/bot/sendmessage`;
   try {
-    const r = await fetch(url, {
-      method: "POST",
-      headers: buildHeaders(token),
-      body: JSON.stringify(payload),
-    });
+    const r = await fetchWithRetry(
+      url,
+      {
+        method: "POST",
+        headers: buildHeaders(token),
+        body: JSON.stringify(payload),
+      },
+      5000,
+      2
+    );
     if (r.status === 200) {
       const data = (await r.json()) as SendMessageResponse;
       return data || { ret: 0 };
@@ -201,7 +244,11 @@ export async function sendMessage(
   }
 }
 
-// 发送简单文本回复
+// ---------------------- 便捷 reply 封装 ----------------------
+// 微信单条消息上限约 2000 字；为避免触发分块, 我们硬上限 800 字 + 智能分段
+const SOFT_TEXT_LIMIT = 800;
+const HARD_TEXT_LIMIT = 1800;
+
 export async function replyText(
   token: string,
   toUserId: string,
@@ -209,28 +256,67 @@ export async function replyText(
   text: string,
   baseUrl = I_LINK_BASE
 ): Promise<SendMessageResponse> {
-  // 超长文本按 1800 字符分段发送
-  const chunks: string[] = [];
-  const max = 1800;
-  for (let i = 0; i < text.length; i += max) {
-    chunks.push(text.slice(i, i + max));
+  // 1) 长度归一: 超过 SOFT_LIMIT 时在句末截断, 超过 HARD_LIMIT 时强制截断
+  let safe = text || "";
+  if (safe.length > HARD_TEXT_LIMIT) {
+    // 找到最近的换行/句号/问号, 尽量自然地截断
+    const cut = safe.slice(0, HARD_TEXT_LIMIT);
+    const lastNl = cut.lastIndexOf("\n");
+    const lastPeriod = Math.max(
+      cut.lastIndexOf("。"),
+      cut.lastIndexOf("."),
+      cut.lastIndexOf("！"),
+      cut.lastIndexOf("!"),
+      cut.lastIndexOf("？"),
+      cut.lastIndexOf("?")
+    );
+    const endAt = Math.max(lastNl, lastPeriod, HARD_TEXT_LIMIT - 40);
+    safe = cut.slice(0, endAt).trimEnd() + "\n…";
   }
+
+  // 2) 按 HARD_LIMIT 分段 (若有必要)
+  const chunks: string[] = [];
+  if (safe.length <= SOFT_TEXT_LIMIT) {
+    chunks.push(safe);
+  } else {
+    // 按换行先拆成"段", 再按段合并不超限
+    let cur = "";
+    const segments = safe.split(/\n/);
+    for (const seg of segments) {
+      if ((cur + "\n" + seg).trim().length > SOFT_TEXT_LIMIT) {
+        if (cur) chunks.push(cur.trim());
+        cur = seg;
+      } else {
+        cur = cur ? cur + "\n" + seg : seg;
+      }
+    }
+    if (cur) chunks.push(cur.trim());
+  }
+
+  // 3) 分条发送 —— 第一条带 [1/N], 最后一条关掉 typing
   let last: SendMessageResponse = { ret: 0 };
-  for (const chunk of chunks) {
+  for (let i = 0; i < chunks.length; i++) {
+    const prefixed =
+      chunks.length > 1 ? `[${i + 1}/${chunks.length}] ${chunks[i]}` : chunks[i];
     last = await sendMessage(
       token,
       {
         msg: {
           to_user_id: toUserId,
           context_token: contextToken,
-          item_list: [{ type: 1, text_item: { text: chunk } }],
+          item_list: [{ type: 1, text_item: { text: prefixed } }],
         },
       },
       baseUrl
     );
-    // 加一点间隔,避免触发频率限制
-    await new Promise((r) => setTimeout(r, 200));
+    // 非最后一条中间隔一点, 最后一条不 sleep
+    if (i < chunks.length - 1) {
+      await new Promise((r) => setTimeout(r, 180));
+    }
   }
+
+  // 4) 发送完成后自动发 "typing off" —— 不阻塞
+  sendTyping(token, toUserId, false, baseUrl).catch(() => {});
   return last;
 }
 
