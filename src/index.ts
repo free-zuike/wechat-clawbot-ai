@@ -108,8 +108,7 @@ async function markMessageSeen(msgId: string): Promise<boolean> {
   }
 }
 
-// ---------- 轻量统计（纯内存，不写存储） ----------
-// Worker 启动后积累，冷启动会清零 —— 足够用于管理面板"当前实例"感知
+// ---------- 轻量统计（纯内存，不写存储，冷启动清零）----------
 const stats = {
   polls: 0,
   handled: 0,
@@ -117,6 +116,7 @@ const stats = {
   aiCalls: 0,
   cacheHits: 0,
   lastPollAt: 0,
+  lastLatencyMs: 0,
 };
 
 // ======================================================================
@@ -152,6 +152,15 @@ async function pollAndReply(env: Env): Promise<{
   }
 
   const msgs = res.msgs || [];
+
+  // 排序 + 按 from_user_id 串行回复：
+  // - 按 create_time 升序保证聊天时序
+  // - 同一用户多条消息按顺序回复，避免并发写同一个人触发频率限制
+  msgs.sort(
+    (a, b) => (a.create_time || 0) - (b.create_time || 0)
+  );
+
+  const handledBy = new Set<string>(); // 当前轮已处理过的用户（用于串行）
   let handled = 0;
 
   for (const msg of msgs) {
@@ -160,12 +169,17 @@ async function pollAndReply(env: Env): Promise<{
     const text = ilink.extractText(msg);
     if (!text) continue;
 
-    // 1) 消息去重（Cache API，零 KV 写）
+    // 1) 消息去重（Cache API，零写额度）
     const seenKey = msg.msg_id || `${msg.create_time}:${from}`;
     const seen = await markMessageSeen(seenKey);
     if (seen) continue;
 
-    // 2) 指令 / 关键词处理
+    // 2) 同一用户在本轮已回复过：加一点间隔（避免连续消息丢一条）
+    if (handledBy.has(from)) {
+      await new Promise((r) => setTimeout(r, 220));
+    }
+
+    // 3) 指令 / 关键词处理
     const cmd = tryHandleCommand(text);
     if (cmd.handled) {
       if (cmd.reset) await clearContext(from);
@@ -178,14 +192,15 @@ async function pollAndReply(env: Env): Promise<{
       );
       stats.shortcuts++;
       stats.handled++;
+      handledBy.add(from);
       handled++;
       continue;
     }
 
-    // 3) 设置"输入中"（非阻塞，最好情况对方能看到正在输入）
+    // 4) 设置"输入中"（非阻塞）
     ilink.sendTyping(creds.token, from, true, creds.baseUrl).catch(() => {});
 
-    // 4) 调用 AI（上下文读/写走 Cache API，内部有 12h 缓存 + fail cache）
+    // 5) 调用 AI（上下文读/写走 Cache API）
     const reply = await turnAndSave(
       env.AI,
       from,
@@ -193,17 +208,18 @@ async function pollAndReply(env: Env): Promise<{
       env.AI_SYSTEM_PROMPT
     );
 
-    // 5) 回复给微信（replyText 内部会自动关掉 typing + 处理超长文本）
+    // 6) 回复给微信（replyText 内部会自动关掉 typing、处理过长文本）
     await ilink.replyText(creds.token, from, ctxToken, reply, creds.baseUrl);
     stats.aiCalls++;
     stats.handled++;
+    handledBy.add(from);
     handled++;
   }
 
   return {
     pulled: msgs.length,
     handled,
-    latencyMs: Date.now() - start,
+    latencyMs: (() => { const ms = Date.now() - start; stats.lastLatencyMs = ms; return ms; })(),
   };
 }
 
@@ -368,13 +384,24 @@ function HOME_PAGE(env: Env, loggedIn: boolean): string {
 <body>
 <div class="wrap">
   <div class="card">
-    <h1>🦞 爪爪 ClawBot AI · v1.1（优化版）</h1>
-    <div class="sub">Cloudflare Workers + Worker AI · 上下文走 Cache API · 零 KV 高频写</div>
+    <h1>🦞 爪爪 ClawBot AI · v1.2</h1>
+    <div class="sub">Cloudflare Workers + Worker AI · 上下文走 Cache API · 零 KV 高频写 · AI 输出微信友好格式化</div>
     <div class="row">
       ${statusBadge(loggedIn, "已登录微信")}
       ${statusBadge(true, "Worker AI 已绑定")}
       ${statusBadge(true, "KV 凭证存储")}
-      ${statusBadge(true, "Cache API 上下文")}
+      ${statusBadge(true, "Cache API 上下文/去重")}
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>📊 实时状态</h2>
+    <div id="live-stats" class="kv">
+      <b>轮询次数</b><span>—</span>
+      <b>处理消息</b><span>—</span>
+      <b>AI 调用</b><span>—</span>
+      <b>快捷回复</b><span>—</span>
+      <b>上次轮询</b><span>—</span>
     </div>
   </div>
 
@@ -390,9 +417,10 @@ function HOME_PAGE(env: Env, loggedIn: boolean): string {
   <div class="card">
     <h2>📡 2. 拉取 &amp; 回复消息</h2>
     <div class="kv">
-      <b>调度器</b><span>cron 每分钟自动触发</span>
+      <b>调度器</b><span>cron 每 2 分钟自动触发</span>
       <b>长轮询时间</b><span>每次 ~4s（避免超时 Worker 免费额度）</span>
-      <b>buf 持久化</b><span>不再持久化 —— 传空字符串即可</span>
+      <b>去重策略</b><span>msg_id → Cache API，零写额度</span>
+      <b>文本格式化</b><span>自动移除 code fence / markdown / HTML</span>
     </div>
     <button class="btn" style="margin-top:12px" onclick="triggerPoll()">手动触发一次拉取</button>
     <div id="poll-result" class="sub" style="margin-top:12px"></div>
@@ -435,6 +463,24 @@ wrangler deploy
 </div>
 
 <script>
+async function refreshStats(){
+  try {
+    const r = await fetch('/api/status',{cache:'no-store'});
+    const d = await r.json();
+    const s = d.stats || {};
+    const el = document.getElementById('live-stats');
+    if(!el) return;
+    const fmt = (v)=> v == null ? '—' : v;
+    const last = s.lastPollAt ? new Date(s.lastPollAt).toLocaleString() : '从未';
+    el.innerHTML =
+      '<b>登录状态</b><span>' + (d.loggedIn ? '✅' : '❌') + '</span>' +
+      '<b>轮询次数</b><span>' + fmt(s.polls) + '</span>' +
+      '<b>累计处理消息</b><span>' + fmt(s.handled) + '</span>' +
+      '<b>AI 调用</b><span>' + fmt(s.aiCalls) + '</span>' +
+      '<b>快捷回复</b><span>' + fmt(s.shortcuts) + '</span>' +
+      '<b>上次轮询</b><span>' + last + '</span>';
+  } catch(e){}
+}
 async function triggerPoll(){
   const el = document.getElementById('poll-result');
   el.textContent = '调用中...';
@@ -442,6 +488,7 @@ async function triggerPoll(){
     const r = await fetch('/api/trigger-poll',{method:'POST'});
     const d = await r.json();
     el.innerHTML = '结果: <pre style="background:#fafbff;padding:10px;border-radius:8px;overflow:auto">' + JSON.stringify(d,null,2) + '</pre>';
+    refreshStats();
   } catch(e){ el.textContent = '错误：' + e.message; }
 }
 async function logout(){
@@ -467,6 +514,9 @@ async function sendChat(){
     addMsg('b',(d.reply||'') + (d.source==='shortcut' ? ' [快捷回复]' : ''));
   } catch(e){ addMsg('b','错误：'+e.message); }
 }
+// 打开页面先拉一次状态，之后每 30s 刷新
+refreshStats();
+setInterval(refreshStats, 30000);
 </script>
 </body>
 </html>`;

@@ -217,6 +217,60 @@ export async function getUpdates(
 
 // ---------------------- 消息发送 ----------------------
 
+// ---------------------- 微信文本格式化 ----------------------
+// 把 markdown / AI 输出转成微信易读文本：
+//   - 折叠 3+ 连续换行为双换行
+//   - 去掉 ``` 代码块标记，改为 "--- code ---" 分隔线
+//   - 去掉表格、HTML 标签
+//   - [text](url) → text (url)
+//   - **粗体** → 『粗体』
+//   - *斜体* / _斜体_ → 保留文字
+//   - # 标题 → 【标题】
+//   - 开头数字列表 → 简化
+//   - 末尾空白行删除
+//   - 去掉行尾多余空格
+function wechatifyText(src: string): string {
+  if (!src) return "";
+  let s = src;
+
+  // 1. 代码块：用分隔线 + 保留内容
+  s = s.replace(/```(?:[a-zA-Z0-9_+\-]*)\n?([\s\S]*?)```/g, (_, code) => {
+    const trimmed = String(code).trim();
+    if (!trimmed) return "";
+    // 如果代码很短，内联；否则用分隔线包起来
+    if (trimmed.length <= 120 && !trimmed.includes("\n")) {
+      return `\n『${trimmed}』\n`;
+    }
+    const lines = trimmed.split("\n").slice(0, 30).join("\n");
+    return `\n— — — code — — —\n${lines}\n— — — — — — — —\n`;
+  });
+
+  // 2. 表格（以 |...| 行 + --- 分隔）整段移除
+  s = s.replace(/(?:^|\n)\|(?:.|\n)*?\|\n?/g, (block) => {
+    // 只在看起来是表格时才删除：至少两行都是以 | 开头且含 |，中间一行有 ---
+    const rows = block.trim().split("\n");
+    const hasSep = rows.some((r) => /^\s*\|?\s*-{2,}/.test(r));
+    const allStartPipe = rows.every((r) => r.trim().startsWith("|"));
+    return hasSep && allStartPipe ? "\n（表格略）\n" : block;
+  });
+
+  // 3. 内联格式：粗体 / 斜体 / 标题 / 链接
+  s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, "$1 （$2）");
+  s = s.replace(/\*\*([^*]+)\*\*/g, "『$1』");
+  s = s.replace(/(^|\s)\*([^*\n]+)\*(?=\s|$|[.,!?;:])/g, "$1$2");
+  s = s.replace(/_([^_\n]+)_/g, "$1");
+  s = s.replace(/^#{1,6}\s*([^\n]+)/gm, "【$1】");
+
+  // 4. HTML <tag>...</tag>（简单去 tag 保留文字）
+  s = s.replace(/<[^>]+>/g, "");
+
+  // 5. 行尾空白、连续空白行
+  s = s.replace(/[ \t]+$/gm, "");
+  s = s.replace(/\n{3,}/g, "\n\n");
+
+  return s.trim();
+}
+
 export async function sendMessage(
   token: string,
   payload: SendMessageRequest,
@@ -256,10 +310,11 @@ export async function replyText(
   text: string,
   baseUrl = I_LINK_BASE
 ): Promise<SendMessageResponse> {
-  // 1) 长度归一: 超过 SOFT_LIMIT 时在句末截断, 超过 HARD_LIMIT 时强制截断
-  let safe = text || "";
+  // 先把 AI 输出（markdown / 表格 / 代码块）转成微信可读样式
+  let safe = wechatifyText(text || "");
+
+  // 长度归一: 超过 HARD_LIMIT 时在句末截断
   if (safe.length > HARD_TEXT_LIMIT) {
-    // 找到最近的换行/句号/问号, 尽量自然地截断
     const cut = safe.slice(0, HARD_TEXT_LIMIT);
     const lastNl = cut.lastIndexOf("\n");
     const lastPeriod = Math.max(
@@ -274,7 +329,7 @@ export async function replyText(
     safe = cut.slice(0, endAt).trimEnd() + "\n…";
   }
 
-  // 2) 按 HARD_LIMIT 分段 (若有必要)
+  // 按 SOFT_LIMIT 分段，过长内容拆成多条消息
   const chunks: string[] = [];
   if (safe.length <= SOFT_TEXT_LIMIT) {
     chunks.push(safe);
