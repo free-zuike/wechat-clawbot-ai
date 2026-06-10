@@ -24,13 +24,22 @@ crons = ["*/2 * * * *"]
 [ai]
 binding = "AI"
 
-# ===== KV 存储 (v1.1 仅保留: bot_token 凭证 + msg_id 去重) =====
-# 对话上下文已迁移到 Cache API, 零写额度消耗
+# ===== KV 存储 (仅保留: bot_token 凭证) =====
+# 对话上下文已迁移到 Cache API, 消息去重已迁移到 Cache API
 # 注意: 首次部署前请执行: wrangler kv:namespace create CLAWBOT_KV
 [[kv_namespaces]]
 binding = "CLAWBOT_KV"
 id = "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
 preview_id = "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
+
+# ===== D1 统计数据库 (可选, v1.3+ 自动启用; 没有也不崩) =====
+# 首次: wrangler d1 create clawbot-stats
+# 把返回的 database_id 填到下面
+# 然后: wrangler d1 execute clawbot-stats --file=./schema.sql
+[[d1_databases]]
+binding = "CLAWBOT_DB"
+database_name = "clawbot-stats"
+database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
 
 # ===== 可选: 管理员密码 (用来保护 /login 等管理页,不填则任何人都可以访问) =====
 # [vars]

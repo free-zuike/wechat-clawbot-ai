@@ -37,6 +37,7 @@ const KV_CRED = "clawbot:credentials";
 export interface Env {
   AI: any;
   CLAWBOT_KV: KVNamespace;
+  CLAWBOT_DB?: D1Database;   // 可选: 没有配也不崩
   AI_SYSTEM_PROMPT?: string;
 }
 
@@ -162,6 +163,63 @@ function getStatsSnapshot() {
   };
 }
 
+// ---------- D1 聚合写（每小时 1 条，省 D1 写额度）
+// 写策略:
+//   - 先 upsert stats_hourly; 同一小时内只累加一轮, 不写重复
+//   - 每轮轮询末尾写一次（同一 Worker 里幂等 upsert）
+async function writeHourlyStats(env: Env) {
+  if (!env.CLAWBOT_DB) return;
+  try {
+    const hourUnix = Math.floor(Date.now() / 3_600_000) * 3_600;
+    const now = Math.floor(Date.now() / 1000);
+
+    await env.CLAWBOT_DB
+      .prepare(
+        `INSERT INTO stats_hourly (hour_unix, polls, handled, shortcuts, ai_calls, ai_fails, max_consecutive_fails, created_at) VALUES (?, 0, 0, 0, 0, 0, 0, ?) ON CONFLICT (hour_unix) DO UPDATE SET polls = polls + 1, handled = handled + ?, shortcuts = shortcuts + ?, ai_calls = ai_calls + ?, ai_fails = ai_fails + ?, max_consecutive_fails = CASE WHEN max_consecutive_fails < excluded.max_consecutive_fails THEN excluded.max_consecutive_fails ELSE max_consecutive_fails END`
+      )
+      .bind(hourUnix, now)
+      .run();
+
+    // 最近错误落库（最多保留 200 条）— 仅在有新错误时写
+    if (recentErrors.length) {
+      const toInsert = recentErrors.slice(0, 5);
+      if (toInsert) {
+        const stmt = env.CLAWBOT_DB
+          .prepare(
+            `INSERT INTO errors (ts, kind, message) VALUES (?, ?, ?)`
+          );
+        for (const e of toInsert) {
+          stmt.bind(Math.floor(e.t / 1000), e.ok ? 'ok' : 'error', e.msg || '').run();
+        }
+        // 清理超量（>200）
+        env.CLAWBOT_DB
+          .prepare(
+            `DELETE FROM errors WHERE id IN (SELECT id FROM errors ORDER BY id DESC LIMIT -1 OFFSET 200)`
+          )
+          .run()
+          .catch(() => {});
+      }
+    }
+  } catch (e) {
+    console.error('[d1] write error', e);
+  }
+}
+
+// D1 查询：最近 24 小时 / 7 天 聚合
+async function readHourlyStats(env: Env, hours: number) {
+  if (!env.CLAWBOT_DB) return [];
+  try {
+    const since = Math.floor(Date.now() / 3_600_000) - hours * 3_600_000;
+    const r = await env.CLAWBOT_DB
+      .prepare(`SELECT hour_unix, polls, handled, shortcuts, ai_calls, ai_fails, max_consecutive_fails FROM stats_hourly WHERE hour_unix >= ? ORDER BY hour_unix DESC LIMIT ?`)
+      .bind(Math.floor(since / 1000), hours + 1)
+      .all();
+    return r.results || [];
+  } catch {
+    return [];
+  }
+}
+
 // ======================================================================
 //  核心：拉取 + 处理 + 回复
 // ======================================================================
@@ -284,6 +342,9 @@ async function pollAndReply(env: Env): Promise<{
     }
   }
 
+  // ---------- 可选：D1 落盘（只有配置了 CLAWBOT_DB 才写, 1 小时 upsert 1 条, 省写额度）
+  writeHourlyStats(env).catch(() => {});
+
   return {
     pulled: msgs.length,
     handled,
@@ -360,9 +421,20 @@ export default {
         loginAt: creds?.createdAt ? new Date(creds.createdAt).toISOString() : "",
         hasAi: !!env.AI,
         hasKv: !!env.CLAWBOT_KV,
-        version: "v1.3-watchdog",
+        hasDb: !!env.CLAWBOT_DB,
+        version: "v1.4-d1",
         stats: getStatsSnapshot(),
       });
+    }
+
+    // ---------- 历史统计 ----------
+    if (path === "/api/history" && method === "GET") {
+      const hours = Math.min(
+        24 * 7,
+        Math.max(24, parseInt(url.searchParams.get("hours") || "24", 10))
+      );
+      const data = await readHourlyStats(env, hours);
+      return json({ hours, data });
     }
 
     // ---------- 退出登录 ----------
@@ -474,6 +546,10 @@ function HOME_PAGE(env: Env, loggedIn: boolean): string {
       <b>上次轮询</b><span>—</span>
       <b>上次耗时</b><span>—</span>
     </div>
+    <h3 style="margin-top:14px">📈 过去 24 小时统计</h3>
+    <div id="history-24h" class="sub" style="white-space:pre-wrap">加载中...</div>
+    <h3 style="margin-top:14px">📆 过去 7 天统计</h3>
+    <div id="history-7d" class="sub" style="white-space:pre-wrap">加载中...</div>
     <h3 style="margin-top:14px">🚨 最近错误</h3>
     <div id="recent-errors" class="sub" style="white-space:pre-wrap">暂无</div>
   </div>
@@ -538,18 +614,20 @@ wrangler deploy
 <script>
 async function refreshStats(){
   try {
-    const r = await fetch('/api/status',{cache:'no-store'});
-    const d = await r.json();
+    const [sRes, h24Res, h7Res] = await Promise.all([
+      fetch('/api/status',{cache:'no-store'}),
+      fetch('/api/history?hours=24',{cache:'no-store'}).catch(()=>null),
+      fetch('/api/history?hours=168',{cache:'no-store'}).catch(()=>null),
+    ]);
+    const d = await sRes.json();
     const s = d.stats || {};
     const el = document.getElementById('live-stats');
     const errs = document.getElementById('recent-errors');
-    if(!el) {
+    if (el) {
       const fmt = (v)=> v == null ? '—' : v;
       const last = s.lastPollAt ? new Date(s.lastPollAt).toLocaleString() : '从未';
-      const latency = (s.lastLatencyMs == null ? '—' : s.lastLatencyMs + ' ms';
-      const consecBadge = (s.consecutiveFails || 0) === 0
-        ? '✅ 0'
-        : '🔥 ' + s.consecutiveFails;
+      const latency = s.lastLatencyMs == null ? '—' : s.lastLatencyMs + ' ms';
+      const consecBadge = (s.consecutiveFails || 0) === 0 ? '✅ 0' : '🔥 ' + s.consecutiveFails;
       el.innerHTML =
         '<b>登录状态</b><span>' + (d.loggedIn ? '✅' : '❌') + '</span>' +
         '<b>轮询次数</b><span>' + fmt(s.polls) + '</span>' +
@@ -560,18 +638,30 @@ async function refreshStats(){
         '<b>上次轮询</b><span>' + last + '</span>' +
         '<b>上次耗时</b><span>' + latency + '</span>';
     }
-    if(errs){
-      const list = (s.recentErrors && s.recentErrors.length ? s.recentErrors : [];
-      if(!list.length){
-        errs.textContent = '✅ 最近无错误';
-      } else {
-        errs.innerHTML = list.map(e => {
-          const t = new Date(e.t).toLocaleString();
-          return t + '  —— ' + (e.msg || '(无消息)';
-        }).join('\n');
-      }
+    if (errs) {
+      const list = (s.recentErrors || []).slice(0, 10);
+      if (!list.length) errs.textContent = '✅ 最近无错误';
+      else errs.innerHTML = list.map(e => new Date(e.t).toLocaleString() + '  —— ' + (e.msg || '(无消息)')).join('\n');
     }
+    renderHistory('history-24h', h24Res, '24 小时');
+    renderHistory('history-7d', h7Res, '7 天');
   } catch(e){}
+}
+function renderHistory(id, res, label){
+  const el = document.getElementById(id);
+  if (!el) return;
+  if (!res) { el.textContent = '⚠️ 未配置 D1, 无法查询历史'; return; }
+  res.json().then((d) => {
+    const rows = (d.data || []).slice(0, 48);
+    if (!rows.length) { el.textContent = '(' + label + ') 暂无数据, cron 运行后会累积'; return; }
+    const maxP = Math.max(1, ...rows.map(r => r.polls || 0));
+    const lines = rows.slice(0, 24).map(r => {
+      const t = new Date(r.hour_unix * 1000).toLocaleString();
+      const bar = '█'.repeat(Math.max(1, Math.round(((r.polls || 0) / maxP) * 15)));
+      return t + '  轮询 ' + r.polls + '  回复 ' + r.handled + '  AI ' + r.ai_calls + '  ' + bar;
+    });
+    el.textContent = lines.join('\n');
+  }).catch(()=>{ el.textContent = '⚠️ 读取失败'; });
 }
 async function triggerPoll(){
   const el = document.getElementById('poll-result');
