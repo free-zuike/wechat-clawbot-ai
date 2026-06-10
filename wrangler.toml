@@ -1,0 +1,27 @@
+name = "wechat-clawbot-ai"
+main = "src/index.js"
+compatibility_date = "2024-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+# ====== 微信公众号配置 ======
+# 替换为你自己的 token/appid/secret，或使用 wrangler secret 上传
+[vars]
+# 微信公众号开发者后台填入的 Token（用于签名校验）
+WECHAT_TOKEN = "your-wechat-token-here"
+# 公众号 AppID（用于消息体加解密/获取 access_token）
+WECHAT_APP_ID = "your-wechat-appid"
+# 公众号 AppSecret
+WECHAT_APP_SECRET = "your-wechat-appsecret"
+# 公众号消息加解密 EncodingAESKey（可选，留空则走明文）
+WECHAT_AES_KEY = ""
+# AI 系统提示词
+AI_SYSTEM_PROMPT = "你是爪爪（ClawBot），一个热情、友好且乐于助人的中文 AI 助手。请用简洁、亲切的中文回答用户的问题。回复不要超过 300 个字。"
+# AI 模型
+AI_MODEL = "@cf/meta/llama-3-8b-instruct"
+# 多轮对话上下文保留条数（每侧各 N 条）
+AI_CONTEXT_PAIRS = "5"
+# 是否启用回复中增加类型标识（可关闭）
+BOT_PREFIX = ""
+
+[ai]
+binding = "AI"
