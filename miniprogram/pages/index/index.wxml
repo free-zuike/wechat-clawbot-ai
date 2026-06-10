@@ -1,0 +1,51 @@
+<view class="container">
+  <view class="hero">
+    <view class="hero-emoji">🎀🧸🎀</view>
+    <view class="hero-title">欢迎来到爪爪乐园</view>
+    <view class="hero-subtitle">一个有AI的夹娃娃小游戏</view>
+  </view>
+
+  <view class="stats card">
+    <view class="stat-item">
+      <view class="stat-num">{{points}}</view>
+      <view class="stat-label">积分</view>
+    </view>
+    <view class="stat-divider"></view>
+    <view class="stat-item">
+      <view class="stat-num">{{giftCount}}</view>
+      <view class="stat-label">收藏</view>
+    </view>
+    <view class="stat-divider"></view>
+    <view class="stat-item">
+      <view class="stat-num">{{plays}}</view>
+      <view class="stat-label">夹取次数</view>
+    </view>
+  </view>
+
+  <view class="feature-list">
+    <view class="feature-card" bindtap="goGame">
+      <view class="feature-emoji">🎮</view>
+      <view class="feature-title">夹娃娃游戏</view>
+      <view class="feature-desc">试试手气,抓到玩偶</view>
+    </view>
+    <view class="feature-card" bindtap="goChat">
+      <view class="feature-emoji">🤖</view>
+      <view class="feature-title">AI对话爪爪</view>
+      <view class="feature-desc">和AI助手聊天</view>
+    </view>
+    <view class="feature-card" bindtap="goProfile">
+      <view class="feature-emoji">🎁</view>
+      <view class="feature-title">我的收藏</view>
+      <view class="feature-desc">查看你的战利品</view>
+    </view>
+  </view>
+
+  <view class="card">
+    <view class="title">✨ 今日推荐</view>
+    <view class="recommend-list">
+      <view class="recommend-item">🧸 小熊玩偶</view>
+      <view class="recommend-item">🦄 独角兽</view>
+      <view class="recommend-item">🏆 超级大奖</view>
+    </view>
+  </view>
+</view>

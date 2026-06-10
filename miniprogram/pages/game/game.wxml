@@ -1,0 +1,56 @@
+<view class="container">
+  <view class="claw-machine card">
+    <view class="machine-top">
+      <view class="machine-light"></view>
+      <view class="machine-light light2"></view>
+      <view class="machine-light light3"></view>
+    </view>
+    
+    <view class="machine-window">
+      <view class="claw" style="transform: translateX({{clawX}}rpx) translateY({{clawY}}rpx);">
+        <view class="claw-top"></view>
+        <view class="claw-rope"></view>
+        <view class="claw-hand {{clawGrabbing ? 'grabbing' : ''}}">
+          <view class="finger left"></view>
+          <view class="finger right"></view>
+        </view>
+      </view>
+
+      <view class="gifts-area">
+        <view class="gift-float gift1">🧸</view>
+        <view class="gift-float gift2">🐰</view>
+        <view class="gift-float gift3">🦄</view>
+        <view class="gift-float gift4">🐱</view>
+        <view class="gift-float gift5">🏆</view>
+        <view class="gift-float gift6">🐶</view>
+      </view>
+    </view>
+
+    <view class="machine-base">
+      <view class="exit-slot">🎁</view>
+    </view>
+  </view>
+
+  <view class="control-area">
+    <view class="status-text card">{{statusText}}</view>
+
+    <button class="btn-primary play-btn" bindtap="playClaw" disabled="{{isPlaying}}">
+      {{isPlaying ? '夹取中...' : '开始夹娃娃 🎮'}}
+    </button>
+
+    <view class="tips">
+      <text>当前积分: {{points}}</text>
+    </view>
+  </view>
+
+  <view class="result-modal {{showResult ? 'show' : ''}}" catchtap="closeModal">
+    <view class="result-card" catchtap="stopProp">
+      <view class="result-emoji">{{resultGift ? resultGift.emoji : '😢'}}</view>
+      <view class="result-title">{{resultTitle}}</view>
+      <view class="result-message">{{resultMessage}}</view>
+      <view wx:if="{{resultGift}}" class="result-rarity">{{rarityText}}</view>
+      <view wx:if="{{resultStory}}" class="result-story">"{{resultStory}}"</view>
+      <button class="btn-primary" bindtap="closeModal">好的</button>
+    </view>
+  </view>
+</view>

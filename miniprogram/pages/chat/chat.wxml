@@ -1,0 +1,38 @@
+<view class="chat-container">
+  <view class="chat-header">
+    <view class="avatar-bot">🤖</view>
+    <view>
+      <view class="bot-name">爪爪AI</view>
+      <view class="bot-status">在线 · 来自Worker AI</view>
+    </view>
+  </view>
+
+  <scroll-view class="chat-messages" scroll-y scroll-into-view="{{lastId}}" scroll-with-animation>
+    <block wx:for="{{messages}}" wx:key="id">
+      <view id="msg-{{index}}" class="msg-row {{item.role === 'user' ? 'is-user' : 'is-bot'}}">
+        <view class="msg-avatar">{{item.role === 'user' ? '👤' : '🤖'}}</view>
+        <view class="msg-bubble">{{item.content}}</view>
+      </view>
+    </block>
+    <view wx:if="{{loading}}" class="msg-row is-bot">
+      <view class="msg-avatar">🤖</view>
+      <view class="msg-bubble typing">
+        <text class="dot">.</text>
+        <text class="dot">.</text>
+        <text class="dot">.</text>
+      </view>
+    </view>
+  </scroll-view>
+
+  <view class="chat-input">
+    <input class="input-box" placeholder="和爪爪说点什么..." value="{{inputText}}" bindinput="onInput" bindconfirm="send" confirm-type="send" />
+    <button class="send-btn" bindtap="send">发送</button>
+  </view>
+
+  <view class="quick-actions">
+    <view class="quick-chip" bindtap="quickSend" data-msg="你是谁呀?">你是谁呀?</view>
+    <view class="quick-chip" bindtap="quickSend" data-msg="给我讲个笑话">讲个笑话</view>
+    <view class="quick-chip" bindtap="quickSend" data-msg="夹娃娃有什么技巧?">夹娃娃技巧</view>
+    <view class="quick-chip" bindtap="quickSend" data-msg="给我一些鼓励">给我鼓励</view>
+  </view>
+</view>

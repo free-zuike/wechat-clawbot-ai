@@ -1,0 +1,12 @@
+name = "wechat-clawbot-ai"
+main = "src/index.js"
+compatibility_date = "2024-01-01"
+
+[vars]
+WECHAT_APP_ID = "your-wechat-appid"
+WECHAT_APP_SECRET = "your-wechat-secret"
+AI_MODEL = "@cf/meta/llama-3-8b-instruct"
+IMAGE_MODEL = "@cf/stabilityai/stable-diffusion-xl-base-1.0"
+
+[ai]
+binding = "AI"

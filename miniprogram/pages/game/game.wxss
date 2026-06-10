@@ -1,0 +1,251 @@
+.claw-machine {
+  padding: 24rpx;
+  position: relative;
+  margin-top: 24rpx;
+}
+
+.machine-top {
+  height: 60rpx;
+  background: linear-gradient(135deg, #FF6B9D, #FF8C5A);
+  border-radius: 24rpx 24rpx 0 0;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 24rpx;
+  margin: -24rpx -24rpx 0;
+}
+
+.machine-light {
+  width: 20rpx;
+  height: 20rpx;
+  border-radius: 50%;
+  background: #FFF4A3;
+  box-shadow: 0 0 16rpx #FFF4A3;
+  animation: blink 1.2s infinite;
+}
+
+.light2 {
+  animation-delay: 0.4s;
+  background: #A3D9FF;
+  box-shadow: 0 0 16rpx #A3D9FF;
+}
+
+.light3 {
+  animation-delay: 0.8s;
+  background: #FFB3D9;
+  box-shadow: 0 0 16rpx #FFB3D9;
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+.machine-window {
+  height: 500rpx;
+  background: linear-gradient(180deg, #E0F0FF 0%, #FFE0EC 100%);
+  margin-top: 0;
+  border-radius: 0 0 16rpx 16rpx;
+  position: relative;
+  overflow: hidden;
+  border: 8rpx solid #FFB6C8;
+}
+
+.claw {
+  position: absolute;
+  top: 20rpx;
+  left: 50%;
+  margin-left: -30rpx;
+  transition: transform 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+  z-index: 10;
+}
+
+.claw-top {
+  width: 60rpx;
+  height: 20rpx;
+  background: #FF6B9D;
+  border-radius: 8rpx;
+  margin: 0 auto;
+}
+
+.claw-rope {
+  width: 4rpx;
+  height: 80rpx;
+  background: linear-gradient(180deg, #FF6B9D, #FFB6C8);
+  margin: 0 auto;
+}
+
+.claw-hand {
+  width: 60rpx;
+  height: 50rpx;
+  position: relative;
+  margin: 0 auto;
+}
+
+.finger {
+  position: absolute;
+  width: 16rpx;
+  height: 50rpx;
+  background: #FF6B9D;
+  border-radius: 8rpx;
+  transition: transform 0.3s;
+}
+
+.finger.left {
+  left: 4rpx;
+  transform: rotate(-15deg);
+}
+
+.finger.right {
+  right: 4rpx;
+  transform: rotate(15deg);
+}
+
+.claw-hand.grabbing .finger.left {
+  transform: rotate(15deg);
+}
+
+.claw-hand.grabbing .finger.right {
+  transform: rotate(-15deg);
+}
+
+.gifts-area {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 200rpx;
+}
+
+.gift-float {
+  position: absolute;
+  font-size: 60rpx;
+  animation: floaty 3s ease-in-out infinite;
+}
+
+.gift1 { left: 10%; bottom: 20rpx; animation-delay: 0s; }
+.gift2 { left: 30%; bottom: 40rpx; animation-delay: 0.5s; font-size: 50rpx; }
+.gift3 { left: 50%; bottom: 20rpx; animation-delay: 1s; }
+.gift4 { left: 70%; bottom: 40rpx; animation-delay: 1.5s; font-size: 55rpx; }
+.gift5 { left: 20%; bottom: 100rpx; animation-delay: 2s; font-size: 45rpx; }
+.gift6 { left: 65%; bottom: 100rpx; animation-delay: 2.5s; font-size: 50rpx; }
+
+@keyframes floaty {
+  0%, 100% { transform: translateY(0) rotate(-5deg); }
+  50% { transform: translateY(-10rpx) rotate(5deg); }
+}
+
+.machine-base {
+  height: 80rpx;
+  background: linear-gradient(180deg, #FF6B9D, #D9436E);
+  margin: 24rpx -24rpx -24rpx;
+  border-radius: 0 0 24rpx 24rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.exit-slot {
+  width: 160rpx;
+  height: 60rpx;
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 12rpx;
+  text-align: center;
+  line-height: 60rpx;
+  font-size: 32rpx;
+}
+
+.control-area {
+  margin-top: 40rpx;
+}
+
+.status-text {
+  text-align: center;
+  font-size: 32rpx;
+  color: #FF4D8D;
+  padding: 32rpx;
+  font-weight: bold;
+}
+
+.play-btn {
+  margin-top: 32rpx;
+  width: 100%;
+}
+
+.tips {
+  text-align: center;
+  margin-top: 24rpx;
+  color: #888;
+  font-size: 26rpx;
+}
+
+.result-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.3s;
+  z-index: 100;
+}
+
+.result-modal.show {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.result-card {
+  width: 80%;
+  background: #FFFFFF;
+  border-radius: 32rpx;
+  padding: 48rpx;
+  text-align: center;
+  box-shadow: 0 16rpx 48rpx rgba(0, 0, 0, 0.2);
+}
+
+.result-emoji {
+  font-size: 120rpx;
+  margin-bottom: 24rpx;
+  animation: popIn 0.5s ease-out;
+}
+
+@keyframes popIn {
+  0% { transform: scale(0) rotate(-180deg); }
+  100% { transform: scale(1) rotate(0); }
+}
+
+.result-title {
+  font-size: 40rpx;
+  font-weight: bold;
+  color: #FF4D8D;
+}
+
+.result-message {
+  font-size: 28rpx;
+  color: #666;
+  margin-top: 16rpx;
+}
+
+.result-rarity {
+  display: inline-block;
+  margin-top: 24rpx;
+  padding: 8rpx 32rpx;
+  background: linear-gradient(90deg, #FFD700, #FFA500);
+  color: #FFFFFF;
+  border-radius: 32rpx;
+  font-size: 26rpx;
+  font-weight: bold;
+}
+
+.result-story {
+  font-size: 28rpx;
+  color: #888;
+  margin: 24rpx 0;
+  font-style: italic;
+  padding: 16rpx;
+  background: #FFF8E7;
+  border-radius: 16rpx;
+}
