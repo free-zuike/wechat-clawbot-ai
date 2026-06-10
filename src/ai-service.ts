@@ -14,7 +14,33 @@
 //  效果：每日 KV 写操作从 ~1500 → 0~10，免费额度不再是瓶颈
 // ======================================================================
 
+// R2 长期历史存储格式（可选绑定 CLAWBOT_R2 后启用）:
+//   key: history/<user_id>/<yyyy-mm>/<ts>-<rand>
+//   value: JSON { role, content, ts, fromShortcut, fromCache, fromR2 }
+// 每天每个用户最多保留 200 条（防过量存储）
+
 import { Ai } from "@cloudflare/ai";
+
+// 全局注入 R2 binding（不配置也不影响运行）
+let _r2: R2Bucket | null = null;
+export function bindR2(r2: R2Bucket | undefined | null) {
+  _r2 = r2 || null;
+}
+async function writeHistory(userId: string, role: "user" | "assistant", content: string, extra?: Record<string, unknown>) {
+  if (!_r2) return;
+  try {
+    const now = new Date();
+    const yyyy = now.getUTCFullYear();
+    const mm = String(now.getUTCMonth() + 1).padStart(2, "0");
+    const ts = now.getTime();
+    const rand = Math.random().toString(36).slice(2, 8);
+    const key = `history/${userId}/${yyyy}-${mm}/${ts}-${rand}`;
+    const body = JSON.stringify({ role, content: (content || "").slice(0, 2000), ts, ...extra });
+    _r2.put(key, body).catch(() => {});
+  } catch {
+    // 忽略 R2 写入失败
+  }
+}
 
 export interface ChatTurn {
   role: "user" | "assistant";
@@ -186,7 +212,7 @@ export function tryHandleCommand(text: string): CommandResult {
 // ======================================================================
 //  Cache API 上下文管理（替代 KV，零额度消耗）
 // ----------------------------------------------------------------------
-//  Cloudflare caches.default 是每数据中心的本地缓存，
+//  Cloudflare getDefaultCache() 是每数据中心的本地缓存，
 //  对"每用户对话上下文"完全够用 —— TTL 内命中、过期自动清理。
 //  它是免费的，不占 KV 写额度，也不占读额度。
 // ======================================================================
@@ -236,9 +262,15 @@ function compressTurnContent(s: string): string {
   return cut.slice(0, endAt).trim() + "…";
 }
 
+// Cloudflare Worker 提供 getDefaultCache()，但 @cloudflare/workers-types
+// 里使用标准 CacheStorage 类型，没有 default 属性 —— 用 any 绕过。
+function getDefaultCache(): Cache {
+  return (caches as any).default as Cache;
+}
+
 export async function loadContext(userId: string): Promise<ChatContext> {
   try {
-    const cache = caches.default;
+    const cache = getDefaultCache();
     const req = new Request(ctxCacheKey(userId));
     const resp = await cache.match(req);
     if (resp) {
@@ -257,7 +289,7 @@ export async function loadContext(userId: string): Promise<ChatContext> {
 
 export async function saveContext(ctx: ChatContext): Promise<void> {
   try {
-    const cache = caches.default;
+    const cache = getDefaultCache();
     // 应用 MAX_TURNS + 单轮压缩
     const trimmed: ChatContext = {
       ...ctx,
@@ -280,7 +312,7 @@ export async function saveContext(ctx: ChatContext): Promise<void> {
 
 export async function clearContext(userId: string): Promise<void> {
   try {
-    const cache = caches.default;
+    const cache = getDefaultCache();
     await cache.delete(new Request(ctxCacheKey(userId)));
   } catch {
     // 静默
@@ -291,7 +323,7 @@ export async function clearContext(userId: string): Promise<void> {
 
 async function tryGetCachedReply(message: string): Promise<string | null> {
   try {
-    const cache = caches.default;
+    const cache = getDefaultCache();
     const req = new Request(replyCacheKey(message));
     const r = await cache.match(req);
     if (r) return await r.text();
@@ -303,7 +335,7 @@ async function tryGetCachedReply(message: string): Promise<string | null> {
 
 async function putCachedReply(message: string, reply: string): Promise<void> {
   try {
-    const cache = caches.default;
+    const cache = getDefaultCache();
     const req = new Request(replyCacheKey(message));
     const resp = new Response(reply, {
       headers: { "Cache-Control": `public, max-age=${REPLY_CACHE_TTL}` },
@@ -316,7 +348,7 @@ async function putCachedReply(message: string, reply: string): Promise<void> {
 
 async function checkFailMarker(message: string): Promise<boolean> {
   try {
-    const cache = caches.default;
+    const cache = getDefaultCache();
     const r = await cache.match(new Request(failCacheKey(message)));
     return !!r;
   } catch {
@@ -326,7 +358,7 @@ async function checkFailMarker(message: string): Promise<boolean> {
 
 function putFailMarker(message: string): void {
   try {
-    const cache = caches.default;
+    const cache = getDefaultCache();
     const resp = new Response("1", {
       headers: { "Cache-Control": `public, max-age=${AI_FAIL_CACHE_TTL}` },
     });
@@ -366,20 +398,34 @@ export async function aiReply(
   aiBinding: any,
   userMessage: string,
   ctx: ChatContext,
-  systemPrompt: string = DEFAULT_SYSTEM_PROMPT
+  systemPrompt: string = DEFAULT_SYSTEM_PROMPT,
+  userId?: string
 ): Promise<string> {
   const cleanMsg = (userMessage || "").trim();
 
   // 1) 敏感词拦截 —— 零 AI 调用
   const blocked = checkSensitive(cleanMsg);
-  if (blocked) return blocked;
+  if (blocked) {
+    if (userId) writeHistory(userId, "user", cleanMsg).catch(() => {});
+    return blocked;
+  }
 
   // 2) 简单问题缓存（仅对无上下文的短问题生效，避免上下文对话被错误缓存）
   if (cleanMsg.length > 0 && cleanMsg.length <= 40 && ctx.turns.length === 0) {
     const cached = await tryGetCachedReply(cleanMsg);
-    if (cached) return cached;
+    if (cached) {
+      if (userId) {
+        writeHistory(userId, "user", cleanMsg).catch(() => {});
+        writeHistory(userId, "assistant", cached, { fromCache: true }).catch(() => {});
+      }
+      return cached;
+    }
     // 如果同一问题近期 AI 失败过，直接走兜底，避免反复调用
-    if (await checkFailMarker(cleanMsg)) return randomFallback();
+    if (await checkFailMarker(cleanMsg)) {
+      const fb = randomFallback();
+      if (userId) writeHistory(userId, "assistant", fb, { source: "fallback" }).catch(() => {});
+      return fb;
+    }
   }
 
   // 3) 正常走 Worker AI（加超时 + 输出硬上限）
@@ -404,15 +450,17 @@ export async function aiReply(
       "ai timeout"
     );
 
-    // 3c) 统一读 text
+    // 3c) 统一读 text —— AI 返回值可能是 string / { response: string }
+    // 用 any 绕过，不依赖 @cloudflare/ai 的严格类型
+    const rAny = response as any;
     let text: string;
-    if (typeof response === "string") text = response;
-    else if (response && typeof response === "object") {
+    if (typeof rAny === "string") text = rAny;
+    else if (rAny && typeof rAny === "object") {
       text =
-        response.response ||
-        response.message ||
-        response.reply ||
-        (typeof response.result === "string" ? response.result : "");
+        rAny.response ||
+        rAny.message ||
+        rAny.reply ||
+        (typeof rAny.result === "string" ? rAny.result : "");
     } else {
       text = "";
     }
@@ -435,6 +483,10 @@ export async function aiReply(
     }
 
     emitAiResult(true);
+    if (userId) {
+      writeHistory(userId, "user", cleanMsg).catch(() => {});
+      writeHistory(userId, "assistant", final).catch(() => {});
+    }
     return final;
   } catch (e) {
     console.error("[ai] error:", e);
@@ -443,7 +495,9 @@ export async function aiReply(
       putFailMarker(cleanMsg);
     }
     emitAiResult(false, e instanceof Error ? e.message : String(e));
-    return randomFallback();
+    const fb = randomFallback();
+    if (userId) writeHistory(userId, "assistant", fb, { source: "fallback" }).catch(() => {});
+    return fb;
   }
 }
 
@@ -455,10 +509,13 @@ export async function turnAndSave(
   systemPrompt?: string
 ): Promise<string> {
   const ctx = await loadContext(userId);
-  const reply = await aiReply(aiBinding, userMessage, ctx, systemPrompt);
+  const reply = await aiReply(aiBinding, userMessage, ctx, systemPrompt, userId);
   ctx.turns.push({ role: "user", content: userMessage, ts: Date.now() });
   ctx.turns.push({ role: "assistant", content: reply, ts: Date.now() });
   // 上下文异步写 Cache，不阻塞返回
   saveContext(ctx).catch(() => {});
   return reply;
 }
+
+// 导出: 快捷回复也写入 R2（在 index.ts 中调用，避免重复写）
+export { writeHistory };

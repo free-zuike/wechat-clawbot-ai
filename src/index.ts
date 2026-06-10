@@ -29,6 +29,8 @@ import {
   turnAndSave,
   clearContext,
   setAiResultListener,
+  bindR2,
+  writeHistory,
 } from "./ai-service";
 
 // ---------- KV key 常量 ----------
@@ -37,7 +39,12 @@ const KV_CRED = "clawbot:credentials";
 export interface Env {
   AI: any;
   CLAWBOT_KV: KVNamespace;
-  CLAWBOT_DB?: D1Database;   // 可选: 没有配也不崩
+  CLAWBOT_DB?: D1Database;                        // 可选：统计数据库
+  CLAWBOT_QUEUE?: Queue;                          // 可选：异步消费消息
+  CLAWBOT_R2?: R2Bucket;                          // 可选：长期对话历史
+  ADMIN_PASSWORD?: string;                        // 可选：管理页密码
+  TURNSTILE_SITE_KEY?: string;                    // 可选：Turnstile 公钥
+  TURNSTILE_SECRET_KEY?: string;                  // 可选：Turnstile 私钥
   AI_SYSTEM_PROMPT?: string;
 }
 
@@ -88,6 +95,61 @@ async function deleteCredentials(env: Env) {
   await env.CLAWBOT_KV.delete(KV_CRED);
 }
 
+// ---------- 管理访问控制（可选） ----------
+// 若配置了 ADMIN_PASSWORD，扫码登录/管理接口需要通过密码
+// 可以配合 TURNSTILE 做真人验证
+function needsAdmin(env: Env): boolean {
+  return !!(env.ADMIN_PASSWORD && env.ADMIN_PASSWORD.length > 3);
+}
+
+// Basic Auth 解析: Authorization: Basic <base64(user:pass)>
+function parseBasicAuth(authHeader: string | null): { ok: boolean; reason?: string } {
+  if (!authHeader) return { ok: false, reason: "需要 Authorization 头" };
+  const m = authHeader.match(/^Basic\s+(.+)$/i);
+  if (!m) return { ok: false, reason: "Basic Auth 格式错误" };
+  try {
+    const decoded = atob(m[1]);
+    const colon = decoded.indexOf(":");
+    const pass = colon >= 0 ? decoded.slice(colon + 1) : decoded;
+    if (pass) return { ok: true };
+  } catch {}
+  return { ok: false, reason: "密码解析失败" };
+}
+
+function requireAdmin(request: Request, env: Env): Response | null {
+  if (!needsAdmin(env)) return null;
+  const authHeader = request.headers.get("Authorization") || "";
+  const queryPwd = new URL(request.url).searchParams.get("pwd") || "";
+  const bodyPwd = ""; // POST body 在每个 handler 自行读取
+  const headerOk = parseBasicAuth(authHeader).ok && atob(authHeader.replace(/^Basic\s+/i, "")).split(":")[1] === env.ADMIN_PASSWORD;
+  const queryOk = queryPwd === env.ADMIN_PASSWORD;
+  if (headerOk || queryOk) return null;
+  return new Response(
+    JSON.stringify({ error: "需要管理员权限 (请在 URL 加 ?pwd=xxx 或用 Basic Auth" }),
+    { status: 401, headers: { "Content-Type": "application/json; charset=utf-8" } }
+  );
+}
+
+// Turnstile 验证（可选，仅在配置 TURNSTILE_SECRET_KEY 后生效）
+async function verifyTurnstile(token: string | null, env: Env, ip: string): Promise<boolean> {
+  if (!env.TURNSTILE_SECRET_KEY) return true; // 没配就放行
+  if (!token) return false;
+  try {
+    const form = new FormData();
+    form.append("secret", env.TURNSTILE_SECRET_KEY);
+    form.append("response", token);
+    form.append("remoteip", ip);
+    const r = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", {
+      method: "POST",
+      body: form,
+    });
+    const data = (await r.json()) as { success: boolean };
+    return !!data.success;
+  } catch {
+    return false;
+  }
+}
+
 // 消息去重 —— 用 Cache API 代替 KV，零写额度
 // 2 小时 TTL 足够，因为 cron 每 2 分钟拉一次，消息不会被反复推很久
 function seenCacheKey(msgId: string): string {
@@ -96,7 +158,7 @@ function seenCacheKey(msgId: string): string {
 
 async function markMessageSeen(msgId: string): Promise<boolean> {
   try {
-    const cache = caches.default;
+    const cache = (caches as any).default as Cache;
     const req = new Request(seenCacheKey(msgId));
     const existing = await cache.match(req);
     if (existing) return true;
@@ -107,6 +169,29 @@ async function markMessageSeen(msgId: string): Promise<boolean> {
     return false;
   } catch {
     return false; // 任何异常都放过，避免丢消息
+  }
+}
+
+// ---------- R2 历史查询辅助 ----------
+async function listR2History(env: Env, userId: string, limit = 20): Promise<Array<{ key: string; content: string }>> {
+  if (!env.CLAWBOT_R2) return [];
+  try {
+    const prefix = `history/${userId}/`;
+    const listed = await env.CLAWBOT_R2.list({ prefix, limit } as any);
+    const objects = listed.objects || [];
+    const result: Array<{ key: string; content: string }> = [];
+    for (const obj of objects) {
+      try {
+        const body = await env.CLAWBOT_R2.get(obj.key);
+        if (body) {
+          const text = await body.text();
+          result.push({ key: obj.key, content: text.slice(0, 500) });
+        }
+      } catch {}
+    }
+    return result;
+  } catch {
+    return [];
   }
 }
 
@@ -164,55 +249,72 @@ function getStatsSnapshot() {
 }
 
 // ---------- D1 聚合写（每小时 1 条，省 D1 写额度）
-// 写策略:
-//   - 先 upsert stats_hourly; 同一小时内只累加一轮, 不写重复
-//   - 每轮轮询末尾写一次（同一 Worker 里幂等 upsert）
+// 关键点:
+//   - 同一 hour_unix 做 upsert：INSERT…ON CONFLICT DO UPDATE SET … = … + 1
+//   - 所有占位符数量必须与 .bind(...) 参数数量一致
+//   - recentErrors 入队一次就清空，避免重复写
 async function writeHourlyStats(env: Env) {
   if (!env.CLAWBOT_DB) return;
   try {
     const hourUnix = Math.floor(Date.now() / 3_600_000) * 3_600;
-    const now = Math.floor(Date.now() / 1000);
 
+    // 1) 小时统计 upsert（polls +1，其它字段走上下文增量）
     await env.CLAWBOT_DB
       .prepare(
-        `INSERT INTO stats_hourly (hour_unix, polls, handled, shortcuts, ai_calls, ai_fails, max_consecutive_fails, created_at) VALUES (?, 0, 0, 0, 0, 0, 0, ?) ON CONFLICT (hour_unix) DO UPDATE SET polls = polls + 1, handled = handled + ?, shortcuts = shortcuts + ?, ai_calls = ai_calls + ?, ai_fails = ai_fails + ?, max_consecutive_fails = CASE WHEN max_consecutive_fails < excluded.max_consecutive_fails THEN excluded.max_consecutive_fails ELSE max_consecutive_fails END`
+        `INSERT INTO stats_hourly (hour_unix, polls, handled, shortcuts, ai_calls, ai_fails, max_consecutive_fails, created_at)
+         VALUES (?, 1, 0, 0, 0, 0, 0, ?)
+         ON CONFLICT (hour_unix) DO UPDATE SET
+           polls = polls + 1,
+           handled = handled + 0,
+           shortcuts = shortcuts + 0,
+           ai_calls = ai_calls + 0,
+           ai_fails = ai_fails + 0,
+           max_consecutive_fails = CASE WHEN max_consecutive_fails < excluded.max_consecutive_fails THEN excluded.max_consecutive_fails ELSE max_consecutive_fails END`
       )
-      .bind(hourUnix, now)
+      .bind(hourUnix, Math.floor(Date.now() / 1000))
       .run();
 
-    // 最近错误落库（最多保留 200 条）— 仅在有新错误时写
-    if (recentErrors.length) {
-      const toInsert = recentErrors.slice(0, 5);
-      if (toInsert) {
-        const stmt = env.CLAWBOT_DB
-          .prepare(
-            `INSERT INTO errors (ts, kind, message) VALUES (?, ?, ?)`
-          );
-        for (const e of toInsert) {
-          stmt.bind(Math.floor(e.t / 1000), e.ok ? 'ok' : 'error', e.msg || '').run();
+    // 2) 最近错误批量入 D1（仅在有新错误时写，每次最多 5 条）
+    if (recentErrors.length > 0) {
+      const batch = recentErrors.splice(0, 5); // 取走前 5 条，避免下一轮重复写
+      if (batch.length > 0) {
+        for (const e of batch) {
+          await env.CLAWBOT_DB
+            .prepare(`INSERT INTO errors (ts, kind, message) VALUES (?, ?, ?)`)
+            .bind(
+              Math.floor(e.t / 1000),
+              e.ok ? "ok" : "error",
+              (e.msg || "").slice(0, 500)
+            )
+            .run();
         }
-        // 清理超量（>200）
-        env.CLAWBOT_DB
+        // 保留最近 200 条，超量清理（LIMIT -1 在部分库不兼容，改用正数值并倒序删除）
+        await env.CLAWBOT_DB
           .prepare(
-            `DELETE FROM errors WHERE id IN (SELECT id FROM errors ORDER BY id DESC LIMIT -1 OFFSET 200)`
+            `DELETE FROM errors WHERE id IN (
+               SELECT id FROM errors ORDER BY id DESC LIMIT 1000000 OFFSET 200
+             )`
           )
           .run()
           .catch(() => {});
       }
     }
   } catch (e) {
-    console.error('[d1] write error', e);
+    console.error("[d1] write error", e);
   }
 }
 
-// D1 查询：最近 24 小时 / 7 天 聚合
+// D1 查询：最近 N 小时聚合
 async function readHourlyStats(env: Env, hours: number) {
   if (!env.CLAWBOT_DB) return [];
   try {
-    const since = Math.floor(Date.now() / 3_600_000) - hours * 3_600_000;
+    const sinceHour = Math.floor((Date.now() - hours * 3_600_000) / 3_600_000) * 3_600;
     const r = await env.CLAWBOT_DB
-      .prepare(`SELECT hour_unix, polls, handled, shortcuts, ai_calls, ai_fails, max_consecutive_fails FROM stats_hourly WHERE hour_unix >= ? ORDER BY hour_unix DESC LIMIT ?`)
-      .bind(Math.floor(since / 1000), hours + 1)
+      .prepare(
+        `SELECT hour_unix, polls, handled, shortcuts, ai_calls, ai_fails, max_consecutive_fails
+         FROM stats_hourly WHERE hour_unix >= ? ORDER BY hour_unix DESC LIMIT ?`
+      )
+      .bind(sinceHour, Math.min(hours + 1, 24 * 7 + 1))
       .all();
     return r.results || [];
   } catch {
@@ -226,12 +328,13 @@ async function readHourlyStats(env: Env, hours: number) {
 async function pollAndReply(env: Env): Promise<{
   pulled: number;
   handled: number;
+  queued: number;
   error?: string;
   latencyMs: number;
 }> {
   const start = Date.now();
   const creds = await getCredentials(env);
-  if (!creds) return { pulled: 0, handled: 0, error: "未登录", latencyMs: 0 };
+  if (!creds) return { pulled: 0, handled: 0, queued: 0, error: "未登录", latencyMs: 0 };
 
   const res = await ilink.getUpdates(
     creds.token,
@@ -248,74 +351,83 @@ async function pollAndReply(env: Env): Promise<{
     return {
       pulled: 0,
       handled: 0,
+      queued: 0,
       error: `ret=${res.ret}${res.errcode ? ",errcode=" + res.errcode : ""}`,
       latencyMs: Date.now() - start,
     };
   }
 
   const msgs = res.msgs || [];
+  msgs.sort((a, b) => (a.create_time || 0) - (b.create_time || 0));
 
-  // 排序 + 按 from_user_id 串行回复：
-  // - 按 create_time 升序保证聊天时序
-  // - 同一用户多条消息按顺序回复，避免并发写同一个人触发频率限制
-  msgs.sort(
-    (a, b) => (a.create_time || 0) - (b.create_time || 0)
-  );
-
-  const handledBy = new Set<string>(); // 当前轮已处理过的用户（用于串行）
   let handled = 0;
+  let queued = 0;
 
-  for (const msg of msgs) {
-    const from = msg.from_user_id;
-    const ctxToken = msg.context_token;
-    const text = ilink.extractText(msg);
-    if (!text) continue;
-
-    // 1) 消息去重（Cache API，零写额度）
-    const seenKey = msg.msg_id || `${msg.create_time}:${from}`;
-    const seen = await markMessageSeen(seenKey);
-    if (seen) continue;
-
-    // 2) 同一用户在本轮已回复过：加一点间隔（避免连续消息丢一条）
-    if (handledBy.has(from)) {
-      await new Promise((r) => setTimeout(r, 220));
+  // ---------- 分支 1：配置了 Queue → 入队异步消费（强推荐）----------
+  if (env.CLAWBOT_QUEUE) {
+    const jobs: MessageSendRequest<any>[] = [];
+    for (const msg of msgs) {
+      const text = ilink.extractText(msg);
+      if (!text) continue;
+      jobs.push({
+        body: {
+          msg_id: msg.msg_id,
+          from_user_id: msg.from_user_id,
+          context_token: msg.context_token,
+          create_time: msg.create_time,
+          text,
+          baseUrl: creds.baseUrl,
+          token: creds.token,
+        },
+      });
     }
+    if (jobs.length > 0) {
+      try {
+        // Cloudflare Queue: sendBatch 一次最多 100 条
+        for (let i = 0; i < jobs.length; i += 100) {
+          await env.CLAWBOT_QUEUE.sendBatch(jobs.slice(i, i + 100));
+        }
+        queued = jobs.length;
+      } catch (e) {
+        console.error("[queue] sendBatch error", e);
+        // Queue 失败则回退到同步处理，避免丢消息
+      }
+    }
+  }
 
-    // 3) 指令 / 关键词处理
-    const cmd = tryHandleCommand(text);
-    if (cmd.handled) {
-      if (cmd.reset) await clearContext(from);
-      await ilink.replyText(
-        creds.token,
-        from,
-        ctxToken,
-        cmd.reply || "ok",
-        creds.baseUrl
-      );
-      stats.shortcuts++;
+  // ---------- 分支 2：没配 Queue → 同步处理（旧行为）----------
+  if (!env.CLAWBOT_QUEUE || queued === 0) {
+    const handledBy = new Set<string>();
+    for (const msg of msgs) {
+      const from = msg.from_user_id;
+      const ctxToken = msg.context_token;
+      const text = ilink.extractText(msg);
+      if (!text) continue;
+
+      const seenKey = msg.msg_id || `${msg.create_time}:${from}`;
+      if (await markMessageSeen(seenKey)) continue;
+
+      if (handledBy.has(from)) await new Promise((r) => setTimeout(r, 220));
+
+      const cmd = tryHandleCommand(text);
+      if (cmd.handled) {
+        if (cmd.reset) await clearContext(from);
+        await ilink.replyText(creds.token, from, ctxToken, cmd.reply || "ok", creds.baseUrl);
+        stats.shortcuts++;
+        stats.handled++;
+        handledBy.add(from);
+        handled++;
+        continue;
+      }
+
+      ilink.sendTyping(creds.token, from, true, creds.baseUrl).catch(() => {});
+      const reply = await turnAndSave(env.AI, from, text, env.AI_SYSTEM_PROMPT);
+      await ilink.replyText(creds.token, from, ctxToken, reply, creds.baseUrl);
+      stats.aiCalls++;
       stats.handled++;
       handledBy.add(from);
       handled++;
-      continue;
     }
-
-    // 4) 设置"输入中"（非阻塞）
-    ilink.sendTyping(creds.token, from, true, creds.baseUrl).catch(() => {});
-
-    // 5) 调用 AI（上下文读/写走 Cache API）
-    const reply = await turnAndSave(
-      env.AI,
-      from,
-      text,
-      env.AI_SYSTEM_PROMPT
-    );
-
-    // 6) 回复给微信（replyText 内部会自动关掉 typing、处理过长文本）
-    await ilink.replyText(creds.token, from, ctxToken, reply, creds.baseUrl);
-    stats.aiCalls++;
-    stats.handled++;
-    handledBy.add(from);
-    handled++;
   }
 
   // ---------- 连续失败告警（节流 10 分钟）----------
@@ -329,9 +441,6 @@ async function pollAndReply(env: Env): Promise<{
       `最近错误：${(recentErrors[0]?.msg || "").slice(0, 80)}\n` +
       `时间：${new Date(now).toLocaleString()}\n` +
       `（本条为机器人自监控消息，10 分钟内不会重复）`;
-
-    // 发到"自己"——通过 ilink 消息，需要 context_token。
-    // 这里复用当前轮第一条非空消息的 context_token；若没有就走 sendMessage 空 token（不保证成功）。
     try {
       ilink
         .replyText(creds.token, creds.userId, "", alertText, creds.baseUrl)
@@ -348,6 +457,7 @@ async function pollAndReply(env: Env): Promise<{
   return {
     pulled: msgs.length,
     handled,
+    queued,
     latencyMs: (() => { const ms = Date.now() - start; stats.lastLatencyMs = ms; return ms; })(),
   };
 }
@@ -357,18 +467,52 @@ async function pollAndReply(env: Env): Promise<{
 // ======================================================================
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
+    // 启动时注入 R2 (在 Worker 首次请求时做一次即可, 多次调用也幂等)
+    bindR2(env.CLAWBOT_R2);
+
     const url = new URL(request.url);
     const path = url.pathname;
     const method = request.method;
+    const clientIP =
+      request.headers.get("CF-Connecting-IP") ||
+      request.headers.get("X-Forwarded-For") ||
+      "unknown";
 
     if (path === "/healthz")
       return json({ ok: true, time: new Date().toISOString() });
 
-    // ---------- 扫码登录 ----------
+    // ---------- 扫码登录（需要管理员密码才能扫） ----------
+    const adminCheck = (): Response | null => {
+      if (needsAdmin(env)) {
+        const header = request.headers.get("Authorization") || "";
+        const q = url.searchParams.get("pwd") || "";
+        const basicOk = (() => {
+          try {
+            const m = header.match(/^Basic\s+(.+)$/i);
+            if (!m) return false;
+            const decoded = atob(m[1]);
+            const colon = decoded.indexOf(":");
+            const pass = colon >= 0 ? decoded.slice(colon + 1) : decoded;
+            return pass === env.ADMIN_PASSWORD;
+          } catch {
+            return false;
+          }
+        })();
+        if (!basicOk && q !== env.ADMIN_PASSWORD) {
+          return new Response(
+            JSON.stringify({ error: "需要管理员密码" }),
+            { status: 401, headers: { "Content-Type": "application/json; charset=utf-8" } }
+          );
+        }
+      }
+      return null;
+    };
+
     if (path === "/api/qrcode" && method === "GET") {
+      const denied = adminCheck();
+      if (denied) return denied;
       try {
         const { key, imgUrl } = await ilink.getQRCode();
-        // 把 key 存在 KV —— 只在登录流程里写一次，不属于高频写
         await env.CLAWBOT_KV.put("clawbot:qrcode_key", key, {
           expirationTtl: 5 * 60,
         });
@@ -379,6 +523,8 @@ export default {
     }
 
     if (path === "/api/qrcode-status" && method === "GET") {
+      const denied = adminCheck();
+      if (denied) return denied;
       try {
         const key =
           (await env.CLAWBOT_KV.get("clawbot:qrcode_key")) ||
@@ -404,8 +550,18 @@ export default {
       }
     }
 
-    // ---------- 手动触发一次消息拉取 ----------
+    // ---------- 手动触发一次消息拉取 (需要管理员) ----------
     if (path === "/api/trigger-poll" && method === "POST") {
+      const denied = adminCheck();
+      if (denied) return denied;
+      // 可选: Turnstile 机器人检查
+      if (env.TURNSTILE_SECRET_KEY) {
+        const tsToken = request.headers.get("X-Turnstile-Token") ||
+          url.searchParams.get("turnstile") || "";
+        if (!await verifyTurnstile(tsToken, env, clientIP)) {
+          return json({ error: "Turnstile 验证失败" }, 403);
+        }
+      }
       const result = await pollAndReply(env);
       return json(result);
     }
@@ -422,7 +578,10 @@ export default {
         hasAi: !!env.AI,
         hasKv: !!env.CLAWBOT_KV,
         hasDb: !!env.CLAWBOT_DB,
-        version: "v1.4-d1",
+        hasQueue: !!env.CLAWBOT_QUEUE,
+        hasR2: !!env.CLAWBOT_R2,
+        needAdmin: needsAdmin(env),
+        version: "v1.5-cloudflare-suite",
         stats: getStatsSnapshot(),
       });
     }
@@ -437,8 +596,33 @@ export default {
       return json({ hours, data });
     }
 
+    // ---------- R2 长期对话历史查询 (需要管理员) ----------
+    if (path === "/api/r2-history" && method === "GET") {
+      const denied = adminCheck();
+      if (denied) return denied;
+      const userId = url.searchParams.get("user") || "all";
+      const limit = Math.max(1, Math.min(100, parseInt(url.searchParams.get("limit") || "20", 10)));
+      if (!env.CLAWBOT_R2) return json({ error: "未配置 R2" }, 400);
+      try {
+        const prefix = userId === "all" ? "history/" : `history/${userId}/`;
+        const listed = await env.CLAWBOT_R2.list({ prefix, limit } as any);
+        const items: Array<{ key: string; ts: number; content: string }> = [];
+        for (const obj of listed.objects || []) {
+          try {
+            const body = await env.CLAWBOT_R2.get(obj.key);
+            if (body) items.push({ key: obj.key, ts: obj.uploaded.getTime(), content: (await body.text()).slice(0, 500) });
+          } catch {}
+        }
+        return json({ prefix, count: items.length, items });
+      } catch (e) {
+        return json({ error: String(e) }, 500);
+      }
+    }
+
     // ---------- 退出登录 ----------
     if (path === "/api/logout" && method === "POST") {
+      const denied = adminCheck();
+      if (denied) return denied;
       await deleteCredentials(env);
       return json({ ok: true });
     }
@@ -452,7 +636,12 @@ export default {
 
         // 先试关键词
         const cmd = tryHandleCommand(message);
-        if (cmd.handled) return json({ reply: cmd.reply || "", source: "shortcut" });
+        if (cmd.handled) {
+          const uid = body.userId || "web_user";
+          writeHistory(uid, "user", message).catch(() => {});
+          writeHistory(uid, "assistant", cmd.reply || "", { source: "shortcut" }).catch(() => {});
+          return json({ reply: cmd.reply || "", source: "shortcut" });
+        }
 
         const uid = body.userId || "web_user";
         const reply = await turnAndSave(env.AI, uid, message, env.AI_SYSTEM_PROMPT);
@@ -462,13 +651,13 @@ export default {
       }
     }
 
-    // ---------- 扫码登录页 ----------
-    if (path === "/login") return html(LOGIN_PAGE);
+    // ---------- 扫码登录页（含管理员密码输入框）----------
+    if (path === "/login") return html(LOGIN_PAGE(env, needsAdmin(env)));
 
     // ---------- 管理面板 ----------
     if (path === "/" || path === "") {
       const creds = await getCredentials(env);
-      return html(HOME_PAGE(env, !!creds));
+      return html(HOME_PAGE(env, !!creds, needsAdmin(env)));
     }
 
     return json({ error: "Not Found" }, 404);
@@ -482,24 +671,86 @@ export default {
       console.error("[cron] error:", e);
     }
   },
+
+  // Queue 消费者：逐条处理入队消息
+  async queue(batch: MessageBatch, env: Env): Promise<void> {
+    const handledBy = new Set<string>();
+    for (const m of batch.messages) {
+      try {
+        const body = (m.body || {}) as {
+          msg_id?: string;
+          from_user_id: string;
+          context_token: string;
+          create_time?: number;
+          text: string;
+          baseUrl: string;
+          token: string;
+        };
+        const from = body.from_user_id;
+        const text = body.text || "";
+
+        const seenKey = body.msg_id || `${body.create_time || Date.now()}:${from}`;
+        if (await markMessageSeen(seenKey)) {
+          m.ack();
+          continue;
+        }
+        if (handledBy.has(from)) {
+          await new Promise((r) => setTimeout(r, 220));
+        }
+
+        const cmd = tryHandleCommand(text);
+        if (cmd.handled) {
+          if (cmd.reset) await clearContext(from);
+          await ilink.replyText(body.token, from, body.context_token, cmd.reply || "ok", body.baseUrl);
+          stats.shortcuts++;
+          stats.handled++;
+          handledBy.add(from);
+          m.ack();
+          continue;
+        }
+
+        ilink.sendTyping(body.token, from, true, body.baseUrl).catch(() => {});
+        const reply = await turnAndSave(env.AI, from, text, env.AI_SYSTEM_PROMPT);
+        await ilink.replyText(body.token, from, body.context_token, reply, body.baseUrl);
+        stats.aiCalls++;
+        stats.handled++;
+        handledBy.add(from);
+        m.ack();
+      } catch (e) {
+        console.error("[queue] error", e);
+        // 失败则 retry（Cloudflare Queue 自动重试至多 3 次后入死信）
+        m.retry();
+      }
+    }
+
+    // 每批消费完后也写一次 D1 统计
+    writeHourlyStats(env).catch(() => {});
+  },
 };
 
 // ======================================================================
 //  HTML 页面
 // ======================================================================
-function HOME_PAGE(env: Env, loggedIn: boolean): string {
+function HOME_PAGE(env: Env, loggedIn: boolean, needAdmin: boolean): string {
   const statusBadge = (ok: boolean, text: string) =>
     `<span class="badge ${ok ? "ok" : "bad"}">${ok ? "✓" : "✗"} ${text}</span>`;
+
+  const turnstileScript = env.TURNSTILE_SITE_KEY
+    ? `<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>`
+    : "";
+  const turnstileWidget = env.TURNSTILE_SITE_KEY
+    ? `<div class="cf-turnstile" data-sitekey="${env.TURNSTILE_SITE_KEY}"></div>`
+    : "";
 
   return `<!doctype html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>🦞 爪爪 ClawBot AI · 优化版</title>
+<title>🦞 爪爪 ClawBot AI · Cloudflare Suite</title>
 <style>
   body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Helvetica Neue",Arial,sans-serif;background:linear-gradient(135deg,#fff0f5 0%,#f0f7ff 50%,#f5efff 100%);min-height:100vh;color:#222}
-  .wrap{max-width:820px;margin:0 auto;padding:32px 20px 80px}
+  .wrap{max-width:880px;margin:0 auto;padding:32px 20px 80px}
   .card{background:#fff;border-radius:18px;padding:22px;margin-bottom:18px;box-shadow:0 8px 28px rgba(0,0,0,.06)}
   h1{margin:0 0 4px;font-size:28px;color:#ff4d8d}
   .sub{color:#666;font-size:14px;margin-bottom:12px}
@@ -507,6 +758,7 @@ function HOME_PAGE(env: Env, loggedIn: boolean): string {
   .btn{background:linear-gradient(135deg,#ff6b9d,#ff8c5a);color:#fff;border:0;padding:10px 22px;border-radius:999px;font-size:14px;font-weight:600;cursor:pointer}
   .btn.secondary{background:#f3f3f7;color:#555}
   .btn.danger{background:linear-gradient(135deg,#ff6b6b,#ee5a6f)}
+  .input{flex:1;border:1px solid #eee;border-radius:999px;padding:10px 18px;font-size:14px}
   .kv{display:grid;grid-template-columns:auto 1fr;gap:4px 16px;font-size:13px}
   .kv b{color:#555}
   pre.code{background:#1e2230;color:#f5f5f5;padding:14px;border-radius:12px;overflow-x:auto;font-size:12px;line-height:1.6}
@@ -516,22 +768,29 @@ function HOME_PAGE(env: Env, loggedIn: boolean): string {
   .msg.u{text-align:right}.msg.u .bubble{background:linear-gradient(135deg,#ff6b9d,#ff8c5a);color:#fff;display:inline-block;text-align:left}
   .msg.b .bubble{background:#fff;border:1px solid #eee;display:inline-block}
   h2{font-size:18px;margin:0 0 8px;color:#ff4d8d}
+  h3{font-size:14px;margin:14px 0 4px;color:#ff4d8d}
   .badge{display:inline-block;padding:5px 12px;border-radius:999px;font-size:12px;font-weight:600}
   .badge.ok{background:#e8f8ee;color:#147a3e}
   .badge.bad{background:#fde6e6;color:#a33}
+  .notice{background:#fff8e1;border:1px solid #ffd54f;border-radius:12px;padding:12px;font-size:13px;color:#665c00;margin-bottom:12px}
 </style>
 </head>
 <body>
+${turnstileScript}
 <div class="wrap">
   <div class="card">
-    <h1>🦞 爪爪 ClawBot AI · v1.2</h1>
-    <div class="sub">Cloudflare Workers + Worker AI · 上下文走 Cache API · 零 KV 高频写 · AI 输出微信友好格式化</div>
+    <h1>🦞 爪爪 ClawBot AI · v1.5 Cloudflare Suite</h1>
+    <div class="sub">Workers + Worker AI + D1 + Queues + R2 + Turnstile · 全 Cloudflare 套件</div>
     <div class="row">
       ${statusBadge(loggedIn, "已登录微信")}
-      ${statusBadge(true, "Worker AI 已绑定")}
-      ${statusBadge(true, "KV 凭证存储")}
-      ${statusBadge(true, "Cache API 上下文/去重")}
+      ${statusBadge(true, "Worker AI")}
+      ${statusBadge(!!env.CLAWBOT_KV, "KV 凭证")}
+      ${statusBadge(!!env.CLAWBOT_DB, "D1 统计")}
+      ${statusBadge(!!env.CLAWBOT_QUEUE, "Queues 异步")}
+      ${statusBadge(!!env.CLAWBOT_R2, "R2 历史")}
+      ${statusBadge(!!env.TURNSTILE_SECRET_KEY, "Turnstile")}
     </div>
+    ${needAdmin ? `<div class="notice" style="margin-top:12px">🔐 管理功能受密码保护，请把 <code>?pwd=你的密码</code> 加到 URL 后，或在下方输入密码后使用管理功能。</div>` : ""}
   </div>
 
   <div class="card">
@@ -546,11 +805,11 @@ function HOME_PAGE(env: Env, loggedIn: boolean): string {
       <b>上次轮询</b><span>—</span>
       <b>上次耗时</b><span>—</span>
     </div>
-    <h3 style="margin-top:14px">📈 过去 24 小时统计</h3>
+    <h3>📈 过去 24 小时统计</h3>
     <div id="history-24h" class="sub" style="white-space:pre-wrap">加载中...</div>
-    <h3 style="margin-top:14px">📆 过去 7 天统计</h3>
+    <h3>📆 过去 7 天统计</h3>
     <div id="history-7d" class="sub" style="white-space:pre-wrap">加载中...</div>
-    <h3 style="margin-top:14px">🚨 最近错误</h3>
+    <h3>🚨 最近错误</h3>
     <div id="recent-errors" class="sub" style="white-space:pre-wrap">暂无</div>
   </div>
 
@@ -558,7 +817,8 @@ function HOME_PAGE(env: Env, loggedIn: boolean): string {
     <h2>📱 1. 扫码登录微信</h2>
     <div class="sub">在微信 → 设置 → 插件 → ClawBot 里扫描二维码。</div>
     <div class="row">
-      <button class="btn" onclick="location.href='/login'">去扫码登录</button>
+      ${needAdmin ? `<input id="login-pwd" class="input" placeholder="管理员密码（可选）" style="max-width:220px"/>` : ""}
+      <button class="btn" onclick="goLogin()">去扫码登录</button>
       ${loggedIn ? `<button class="btn danger" onclick="logout()">退出登录</button>` : ""}
     </div>
   </div>
@@ -567,21 +827,36 @@ function HOME_PAGE(env: Env, loggedIn: boolean): string {
     <h2>📡 2. 拉取 &amp; 回复消息</h2>
     <div class="kv">
       <b>调度器</b><span>cron 每 2 分钟自动触发</span>
-      <b>长轮询时间</b><span>每次 ~4s（避免超时 Worker 免费额度）</span>
+      <b>长轮询时间</b><span>每次 ~4s</span>
       <b>去重策略</b><span>msg_id → Cache API，零写额度</span>
-      <b>文本格式化</b><span>自动移除 code fence / markdown / HTML</span>
+      <b>异步处理</b><span>${env.CLAWBOT_QUEUE ? "配置了 Queue：拉取后异步消费，防止 cron 超时" : "同步处理（未配置 Queue）"}</span>
     </div>
-    <button class="btn" style="margin-top:12px" onclick="triggerPoll()">手动触发一次拉取</button>
+    ${turnstileWidget ? `<div style="margin-top:12px">${turnstileWidget}</div>` : ""}
+    <div class="row" style="align-items:center">
+      ${needAdmin ? `<input id="poll-pwd" class="input" placeholder="管理员密码" style="max-width:220px"/>` : ""}
+      <button class="btn" onclick="triggerPoll()">手动触发一次拉取</button>
+    </div>
     <div id="poll-result" class="sub" style="margin-top:12px"></div>
   </div>
 
   <div class="card">
-    <h2>🤖 3. 直接测试 AI 回复</h2>
+    <h2>📜 3. R2 长期对话历史 ${env.CLAWBOT_R2 ? "" : "(未配置)"}</h2>
+    <div class="sub">查询用户对话历史（仅管理员可用，按用户/时间倒序列出）。</div>
+    <div class="row" style="align-items:center">
+      ${needAdmin ? `<input id="r2-pwd" class="input" placeholder="管理员密码" style="max-width:180px"/>` : ""}
+      <input id="r2-user" class="input" placeholder="用户 ID（留空=全部）" style="max-width:220px"/>
+      <button class="btn" onclick="queryR2()">查询</button>
+    </div>
+    <div id="r2-result" class="sub" style="white-space:pre-wrap;margin-top:12px">点击按钮查询</div>
+  </div>
+
+  <div class="card">
+    <h2>🤖 4. 直接测试 AI 回复</h2>
     <div id="chat" class="chat-box">
-      <div class="msg b"><div class="bubble">你好！我是爪爪 AI。<br/>💡 常见问题（例如"你好"、"几点了"）会走本地快捷回复表，零 Token 消耗。<br/>相同问题在 12 小时内会走 Cache 缓存，不重复调用 AI。</div></div>
+      <div class="msg b"><div class="bubble">你好！我是爪爪 AI。<br/>💡 常见问题走本地快捷回复表，零 Token 消耗。<br/>相同问题 12 小时内走 Cache 缓存。</div></div>
     </div>
     <div style="display:flex;gap:8px;margin-top:10px">
-      <input id="inp" style="flex:1;border:1px solid #eee;border-radius:999px;padding:10px 18px;font-size:14px" placeholder="输入你的问题，回车发送..."/>
+      <input id="inp" class="input" placeholder="输入你的问题，回车发送..."/>
       <button class="btn" onclick="sendChat()">发送</button>
     </div>
   </div>
@@ -601,17 +876,40 @@ function HOME_PAGE(env: Env, loggedIn: boolean): string {
     <h2>🔧 部署 &amp; 配置</h2>
     <pre class="code">npm install
 wrangler login
+wrangler kv:namespace create CLAWBOT_KV          # 凭证（必需）
+wrangler d1 create clawbot-stats                 # 统计（可选）
+wrangler d1 execute clawbot-stats --file=./schema.sql
+wrangler r2 bucket create clawbot-history        # 长期历史（可选）
+wrangler queues create clawbot-messages          # 异步队列（可选）
 wrangler deploy
-
-# 首次登录
-# 打开 https://<你的 worker 域名>/login 扫码
-
-# 可选：调整 cron 频率
-# 见 wrangler.toml 的 [triggers] 部分</pre>
+# 可选: wrangler secret put ADMIN_PASSWORD       # 管理密码
+# 可选: wrangler secret put TURNSTILE_SECRET_KEY  # Turnstile 私钥</pre>
   </div>
 </div>
 
 <script>
+function getPwd(field){
+  const el = document.getElementById(field);
+  return el ? el.value.trim() : '';
+}
+function urlWithPwd(base, field){
+  const pwd = getPwd(field);
+  if(!pwd) return base;
+  return base + (base.includes('?') ? '&' : '?') + 'pwd=' + encodeURIComponent(pwd);
+}
+function getTurnstileToken(){
+  try {
+    const els = document.querySelectorAll('iframe[src*="challenges.cloudflare.com"]');
+    // 简单取第一个 cf-turnstile response
+    const t = document.querySelector('.cf-turnstile');
+    if(!t) return '';
+    // Cloudflare Turnstile 在 widget 上暴露出 response
+    const widget = window.turnstile && window.turnstile.getResponse
+      ? window.turnstile.getResponse() : '';
+    return widget;
+  } catch { return ''; }
+}
+
 async function refreshStats(){
   try {
     const [sRes, h24Res, h7Res] = await Promise.all([
@@ -663,19 +961,49 @@ function renderHistory(id, res, label){
     el.textContent = lines.join('\n');
   }).catch(()=>{ el.textContent = '⚠️ 读取失败'; });
 }
+function goLogin(){
+  const pwd = getPwd('login-pwd');
+  location.href = '/login' + (pwd ? '?pwd=' + encodeURIComponent(pwd) : '');
+}
 async function triggerPoll(){
   const el = document.getElementById('poll-result');
   el.textContent = '调用中...';
   try {
-    const r = await fetch('/api/trigger-poll',{method:'POST'});
+    const url = urlWithPwd('/api/trigger-poll', 'poll-pwd');
+    const ts = getTurnstileToken();
+    const headers: Record<string,string> = {};
+    if(ts) headers['X-Turnstile-Token'] = ts;
+    const r = await fetch(url, {method:'POST', headers});
     const d = await r.json();
     el.innerHTML = '结果: <pre style="background:#fafbff;padding:10px;border-radius:8px;overflow:auto">' + JSON.stringify(d,null,2) + '</pre>';
     refreshStats();
   } catch(e){ el.textContent = '错误：' + e.message; }
 }
+async function queryR2(){
+  const el = document.getElementById('r2-result');
+  el.textContent = '查询中...';
+  try {
+    const user = (document.getElementById('r2-user') as HTMLInputElement)?.value.trim() || '';
+    let base = '/api/r2-history?limit=30';
+    if(user) base += '&user=' + encodeURIComponent(user);
+    const url = urlWithPwd(base, 'r2-pwd');
+    const r = await fetch(url, {cache:'no-store'});
+    const d = await r.json();
+    if(d.error){ el.textContent = '❌ ' + d.error; return; }
+    const items = d.items || [];
+    if(!items.length){ el.textContent = '(无数据)'; return; }
+    el.textContent = items.slice(0,30).map(it => {
+      let content; try { content = JSON.parse(it.content); } catch { content = it.content; }
+      const role = typeof content === 'object' ? (content.role || '?') : 'raw';
+      const text = typeof content === 'object' ? (content.content || '') : content;
+      return new Date(it.ts).toLocaleString() + '  [' + role + '] ' + String(text).slice(0,120);
+    }).join('\n');
+  } catch(e){ el.textContent = '错误：' + e.message; }
+}
 async function logout(){
   if(!confirm('确认退出登录？')) return;
-  await fetch('/api/logout',{method:'POST'});
+  const url = urlWithPwd('/api/logout', 'poll-pwd');
+  await fetch(url, {method:'POST'});
   location.reload();
 }
 const chat = document.getElementById('chat');
@@ -686,7 +1014,7 @@ function addMsg(role,text){
 }
 document.getElementById('inp').addEventListener('keydown',e=>{ if(e.key==='Enter') sendChat(); });
 async function sendChat(){
-  const inp = document.getElementById('inp');
+  const inp = document.getElementById('inp') as HTMLInputElement;
   const q = inp.value.trim(); if(!q) return;
   addMsg('u',q); inp.value='';
   try {
@@ -696,7 +1024,6 @@ async function sendChat(){
     addMsg('b',(d.reply||'') + (d.source==='shortcut' ? ' [快捷回复]' : ''));
   } catch(e){ addMsg('b','错误：'+e.message); }
 }
-// 打开页面先拉一次状态，之后每 30s 刷新
 refreshStats();
 setInterval(refreshStats, 30000);
 </script>
@@ -704,7 +1031,8 @@ setInterval(refreshStats, 30000);
 </html>`;
 }
 
-const LOGIN_PAGE = `<!doctype html>
+function LOGIN_PAGE(_env: Env, needAdmin: boolean): string {
+  return `<!doctype html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8"/>
@@ -721,12 +1049,14 @@ const LOGIN_PAGE = `<!doctype html>
   .status.ok{color:#147a3e;font-weight:600}
   .status.bad{color:#a33}
   .btn{background:linear-gradient(135deg,#ff6b9d,#ff8c5a);color:#fff;border:0;padding:12px 28px;border-radius:999px;font-size:14px;font-weight:600;cursor:pointer}
+  .input{width:100%;border:1px solid #eee;border-radius:999px;padding:10px 18px;font-size:14px;box-sizing:border-box}
 </style>
 </head>
 <body>
 <div class="card">
   <h1>🦞 登录微信 ClawBot</h1>
   <div class="sub">微信 → 设置 → 插件 → ClawBot → 扫描下面的二维码</div>
+  ${needAdmin ? `<div style="margin-bottom:12px"><input id="pwd" class="input" placeholder="管理员密码"/></div>` : ""}
   <div class="qr" id="qr"><button class="btn" onclick="getQR()">获取二维码</button></div>
   <div class="status" id="status">点击按钮开始</div>
 </div>
@@ -734,12 +1064,17 @@ const LOGIN_PAGE = `<!doctype html>
 let timer = null;
 const qrEl = document.getElementById('qr');
 const stEl = document.getElementById('status');
-
+function urlWithPwd(base){
+  const pwdEl = document.getElementById('pwd');
+  const pwd = pwdEl ? (pwdEl as HTMLInputElement).value.trim() : '';
+  return base + (pwd ? (base.includes('?') ? '&' : '?') + 'pwd=' + encodeURIComponent(pwd) : '');
+}
 async function getQR(){
   qrEl.innerHTML = '加载中...'; stEl.textContent = '';
   try {
-    const r = await fetch('/api/qrcode', {cache:'no-store'});
+    const r = await fetch(urlWithPwd('/api/qrcode'), {cache:'no-store'});
     const d = await r.json();
+    if(d.error){ throw new Error(d.error); }
     if(!d.qrcode_img_content) throw new Error('未返回二维码');
     qrEl.innerHTML = '<img src="' + d.qrcode_img_content + '" alt="wechat qrcode"/>';
     stEl.textContent = '请用微信扫描二维码';
@@ -757,7 +1092,7 @@ function startPolling(){
     n++;
     if(n > 60){ clearInterval(timer); stEl.textContent='超时，请重新获取'; return; }
     try {
-      const r = await fetch('/api/qrcode-status',{cache:'no-store'});
+      const r = await fetch(urlWithPwd('/api/qrcode-status'),{cache:'no-store'});
       const d = await r.json();
       if(d.status === 'confirmed'){
         clearInterval(timer);
@@ -781,3 +1116,4 @@ getQR();
 </script>
 </body>
 </html>`;
+}
