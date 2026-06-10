@@ -147,11 +147,14 @@ export async function getQRCodeStatus(
 
 // ---------------------- 消息接收 ----------------------
 
+// Worker on free tier has strict wall-clock limits (~30s max per request).
+// 把 getUpdates 轮询时间从默认 25s 降到 4s —— cron 每分钟都会跑,
+// 不需要在单次请求里长时间等待。
 export async function getUpdates(
   token: string,
-  buf: string,
+  buf: string = "",
   baseUrl = I_LINK_BASE,
-  timeoutMs = 25000
+  timeoutMs = 4000
 ): Promise<GetUpdatesResponse> {
   const url = `${baseUrl}/ilink/bot/getupdates`;
   try {

@@ -15,18 +15,18 @@ main = "src/index.ts"
 compatibility_date = "2024-01-01"
 compatibility_flags = ["nodejs_compat"]
 
-# 每分钟触发一次消息拉取 (可按需调整)
-# 格式: "分 时 日 月 周"
+# 每 2 分钟触发一次消息拉取 (v1.1 优化 —— 降低免费额度占用)
+# 想更实时可改回 "* * * * *"
 [triggers]
-crons = ["* * * * *"]
+crons = ["*/2 * * * *"]
 
 # ===== AI 绑定 =====
 [ai]
 binding = "AI"
 
-# ===== KV 存储 (保存登录凭证、对话上下文、长轮询游标) =====
+# ===== KV 存储 (v1.1 仅保留: bot_token 凭证 + msg_id 去重) =====
+# 对话上下文已迁移到 Cache API, 零写额度消耗
 # 注意: 首次部署前请执行: wrangler kv:namespace create CLAWBOT_KV
-# 把输出的 id 填入下面
 [[kv_namespaces]]
 binding = "CLAWBOT_KV"
 id = "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
