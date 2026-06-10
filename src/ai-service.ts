@@ -126,6 +126,18 @@ function checkSensitive(text: string): string | null {
   return null;
 }
 
+// ---------- 简单事件：AI 每次成功/失败会回调（最多一个监听器）----------
+// 用于：连续失败告警、统计、健康检查。
+// 由 Worker 启动时调用 setAiResultListener 注册。
+type AiResultListener = (ok: boolean, info?: string) => void;
+let _listener: AiResultListener | null = null;
+export function setAiResultListener(l: AiResultListener | null) {
+  _listener = l;
+}
+function emitAiResult(ok: boolean, info?: string) {
+  try { _listener?.(ok, info); } catch {}
+}
+
 // ---------------- 指令处理 ----------------
 export interface CommandResult {
   handled: boolean;
@@ -422,6 +434,7 @@ export async function aiReply(
       putCachedReply(cleanMsg, final); // fire-and-forget
     }
 
+    emitAiResult(true);
     return final;
   } catch (e) {
     console.error("[ai] error:", e);
@@ -429,6 +442,7 @@ export async function aiReply(
     if (cleanMsg.length > 0 && cleanMsg.length <= 40 && ctx.turns.length === 0) {
       putFailMarker(cleanMsg);
     }
+    emitAiResult(false, e instanceof Error ? e.message : String(e));
     return randomFallback();
   }
 }

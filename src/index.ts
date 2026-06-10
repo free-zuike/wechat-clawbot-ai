@@ -28,6 +28,7 @@ import {
   tryHandleCommand,
   turnAndSave,
   clearContext,
+  setAiResultListener,
 } from "./ai-service";
 
 // ---------- KV key 常量 ----------
@@ -108,16 +109,58 @@ async function markMessageSeen(msgId: string): Promise<boolean> {
   }
 }
 
-// ---------- 轻量统计（纯内存，不写存储，冷启动清零）----------
+// ---------- 轻量统计 + 错误环形日志（纯内存，冷启动清零）----------
+interface LogEntry { t: number; ok: boolean; msg?: string; }
+const MAX_LOG = 20;
+const recentErrors: LogEntry[] = [];
+
 const stats = {
   polls: 0,
   handled: 0,
   shortcuts: 0,
   aiCalls: 0,
+  aiFails: 0,
+  consecutiveFails: 0,
   cacheHits: 0,
   lastPollAt: 0,
   lastLatencyMs: 0,
+  alertedAt: 0, // 上次发告警的时间戳，节流用
 };
+
+// ---------- 注册 AI 监听器：成功/失败都会回调 ----------
+setAiResultListener((ok, info) => {
+  if (ok) {
+    stats.aiCalls++;
+    stats.consecutiveFails = 0;
+  } else {
+    stats.aiCalls++;
+    stats.aiFails++;
+    stats.consecutiveFails++;
+    recentErrors.unshift({ t: Date.now(), ok: false, msg: info?.slice(0, 200) });
+    if (recentErrors.length > MAX_LOG) recentErrors.pop();
+  }
+});
+
+// 非 AI 失败（比如网络/ilink 拉取失败）也记一条
+function logNonAiError(msg: string) {
+  recentErrors.unshift({ t: Date.now(), ok: false, msg: msg.slice(0, 200) });
+  if (recentErrors.length > MAX_LOG) recentErrors.pop();
+}
+
+// 给 stats 一个只读导出（主要给管理面板用）
+function getStatsSnapshot() {
+  return {
+    polls: stats.polls,
+    handled: stats.handled,
+    shortcuts: stats.shortcuts,
+    aiCalls: stats.aiCalls,
+    aiFails: stats.aiFails,
+    consecutiveFails: stats.consecutiveFails,
+    lastPollAt: stats.lastPollAt,
+    lastLatencyMs: stats.lastLatencyMs,
+    recentErrors: recentErrors.slice(0, 10),
+  };
+}
 
 // ======================================================================
 //  核心：拉取 + 处理 + 回复
@@ -143,6 +186,7 @@ async function pollAndReply(env: Env): Promise<{
   stats.lastPollAt = Date.now();
 
   if (res.ret !== 0) {
+    logNonAiError(`getUpdates ret=${res.ret}${res.errcode ? " errcode=" + res.errcode : ""}`);
     return {
       pulled: 0,
       handled: 0,
@@ -214,6 +258,30 @@ async function pollAndReply(env: Env): Promise<{
     stats.handled++;
     handledBy.add(from);
     handled++;
+  }
+
+  // ---------- 连续失败告警（节流 10 分钟）----------
+  const now = Date.now();
+  if (
+    stats.consecutiveFails >= 3 &&
+    now - stats.alertedAt > 10 * 60 * 1000
+  ) {
+    const alertText =
+      `⚠️ 爪爪自告警\nAI 连续失败 ${stats.consecutiveFails} 次，` +
+      `最近错误：${(recentErrors[0]?.msg || "").slice(0, 80)}\n` +
+      `时间：${new Date(now).toLocaleString()}\n` +
+      `（本条为机器人自监控消息，10 分钟内不会重复）`;
+
+    // 发到"自己"——通过 ilink 消息，需要 context_token。
+    // 这里复用当前轮第一条非空消息的 context_token；若没有就走 sendMessage 空 token（不保证成功）。
+    try {
+      ilink
+        .replyText(creds.token, creds.userId, "", alertText, creds.baseUrl)
+        .catch(() => {});
+      stats.alertedAt = now;
+    } catch {
+      // ignore
+    }
   }
 
   return {
@@ -292,8 +360,8 @@ export default {
         loginAt: creds?.createdAt ? new Date(creds.createdAt).toISOString() : "",
         hasAi: !!env.AI,
         hasKv: !!env.CLAWBOT_KV,
-        version: "v1.2-optimized",
-        stats,
+        version: "v1.3-watchdog",
+        stats: getStatsSnapshot(),
       });
     }
 
@@ -397,12 +465,17 @@ function HOME_PAGE(env: Env, loggedIn: boolean): string {
   <div class="card">
     <h2>📊 实时状态</h2>
     <div id="live-stats" class="kv">
+      <b>登录状态</b><span>—</span>
       <b>轮询次数</b><span>—</span>
       <b>处理消息</b><span>—</span>
       <b>AI 调用</b><span>—</span>
-      <b>快捷回复</b><span>—</span>
+      <b>AI 失败</b><span>—</span>
+      <b>连续失败</b><span>—</span>
       <b>上次轮询</b><span>—</span>
+      <b>上次耗时</b><span>—</span>
     </div>
+    <h3 style="margin-top:14px">🚨 最近错误</h3>
+    <div id="recent-errors" class="sub" style="white-space:pre-wrap">暂无</div>
   </div>
 
   <div class="card">
@@ -469,16 +542,35 @@ async function refreshStats(){
     const d = await r.json();
     const s = d.stats || {};
     const el = document.getElementById('live-stats');
-    if(!el) return;
-    const fmt = (v)=> v == null ? '—' : v;
-    const last = s.lastPollAt ? new Date(s.lastPollAt).toLocaleString() : '从未';
-    el.innerHTML =
-      '<b>登录状态</b><span>' + (d.loggedIn ? '✅' : '❌') + '</span>' +
-      '<b>轮询次数</b><span>' + fmt(s.polls) + '</span>' +
-      '<b>累计处理消息</b><span>' + fmt(s.handled) + '</span>' +
-      '<b>AI 调用</b><span>' + fmt(s.aiCalls) + '</span>' +
-      '<b>快捷回复</b><span>' + fmt(s.shortcuts) + '</span>' +
-      '<b>上次轮询</b><span>' + last + '</span>';
+    const errs = document.getElementById('recent-errors');
+    if(!el) {
+      const fmt = (v)=> v == null ? '—' : v;
+      const last = s.lastPollAt ? new Date(s.lastPollAt).toLocaleString() : '从未';
+      const latency = (s.lastLatencyMs == null ? '—' : s.lastLatencyMs + ' ms';
+      const consecBadge = (s.consecutiveFails || 0) === 0
+        ? '✅ 0'
+        : '🔥 ' + s.consecutiveFails;
+      el.innerHTML =
+        '<b>登录状态</b><span>' + (d.loggedIn ? '✅' : '❌') + '</span>' +
+        '<b>轮询次数</b><span>' + fmt(s.polls) + '</span>' +
+        '<b>累计处理</b><span>' + fmt(s.handled) + '</span>' +
+        '<b>AI 调用</b><span>' + fmt(s.aiCalls) + '</span>' +
+        '<b>AI 失败</b><span>' + fmt(s.aiFails) + '</span>' +
+        '<b>连续失败</b><span>' + consecBadge + '</span>' +
+        '<b>上次轮询</b><span>' + last + '</span>' +
+        '<b>上次耗时</b><span>' + latency + '</span>';
+    }
+    if(errs){
+      const list = (s.recentErrors && s.recentErrors.length ? s.recentErrors : [];
+      if(!list.length){
+        errs.textContent = '✅ 最近无错误';
+      } else {
+        errs.innerHTML = list.map(e => {
+          const t = new Date(e.t).toLocaleString();
+          return t + '  —— ' + (e.msg || '(无消息)';
+        }).join('\n');
+      }
+    }
   } catch(e){}
 }
 async function triggerPoll(){
