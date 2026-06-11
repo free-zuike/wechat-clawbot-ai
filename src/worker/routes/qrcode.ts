@@ -40,28 +40,97 @@ export async function handleQRCodeStatus(request: Request, env: Env): Promise<Re
     console.log("[qrcode-status] received status:", JSON.stringify(status));
     
     if (status.status === "confirmed" && status.bot_token) {
+      const baseUrl = status.baseurl || "https://ilinkai.weixin.qq.com";
+      const botId = status.ilink_bot_id || "";
+      const fullToken = status.bot_token;
+      const tokenParts = fullToken.split(":");
+      const tokenAfterColon = tokenParts.length >= 2 ? tokenParts.slice(1).join(":") : fullToken;
+
+      // 扫码确认后，立即尝试多种方式建立 session（token 有效期可能只有几秒）
+      const sessionAttempts: any[] = [];
+      let workingToken: string | null = null;
+      let workingAuth: string | null = null;
+      let workingBody: any = null;
+      let workingResponse: any = null;
+
+      const attempts = [
+        { auth: `Bearer ${fullToken}`, body: { get_updates_buf: "" } },
+        { auth: `Bearer ${tokenAfterColon}`, body: { get_updates_buf: "" } },
+        { auth: `Bearer ${tokenAfterColon}`, body: { get_updates_buf: "", ilink_bot_id: botId } },
+        { auth: `Bot ${tokenAfterColon}`, body: { get_updates_buf: "", ilink_bot_id: botId } },
+        { auth: null, body: { get_updates_buf: "", token: tokenAfterColon, ilink_bot_id: botId } },
+        { auth: null, body: { get_updates_buf: "", bot_token: fullToken, ilink_bot_id: botId } },
+        { auth: `${botId} ${tokenAfterColon}`, body: { get_updates_buf: "" } },
+        { auth: `Bearer ${fullToken}`, body: { get_updates_buf: "", ilink_bot_id: botId, ilink_user_id: status.ilink_user_id || "" } },
+      ];
+
+      for (let i = 0; i < attempts.length; i++) {
+        const a = attempts[i];
+        try {
+          const ctrl = new AbortController();
+          const timer = setTimeout(() => ctrl.abort(), 6000);
+          const headers: Record<string, string> = { "Content-Type": "application/json", "iLink-App-ClientVersion": "1" };
+          if (a.auth) headers["Authorization"] = a.auth;
+          const r = await fetch(`${baseUrl}/ilink/bot/getupdates`, {
+            method: "POST",
+            headers,
+            body: JSON.stringify(a.body),
+            signal: ctrl.signal,
+          });
+          clearTimeout(timer);
+          const text = await r.text();
+          let ret: any = null;
+          let responseData: any = null;
+          try {
+            responseData = JSON.parse(text);
+            ret = responseData.ret !== undefined ? responseData.ret : responseData.errcode;
+          } catch {}
+          sessionAttempts.push({
+            index: i,
+            auth: a.auth ? a.auth.split(" ")[0] + " " + (a.auth.split(" ")[1]?.slice(0, 10) || "...") : "none",
+            httpStatus: r.status,
+            ret,
+            hasMsgs: responseData?.msgs?.length > 0,
+            responseKeys: responseData ? Object.keys(responseData) : [],
+            responsePreview: text.slice(0, 150),
+          });
+          if (ret === 0) {
+            workingToken = a.auth ? (a.auth.includes("Bearer") || a.auth.includes("Bot") ? a.auth.split(" ").slice(1).join(" ") : a.auth) : null;
+            workingAuth = a.auth;
+            workingBody = a.body;
+            workingResponse = responseData;
+            break;
+          }
+        } catch (e: any) {
+          sessionAttempts.push({ index: i, error: e.message });
+        }
+      }
+
       const creds = {
-        token: status.bot_token,
-        accountId: status.ilink_bot_id || "",
+        token: fullToken,
+        tokenAfterColon,
+        workingToken,
+        workingAuth,
+        workingBody,
+        accountId: botId,
         userId: status.ilink_user_id || "",
-        baseUrl: status.baseurl || "https://ilinkai.weixin.qq.com",
+        baseUrl,
         createdAt: Date.now(),
         rawLoginResponse: status.raw,
+        sessionAttempts,
+        sessionOk: !!workingResponse,
       };
       await env.CLAWBOT_KV.put("clawbot:credentials", JSON.stringify(creds));
-      console.log("[qrcode-status] credentials saved with keys:", Object.keys(status.raw || {}));
+      console.log("[qrcode-status] credentials saved, session ok:", !!workingResponse, "attempts:", sessionAttempts.length);
 
-      // 生成 session token
       const sessionToken = generateSessionToken();
       await env.CLAWBOT_KV.put(`clawbot:session:${sessionToken}`, "valid", {
         expirationTtl: 24 * 60 * 60,
       });
 
       await env.CLAWBOT_KV.delete("clawbot:qrcode_key");
-      console.log("[qrcode-status] login confirmed, credentials saved");
 
-      // 返回带有 session cookie 的响应
-      return json({ status: "confirmed", ok: true }, 200, {
+      return json({ status: "confirmed", ok: true, sessionOk: !!workingResponse, attempts: sessionAttempts.length }, 200, {
         "Set-Cookie": createSessionCookie(sessionToken),
       });
     }

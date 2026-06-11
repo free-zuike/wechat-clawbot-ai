@@ -43,12 +43,19 @@ export async function processIncomingMessages(env: Env): Promise<ProcessResult> 
   const aiModel = env.AI_MODEL || kvConfig.aiModel || "";
   console.log("[messaging] AI model:", aiModel);
 
-  // 3. 拉取消息
-  console.log("[messaging] calling getUpdates...");
-  // 尝试把 bot_id 加入请求体（某些 iLink 实现需要）
+  // 3. 拉取消息 - 优先使用扫码时验证过的 auth/body 配置
+  console.log("[messaging] calling getUpdates, has workingAuth:", !!creds.workingAuth, "has workingBody:", !!creds.workingBody);
   const extraBody: any = {};
   if (creds.accountId) extraBody.ilink_bot_id = creds.accountId;
-  const updates = await getUpdates(creds.token, creds.baseUrl, 4000, extraBody);
+  // 优先使用扫码确认时验证过的配置（creds.workingAuth / creds.workingBody）
+  const updates = await getUpdates(
+    creds.token,
+    creds.baseUrl,
+    8000,
+    extraBody,
+    creds.workingAuth || null,
+    creds.workingBody || null
+  );
   console.log("[messaging] getUpdates result - ret:", updates.ret, "msgs count:", updates.msgs?.length || 0);
 
   // 检测 token 是否过期（errcode=-14 是微信 session timeout，负值通常也是认证类错误）

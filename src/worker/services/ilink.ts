@@ -131,55 +131,64 @@ export async function getQRCodeStatus(key: string): Promise<{
 }
 
 // 获取消息更新（轮询拉取）
+// 优先使用已验证的 auth 和 body 配置；如果没有则尝试多种方案
 export async function getUpdates(
   token: string,
   baseUrl = I_LINK_BASE,
   timeoutMs = 4000,
-  extraBody: any = {}
+  extraBody: any = {},
+  customAuth: string | null = null,
+  customBody: any = null
 ): Promise<ILinkUpdatesResponse> {
   const fullUrl = `${baseUrl}/ilink/bot/getupdates`;
-  console.log("[ilink] getUpdates →");
-  console.log("[ilink]   url:", fullUrl);
-  console.log("[ilink]   token (raw):", token);
-  console.log("[ilink]   token length:", token?.length);
-  console.log("[ilink]   extraBody:", JSON.stringify(extraBody));
+  console.log("[ilink] getUpdates → url:", fullUrl);
+  console.log("[ilink]   customAuth:", customAuth ? customAuth.slice(0, 30) + "..." : "none");
+  console.log("[ilink]   customBody:", customBody ? JSON.stringify(customBody).slice(0, 80) : "none");
 
-  // 尝试方案 1: Bearer token in header + bot_id in body
-  const result1 = await tryGetUpdates(fullUrl, token, extraBody, "Bearer");
-  if (result1.ret === 0) return result1;
+  // 有已验证的配置，直接使用
+  if (customAuth || customBody) {
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      "iLink-App-ClientVersion": "1",
+    };
+    if (customAuth) headers["Authorization"] = customAuth;
+    const body = customBody || { get_updates_buf: "", ...extraBody };
+    return await rawGetUpdates(fullUrl, headers, body, timeoutMs, "custom");
+  }
 
-  // 尝试方案 2: Bot token in header
-  const result2 = await tryGetUpdates(fullUrl, token, extraBody, "Bot");
-  if (result2.ret === 0) return result2;
+  // 无已验证配置时，尝试多种方案
+  const attempts = [
+    { auth: `Bearer ${token}`, body: { get_updates_buf: "", ...extraBody }, name: "Bearer" },
+    { auth: `Bearer ${token}`, body: { get_updates_buf: "" }, name: "Bearer-no-extra" },
+    { auth: `Bot ${token}`, body: { get_updates_buf: "", ...extraBody }, name: "Bot" },
+    { auth: null, body: { get_updates_buf: "", token, ...extraBody }, name: "body-token" },
+    { auth: null, body: { get_updates_buf: "", bot_token: token, ...extraBody }, name: "body-bot_token" },
+  ];
 
-  // 尝试方案 3: token 作为 body 字段
-  const body3 = { get_updates_buf: "", token, ...extraBody };
-  const result3 = await tryGetUpdates(fullUrl, null, body3, "body-token");
-  if (result3.ret === 0) return result3;
-
-  // 返回最佳结果（优先用方案1）
-  return result1;
+  let lastResult: ILinkUpdatesResponse = { ret: -1, msgs: [] };
+  for (const a of attempts) {
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      "iLink-App-ClientVersion": "1",
+    };
+    if (a.auth) headers["Authorization"] = a.auth;
+    lastResult = await rawGetUpdates(fullUrl, headers, a.body, timeoutMs, a.name);
+    if (lastResult.ret === 0) break;
+  }
+  return lastResult;
 }
 
-async function tryGetUpdates(
+async function rawGetUpdates(
   url: string,
-  token: string | null,
+  headers: Record<string, string>,
   bodyObj: any,
-  method: string
+  timeoutMs: number,
+  label: string
 ): Promise<ILinkUpdatesResponse> {
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    "iLink-App-ClientVersion": "1",
-  };
-  if (token) {
-    headers["Authorization"] = `Bearer ${token}`;
-  }
-  console.log(`[ilink] tryGetUpdates method=${method} headers:`, JSON.stringify(headers));
-  console.log(`[ilink] tryGetUpdates body:`, JSON.stringify(bodyObj));
-
+  console.log(`[ilink] rawGetUpdates[${label}] → headers:`, JSON.stringify(headers), "body:", JSON.stringify(bodyObj).slice(0, 100));
   try {
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 15000);
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
     const r = await fetch(url, {
       method: "POST",
       headers,
@@ -188,7 +197,7 @@ async function tryGetUpdates(
     });
     clearTimeout(timer);
     const text = await r.text();
-    console.log(`[ilink] tryGetUpdates ${method} → status:`, r.status, "body:", text.slice(0, 300));
+    console.log(`[ilink] rawGetUpdates[${label}] ← status:`, r.status, "body:", text.slice(0, 200));
     if (r.status === 200) {
       try {
         const parsed = JSON.parse(text);
@@ -201,7 +210,7 @@ async function tryGetUpdates(
     }
     return { ret: r.status, msgs: [] };
   } catch (e: any) {
-    console.error(`[ilink] tryGetUpdates ${method} error:`, e.message);
+    console.error(`[ilink] rawGetUpdates[${label}] error:`, e.message);
     return { ret: -1, msgs: [] };
   }
 }
