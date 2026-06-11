@@ -63,7 +63,26 @@ export async function getQRCodeStatus(key: string): Promise<{
   if (!r.ok) return { status: "pending" };
   const data = await r.json();
   console.log("[ilink] qrcode status raw response:", JSON.stringify(data));
-  return data as any;
+  
+  const status = data?.status || data?.ret;
+  const token = data?.bot_token || data?.token;
+  
+  if (status === "confirmed" || status === 1 || (token && status !== "expired")) {
+    return {
+      status: "confirmed",
+      bot_token: token,
+      ilink_bot_id: data?.ilink_bot_id || data?.bot_id,
+      ilink_user_id: data?.ilink_user_id || data?.user_id,
+      baseurl: data?.baseurl || data?.base_url,
+    };
+  }
+  if (status === "scaned" || status === "scanned" || status === 2) {
+    return { status: "scaned" };
+  }
+  if (status === "expired" || status === 4) {
+    return { status: "expired" };
+  }
+  return { status: "pending" };
 }
 
 // 获取消息更新（轮询拉取）
