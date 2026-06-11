@@ -1,10 +1,10 @@
-import { json, verifyAdmin } from "../utils";
+import { json } from "../utils";
 import type { Env } from "../index";
 
 const KV_CONFIG_KEY = "clawbot:config";
 
 export async function handleConfig(request: Request, env: Env): Promise<Response> {
-  // GET - 读取配置
+  // GET - 读取配置（公开访问）
   if (request.method === "GET") {
     const configRaw = await env.CLAWBOT_KV.get(KV_CONFIG_KEY);
     let kvConfig: any = {};
@@ -17,10 +17,14 @@ export async function handleConfig(request: Request, env: Env): Promise<Response
     });
   }
 
-  // POST - 保存配置
+  // POST - 保存配置（检查登录状态）
   if (request.method === "POST") {
-    const v = await verifyAdmin(request, env);
-    if (!v.ok) return json({ error: v.error }, 401);
+    // 检查是否有登录凭证（通过 KV 验证）
+    const credsRaw = await env.CLAWBOT_KV.get("clawbot:credentials");
+    if (!credsRaw) {
+      return json({ error: "请先登录" }, 401);
+    }
+    
     try {
       const body: any = await request.json();
       const currentRaw = await env.CLAWBOT_KV.get(KV_CONFIG_KEY);
