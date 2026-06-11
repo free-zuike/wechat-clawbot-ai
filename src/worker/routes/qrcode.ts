@@ -42,95 +42,100 @@ export async function handleQRCodeStatus(request: Request, env: Env): Promise<Re
     if (status.status === "confirmed" && status.bot_token) {
       const baseUrl = status.baseurl || "https://ilinkai.weixin.qq.com";
       const botId = status.ilink_bot_id || "";
+      const userId = status.ilink_user_id || "";
       const fullToken = status.bot_token;
       const tokenParts = fullToken.split(":");
       const tokenAfterColon = tokenParts.length >= 2 ? tokenParts.slice(1).join(":") : fullToken;
 
-      // 扫码确认后，立即尝试多种方式建立 session（token 有效期可能只有几秒）
+      // 扫码确认后，系统探测连接/激活类接口（可能需要先建立连接）
+      const probeResults: any[] = [];
+      const connectPaths = [
+        "/ilink/bot/connect", "/ilink/bot/open", "/ilink/bot/register",
+        "/ilink/bot/activate", "/ilink/bot/login",
+        "/ilink/bot/health", "/ilink/bot/status",
+      ];
+      for (const p of connectPaths) {
+        try {
+          const ctrl = new AbortController();
+          const t = setTimeout(() => ctrl.abort(), 4000);
+          const headers: Record<string, string> = { "Content-Type": "application/json", "iLink-App-ClientVersion": "1" };
+          const body = JSON.stringify({ bot_token: fullToken, ilink_bot_id: botId });
+          const r = await fetch(`${baseUrl}${p}`, { method: "POST", headers, body, signal: ctrl.signal });
+          clearTimeout(t);
+          const text = await r.text();
+          let parsed: any = null;
+          try { parsed = JSON.parse(text); } catch {}
+          probeResults.push({
+            path: p, httpStatus: r.status,
+            keys: parsed ? Object.keys(parsed) : null,
+            ret: parsed?.ret !== undefined ? parsed.ret : parsed?.errcode,
+            preview: text.slice(0, 200),
+          });
+        } catch (e: any) { probeResults.push({ path: p, error: e.message }); }
+      }
+
+      // 然后尝试多种 getupdates 格式
       const sessionAttempts: any[] = [];
-      let workingToken: string | null = null;
       let workingAuth: string | null = null;
       let workingBody: any = null;
       let workingResponse: any = null;
 
-      const attempts = [
-        { auth: `Bearer ${fullToken}`, body: { get_updates_buf: "" } },
-        { auth: `Bearer ${tokenAfterColon}`, body: { get_updates_buf: "" } },
-        { auth: `Bearer ${tokenAfterColon}`, body: { get_updates_buf: "", ilink_bot_id: botId } },
-        { auth: `Bot ${tokenAfterColon}`, body: { get_updates_buf: "", ilink_bot_id: botId } },
-        { auth: null, body: { get_updates_buf: "", token: tokenAfterColon, ilink_bot_id: botId } },
-        { auth: null, body: { get_updates_buf: "", bot_token: fullToken, ilink_bot_id: botId } },
-        { auth: `${botId} ${tokenAfterColon}`, body: { get_updates_buf: "" } },
-        { auth: `Bearer ${fullToken}`, body: { get_updates_buf: "", ilink_bot_id: botId, ilink_user_id: status.ilink_user_id || "" } },
+      const updatesAttempts = [
+        { auth: `Bearer ${fullToken}`, body: { get_updates_buf: "" }, name: "full-Bearer" },
+        { auth: `Bearer ${fullToken}`, body: { get_updates_buf: "", ilink_bot_id: botId }, name: "full-Bearer-bot" },
+        { auth: `Bearer ${tokenAfterColon}`, body: { get_updates_buf: "" }, name: "short-Bearer" },
+        { auth: `Bearer ${tokenAfterColon}`, body: { get_updates_buf: "", ilink_bot_id: botId }, name: "short-Bearer-bot" },
+        { auth: `Bearer ${tokenAfterColon}`, body: { get_updates_buf: "", ilink_bot_id: botId, ilink_user_id: userId }, name: "short-Bearer-both" },
+        { auth: `Bot ${tokenAfterColon}`, body: { get_updates_buf: "", ilink_bot_id: botId }, name: "short-Bot" },
+        { auth: `Token ${tokenAfterColon}`, body: { get_updates_buf: "", ilink_bot_id: botId }, name: "short-Token" },
+        { auth: null, body: { get_updates_buf: "", token: tokenAfterColon, ilink_bot_id: botId }, name: "body-token-short" },
+        { auth: null, body: { get_updates_buf: "", bot_token: fullToken, ilink_bot_id: botId }, name: "body-bot_token" },
+        { auth: `${botId} ${tokenAfterColon}`, body: { get_updates_buf: "" }, name: "prefix-botId" },
       ];
 
-      for (let i = 0; i < attempts.length; i++) {
-        const a = attempts[i];
+      for (let i = 0; i < updatesAttempts.length; i++) {
+        const a = updatesAttempts[i];
         try {
           const ctrl = new AbortController();
-          const timer = setTimeout(() => ctrl.abort(), 6000);
+          const timer = setTimeout(() => ctrl.abort(), 5000);
           const headers: Record<string, string> = { "Content-Type": "application/json", "iLink-App-ClientVersion": "1" };
           if (a.auth) headers["Authorization"] = a.auth;
           const r = await fetch(`${baseUrl}/ilink/bot/getupdates`, {
-            method: "POST",
-            headers,
-            body: JSON.stringify(a.body),
-            signal: ctrl.signal,
+            method: "POST", headers, body: JSON.stringify(a.body), signal: ctrl.signal,
           });
           clearTimeout(timer);
           const text = await r.text();
           let ret: any = null;
           let responseData: any = null;
-          try {
-            responseData = JSON.parse(text);
-            ret = responseData.ret !== undefined ? responseData.ret : responseData.errcode;
-          } catch {}
+          try { responseData = JSON.parse(text); ret = responseData.ret !== undefined ? responseData.ret : responseData.errcode; } catch {}
           sessionAttempts.push({
-            index: i,
-            auth: a.auth ? a.auth.split(" ")[0] + " " + (a.auth.split(" ")[1]?.slice(0, 10) || "...") : "none",
-            httpStatus: r.status,
-            ret,
-            hasMsgs: responseData?.msgs?.length > 0,
+            name: a.name, httpStatus: r.status, ret,
             responseKeys: responseData ? Object.keys(responseData) : [],
-            responsePreview: text.slice(0, 150),
+            preview: text.slice(0, 200),
           });
           if (ret === 0) {
-            workingToken = a.auth ? (a.auth.includes("Bearer") || a.auth.includes("Bot") ? a.auth.split(" ").slice(1).join(" ") : a.auth) : null;
-            workingAuth = a.auth;
-            workingBody = a.body;
-            workingResponse = responseData;
-            break;
+            workingAuth = a.auth; workingBody = a.body; workingResponse = responseData; break;
           }
-        } catch (e: any) {
-          sessionAttempts.push({ index: i, error: e.message });
-        }
+        } catch (e: any) { sessionAttempts.push({ name: a.name, error: e.message }); }
       }
 
       const creds = {
-        token: fullToken,
-        tokenAfterColon,
-        workingToken,
-        workingAuth,
-        workingBody,
-        accountId: botId,
-        userId: status.ilink_user_id || "",
-        baseUrl,
+        token: fullToken, tokenAfterColon, workingAuth, workingBody,
+        accountId: botId, userId, baseUrl,
         createdAt: Date.now(),
         rawLoginResponse: status.raw,
-        sessionAttempts,
+        probeResults, sessionAttempts,
         sessionOk: !!workingResponse,
       };
       await env.CLAWBOT_KV.put("clawbot:credentials", JSON.stringify(creds));
-      console.log("[qrcode-status] credentials saved, session ok:", !!workingResponse, "attempts:", sessionAttempts.length);
+      console.log("[qrcode-status] credentials saved, session ok:", !!workingResponse);
 
       const sessionToken = generateSessionToken();
-      await env.CLAWBOT_KV.put(`clawbot:session:${sessionToken}`, "valid", {
-        expirationTtl: 24 * 60 * 60,
-      });
-
+      await env.CLAWBOT_KV.put(`clawbot:session:${sessionToken}`, "valid", { expirationTtl: 24 * 60 * 60 });
       await env.CLAWBOT_KV.delete("clawbot:qrcode_key");
 
-      return json({ status: "confirmed", ok: true, sessionOk: !!workingResponse, attempts: sessionAttempts.length }, 200, {
+      return json({ status: "confirmed", ok: true, sessionOk: !!workingResponse,
+        probe: probeResults.length, updates: sessionAttempts.length }, 200, {
         "Set-Cookie": createSessionCookie(sessionToken),
       });
     }
