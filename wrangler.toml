@@ -33,3 +33,11 @@ preview_id = "2fac06f019ce476084f5066e432a1183"
 binding = "CLAWBOT_R2"
 bucket_name = "clawbot-history"
 preview_bucket_name = "clawbot-history"
+
+# ===== 开启日志 =====
+[observability.logs]
+enabled = true
+invocation_logs = true
+
+[observability.traces]
+
