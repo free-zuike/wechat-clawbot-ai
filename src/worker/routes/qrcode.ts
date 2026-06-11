@@ -8,36 +8,45 @@ export async function handleQRCode(request: Request, env: Env): Promise<Response
   if (!v.ok) return json({ error: v.error }, 401);
   try {
     const data = await getQRCode();
-    // 保存 key 到 KV，5 分钟过期
+    // 保存 key 和图片 URL 到 KV，5 分钟过期
     await env.CLAWBOT_KV.put("clawbot:qrcode_key", data.key, {
       expirationTtl: 5 * 60,
     });
-    
-    // 如果 imgUrl 是 HTTP URL，代理获取并转换为 base64（避免 CORS）
-    let imgContent = data.imgUrl;
     if (data.imgUrl.startsWith("http")) {
-      const imgRes = await fetch(data.imgUrl);
-      if (imgRes.ok) {
-        const buffer = await imgRes.arrayBuffer();
-        // Workers 环境没有 Buffer，用原生方式转换（分块处理避免参数过多）
-        const uint8Array = new Uint8Array(buffer);
-        const CHUNK_SIZE = 0x1000;
-        let base64String = "";
-        for (let i = 0; i < uint8Array.length; i += CHUNK_SIZE) {
-          const chunk = uint8Array.slice(i, i + CHUNK_SIZE);
-          base64String += btoa(String.fromCharCode(...chunk));
-        }
-        imgContent = base64String;
-      }
+      await env.CLAWBOT_KV.put("clawbot:qrcode_img_url", data.imgUrl, {
+        expirationTtl: 5 * 60,
+      });
     }
     
-    return json({ qrcode: data.key, qrcode_img_content: imgContent });
+    return json({ qrcode: data.key, qrcode_img_content: "/api/qrcode-image" });
   } catch (e: any) {
     return json({ error: String(e) }, 500);
   }
 }
 
-// 2. 轮询扫码状态
+// 2. 图片代理（避免 CORS）
+export async function handleQRCodeImage(request: Request, env: Env): Promise<Response> {
+  try {
+    const imgUrl = await env.CLAWBOT_KV.get("clawbot:qrcode_img_url");
+    if (!imgUrl) {
+      return new Response("图片未找到", { status: 404 });
+    }
+    const imgRes = await fetch(imgUrl);
+    if (!imgRes.ok) {
+      return new Response("图片获取失败", { status: imgRes.status });
+    }
+    return new Response(imgRes.body, {
+      headers: {
+        "Content-Type": "image/png",
+        "Cache-Control": "no-store",
+      },
+    });
+  } catch (e: any) {
+    return new Response(String(e), { status: 500 });
+  }
+}
+
+// 3. 轮询扫码状态
 export async function handleQRCodeStatus(request: Request, env: Env): Promise<Response> {
   const v = verifyAdmin(request, env);
   if (!v.ok) return json({ error: v.error }, 401);
