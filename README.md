@@ -1,18 +1,29 @@
 # 🦞 爪爪 ClawBot AI —— 微信个人号机器人
 
-基于 **Cloudflare Worker** + **Worker AI**，通过微信官方 **ClawBot / iLink** 协议接入你的微信个人号，实现：
+基于 **Cloudflare Worker** + **Worker AI**，通过微信官方 **ClawBot / iLink** 协议接入你的微信个人号。
 
-- ✅ 微信发文字 → AI 自动回复（支持多轮对话上下文）
-- ✅ 扫码登录、凭证存储在 KV
-- ✅ 网页管理面板：状态监控、AI 测试、手动拉取
-- ✅ JSON API：`POST /api/chat` 直接调 AI
-- ✅ Cron：每分钟自动拉取并处理新消息
-- ✅ 内置指令：`帮助 / 重置 / 关于`
-- ✅ 每用户独立上下文，3 小时自动过期（KV TTL）
+---
 
-使用的 AI 模型：`@cf/meta/llama-3-8b-instruct`
+## ✨ 核心功能
 
-## 快速部署
+| 功能 | 说明 | 依赖组件 |
+| --- | --- | --- |
+| 💬 AI 对话 | 微信发文字 → AI 自动回复（支持多轮上下文） | Worker AI |
+| 🔐 扫码登录 | 官方 iLink 协议，凭证安全存储 | KV |
+| 📊 管理面板 | 实时状态监控、AI 测试、手动拉取 | HTML |
+| ⏰ 自动拉取 | Cron 定时触发，默认每 2 分钟 | Triggers |
+| 📝 内置指令 | `帮助 / 重置 / 关于`，零 Token 消耗 | 本地逻辑 |
+| 🧠 上下文 | 每用户独立，3 小时自动过期 | Cache API |
+| 📜 长期历史 | 对话记录永久保留（可选） | R2 |
+| 📈 统计分析 | 小时级聚合统计 | D1 |
+| 🚀 异步处理 | 消息入队，防止 cron 超时 | Queues |
+| 🔒 安全保护 | 管理接口密码 + Turnstile | Env/Secret |
+
+---
+
+## 🚀 快速部署
+
+### 基础部署（必需）
 
 ```bash
 # 1. 安装依赖
@@ -21,7 +32,7 @@ npm install
 # 2. 登录 Cloudflare
 npx wrangler login
 
-# 3. 创建 KV namespace（首次）
+# 3. 创建 KV namespace（存储凭证）
 npx wrangler kv:namespace create CLAWBOT_KV
 # 把输出的 id 填入 wrangler.toml 的 [[kv_namespaces]]
 
@@ -29,96 +40,247 @@ npx wrangler kv:namespace create CLAWBOT_KV
 npm run deploy
 ```
 
-部署成功后，Cloudflare 会给你一个 Worker URL，例如：
-```
-https://wechat-clawbot-ai.xxx.workers.dev
+### 可选增强（推荐）
+
+```bash
+# 统计数据库（D1）
+npx wrangler d1 create clawbot-stats
+npx wrangler d1 execute clawbot-stats --file=./schema.sql
+# 把 database_id 填入 [[d1_databases]]
+
+# 异步消息队列（Queues）—— 防止 cron 超时
+npx wrangler queues create clawbot-messages
+
+# 长期对话历史（R2）—— 永久存储
+npx wrangler r2 bucket create clawbot-history
+
+# 管理密码（安全）
+npx wrangler secret put ADMIN_PASSWORD
 ```
 
-## 扫码绑定微信
+### 配置文件
 
-1. 打开 `https://<你的域名>/login`
+修改 `wrangler.toml` 填入你的资源 ID：
+
+```toml
+[[kv_namespaces]]
+binding = "CLAWBOT_KV"
+id = "你的 KV ID"
+
+[[d1_databases]]
+binding = "CLAWBOT_DB"
+database_name = "clawbot-stats"
+database_id = "你的 D1 ID"
+
+[[r2_buckets]]
+binding = "CLAWBOT_R2"
+bucket_name = "clawbot-history"
+
+[[queues.producers]]
+binding = "CLAWBOT_QUEUE"
+queue = "clawbot-messages"
+
+[[queues.consumers]]
+queue = "clawbot-messages"
+max_batch_size = 10
+```
+
+---
+
+## 📱 扫码绑定微信
+
+1. 打开 `https://<你的 Worker 域名>/login`
 2. 在微信里：`我 → 设置 → 插件 → ClawBot`
 3. 用微信扫描页面上的二维码
-4. 手机上点确认 → 页面提示“登录成功” → 自动跳回首页
+4. 手机上点确认 → 页面提示"登录成功" → 自动跳回首页
 5. 完成 ✅
 
-现在别人在微信跟你对话，你可以在 `/`（首页）点击「手动触发一次拉取」来立即处理消息。
-Worker 也会按 cron（默认每分钟）自动拉取，处理后回复给微信用户。
+---
 
-## 微信指令
+## 💬 微信指令
 
-在微信里直接发消息：
-
-- `帮助` 或 `help` —— 显示使用指南
-- `重置` 或 `clear` —— 清空你的对话上下文
-- `关于` 或 `about` —— 机器人版本信息
-- 其他文字 —— AI 自动回答
-
-## 路由一览
-
-| 方法 | 路径 | 用途 |
+| 指令 | 效果 | 说明 |
 | --- | --- | --- |
-| GET  | `/`                | 管理面板（状态 + 聊天测试） |
-| GET  | `/login`           | 扫码登录页 |
-| GET  | `/api/qrcode`      | 向微信申请新二维码 |
-| GET  | `/api/qrcode-status` | 轮询扫码状态，成功后保存凭证 |
-| POST | `/api/trigger-poll`| 手动触发一次消息拉取与 AI 回复 |
-| GET  | `/api/status`      | 状态信息 |
-| POST | `/api/logout`      | 退出登录、清除凭证 |
-| POST | `/api/chat`        | `{ message, userId }` → 直接调 AI |
-| GET  | `/healthz`         | 健康检查 |
+| `帮助` / `help` | 显示使用指南 | 不调用 AI |
+| `重置` / `clear` | 清空对话上下文 | 不调用 AI |
+| `关于` / `about` | 版本信息 | 不调用 AI |
+| `你好` / `时间` / `谢谢` | 快捷回复 | 零 Token 消耗 |
+| 其他文字 | AI 自动回答 | 走 Worker AI |
 
-## 安全配置（建议）
+---
 
-在 `wrangler.toml` 或 secret 里设置 `ADMIN_PASSWORD`，这样 `/login`、`/api/trigger-poll` 等管理路径会要求密码。
+## 🌐 路由一览
+
+| 方法 | 路径 | 用途 | 权限 |
+| --- | --- | --- | --- |
+| GET | `/` | 管理面板（状态 + 聊天测试） | 公开 |
+| GET | `/login` | 扫码登录页 | 需密码（若配置） |
+| GET | `/api/qrcode` | 申请新二维码 | 需密码（若配置） |
+| GET | `/api/qrcode-status` | 轮询扫码状态 | 需密码（若配置） |
+| POST | `/api/trigger-poll` | 手动触发消息拉取 | 需密码（若配置） |
+| GET | `/api/status` | 实时状态 JSON | 公开 |
+| GET | `/api/history` | D1 小时统计 | 公开 |
+| GET | `/api/r2-history` | R2 对话历史 | 需密码 |
+| POST | `/api/logout` | 退出登录 | 需密码（若配置） |
+| POST | `/api/chat` | `{ message, userId }` → AI | 公开 |
+| GET | `/healthz` | 健康检查 | 公开 |
+
+---
+
+## 🔒 安全配置
+
+### 管理员密码
+
+设置后，敏感接口需要验证：
 
 ```bash
 wrangler secret put ADMIN_PASSWORD
 ```
 
-然后在访问时用 `?pw=密码` 或在请求头加 `Authorization: Bearer 密码`。
+访问方式：
+- URL 参数：`https://xxx.workers.dev/login?pwd=你的密码`
+- Basic Auth：`Authorization: Basic base64(admin:密码)`
 
-## 架构
+### Turnstile 防机器人（可选）
+
+防止管理接口被自动化调用：
+
+```bash
+wrangler secret put TURNSTILE_SECRET_KEY
+```
+
+---
+
+## 🏗️ 架构
 
 ```
 微信用户 → 微信服务器 (ilinkai.weixin.qq.com)
                           ↑
                           │ HTTP POST getupdates / sendmessage
                           │
-                 Cloudflare Worker (本项目)
+                 ┌─────────────────────────────────────────────────┐
+                 │           Cloudflare Worker (本项目)            │
+                 └─────────────────────────────────────────────────┘
                           │
-              ┌───────────┴───────────┐
-              ▼                       ▼
-         Worker AI (Llama 3)    KV 存储 (凭证 + 上下文)
+        ┌─────────────────┼─────────────────┬─────────────────┐
+        ▼                 ▼                 ▼                 ▼
+   Worker AI           KV (凭证)       Cache API       D1 + R2
+  (Llama 3 8B)        (bot_token)    (上下文/去重)  (统计/历史)
+        │                                        │
+        └────────────────────────────────────────┘
+                          │
+                          ▼
+                    Queues (异步)
 ```
 
-- Worker 用 `getupdates` 短轮询微信服务器拉取新消息（3~5 秒 / 次，由 cron 每分钟触发）
-- 用户文本消息 → 指令检测 → AI 回答 → `sendmessage` 回复
-- 每用户的对话上下文独立保存，3 小时自动过期
+### 存储方案对比
 
-## 文件结构
+| 数据类型 | 存储方式 | TTL | 成本 |
+| --- | --- | --- | --- |
+| 凭证 | KV | 永久 | 低（生命周期写 1 次） |
+| 对话上下文 | Cache API | 3 小时 | 免费 |
+| AI 回复缓存 | Cache API | 12 小时 | 免费 |
+| 消息去重 | Cache API | 2 小时 | 免费 |
+| 统计数据 | D1 | 永久 | 低（每小时 1 条） |
+| 长期历史 | R2 | 永久 | 低（按需） |
+
+---
+
+## 📁 文件结构
 
 ```
 .
-├── wrangler.toml          # Cloudflare 配置
+├── wrangler.toml          # Cloudflare 配置（KV/D1/R2/Queues）
+├── schema.sql             # D1 数据库 schema
 ├── package.json
 ├── tsconfig.json
 └── src/
-    ├── index.ts           # Worker 主入口 + 路由 + HTML 面板
-    ├── ilink.ts           # 微信 iLink 协议客户端 (扫码/发消息/拉消息)
-    └── ai-service.ts      # Worker AI 对话服务 + KV 上下文管理
+    ├── index.ts           # 主入口：路由、Cron、Queue 消费者、管理面板
+    ├── ilink.ts           # iLink 协议：扫码、拉消息、发消息、文本格式化
+    └── ai-service.ts      # AI 服务：上下文管理、敏感词过滤、缓存、R2 写入
 ```
 
-## 常见问题
+---
+
+## ⚙️ 配置项
+
+| 环境变量 | 说明 | 默认值 |
+| --- | --- | --- |
+| `ADMIN_PASSWORD` | 管理密码 | 无（为空则不启用） |
+| `TURNSTILE_SITE_KEY` | Turnstile 公钥 | 无 |
+| `TURNSTILE_SECRET_KEY` | Turnstile 私钥 | 无 |
+| `AI_SYSTEM_PROMPT` | 自定义系统提示词 | 爪爪默认人设 |
+
+---
+
+## 📊 管理面板
+
+访问 `https://<你的域名>/` 查看：
+
+- **实时状态**：轮询次数、AI 调用、错误统计
+- **历史统计**：过去 24 小时 / 7 天数据
+- **AI 测试**：直接对话测试
+- **R2 历史**：查询用户对话记录（需密码）
+
+---
+
+## ❓ 常见问题
 
 **Q: 消息延迟多久？**
-A: cron 默认 1 分钟跑一次，所以最多约 1 分钟延迟。如果你希望更实时，可以 `wrangler dev` 本地轮询，或者 `/api/trigger-poll` 手动触发。
+
+A: Cron 默认每 2 分钟跑一次，最多约 2 分钟延迟。配置 Queues 后更可靠。
 
 **Q: 微信 ClawBot 需要手机端一直在后台吗？**
-A: 不需要。iLink 协议是走微信服务器，和手机是否在线无关。
+
+A: 不需要。iLink 协议走微信服务器，和手机是否在线无关。
 
 **Q: 支持群聊吗？**
-A: iLink 协议的私聊已经稳定；群聊是否支持视微信当前版本策略。当前版本主要面向个人私信。
+
+A: iLink 协议主要面向私聊，群聊支持视微信策略而定。
 
 **Q: 可以换成别的 AI 模型吗？**
-A: 可以。在 `src/ai-service.ts` 修改 `DEFAULT_MODEL`，或在 `wrangler.toml` 里设置 `AI_SYSTEM_PROMPT` 调整机器人人设。
+
+A: 可以。修改 `src/ai-service.ts` 的 `DEFAULT_MODEL`，Worker AI 支持多种模型。
+
+**Q: 免费额度够用吗？**
+
+A: 完全够用。Cache API 代替 KV 后，写入几乎为零；D1 每小时只写 1 条。
+
+---
+
+## 📝 更新日志
+
+### v1.5 Cloudflare Suite（最新）
+
+- ✅ 集成 Cloudflare Queues — 异步消息处理
+- ✅ 集成 R2 — 长期对话历史存储
+- ✅ 集成 Turnstile — 防机器人
+- ✅ 管理员密码保护
+- ✅ 管理面板全面升级
+- ✅ 修复类型错误
+
+### v1.4 D1 统计
+
+- ✅ D1 数据库集成
+- ✅ 小时级聚合统计
+- ✅ 错误环形日志
+
+### v1.3 Cache API 优化
+
+- ✅ Cache API 替代 KV（上下文/去重/缓存）
+- ✅ 零 KV 高频写
+- ✅ AI 回复 12h 缓存
+
+### v1.2 基础功能
+
+- ✅ 微信 iLink 协议接入
+- ✅ Worker AI 对话
+- ✅ 扫码登录
+- ✅ 管理面板
+- ✅ Cron 自动拉取
+
+---
+
+## 📜 许可证
+
+MIT License
