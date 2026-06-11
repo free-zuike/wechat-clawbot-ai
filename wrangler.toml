@@ -22,10 +22,12 @@ main = "src/index.ts"
 compatibility_date = "2024-01-01"
 compatibility_flags = ["nodejs_compat"]
 
+# ===== Cron 触发器 (可选) =====
 # 每 2 分钟触发一次消息拉取
+# 如需启用, 确保 API Token 有 Workers Triggers 权限
 # 想更实时可改回 "* * * * *"
-[triggers]
-crons = ["*/2 * * * *"]
+#[triggers]
+#crons = ["*/2 * * * *"]
 
 # ===== AI 绑定 =====
 [ai]
