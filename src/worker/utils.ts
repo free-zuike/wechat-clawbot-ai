@@ -48,7 +48,15 @@ export async function verifyAdmin(request: Request, env: any): Promise<{ ok: boo
     }
   }
 
-  // 再检查管理员密码（兼容旧方式）
+  // 检查是否有登录凭证（已通过微信扫码登录）
+  if (env.CLAWBOT_KV) {
+    const credsRaw = await env.CLAWBOT_KV.get("clawbot:credentials");
+    if (credsRaw) {
+      return { ok: true };
+    }
+  }
+
+  // 再检查管理员密码（兼容旧方式和初始登录）
   if (!env.ADMIN_PASSWORD || env.ADMIN_PASSWORD.length < 3) {
     return { ok: false, error: "请先配置 ADMIN_PASSWORD（wrangler secret put ADMIN_PASSWORD）" };
   }

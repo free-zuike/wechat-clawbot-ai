@@ -2,7 +2,7 @@ import { json, verifyAdmin, generateSessionToken, createSessionCookie } from "..
 import { getQRCode, getQRCodeStatus } from "../services/ilink";
 import type { Env } from "../index";
 
-// 1. 获取二维码
+// 1. 获取二维码（需要管理员密码）
 export async function handleQRCode(request: Request, env: Env): Promise<Response> {
   console.log("[qrcode] handleQRCode called");
   const v = await verifyAdmin(request, env);
@@ -23,10 +23,8 @@ export async function handleQRCode(request: Request, env: Env): Promise<Response
   }
 }
 
-// 3. 轮询扫码状态
+// 3. 轮询扫码状态（通过二维码key验证，无需密码）
 export async function handleQRCodeStatus(request: Request, env: Env): Promise<Response> {
-  const v = await verifyAdmin(request, env);
-  if (!v.ok) return json({ error: v.error }, 401);
   try {
     const url = new URL(request.url);
     const key =
