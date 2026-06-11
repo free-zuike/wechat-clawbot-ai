@@ -1,0 +1,289 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", Arial, sans-serif;
+  background: #f5f7fa;
+  min-height: 100vh;
+  color: #222;
+}
+
+/* Layout */
+.app-layout {
+  display: flex;
+  min-height: 100vh;
+}
+
+.sidebar {
+  width: 240px;
+  background: linear-gradient(180deg, #ff6b9d 0%, #ff8c5a 100%);
+  color: #fff;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+}
+
+.sidebar h1 {
+  font-size: 18px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.sidebar .sub {
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 12px;
+  margin-bottom: 20px;
+}
+
+.sidebar nav {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sidebar nav a {
+  color: #fff;
+  text-decoration: none;
+  padding: 10px 14px;
+  border-radius: 10px;
+  font-size: 14px;
+  transition: all 0.2s;
+}
+
+.sidebar nav a:hover,
+.sidebar nav a.active {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.sidebar .status {
+  margin-top: auto;
+  padding-top: 20px;
+  border-top: 1px solid rgba(255, 255, 255, 0.2);
+  font-size: 12px;
+}
+
+.sidebar .status .badge {
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
+  padding: 4px 10px;
+  border-radius: 999px;
+  display: inline-block;
+  margin-bottom: 4px;
+}
+
+.main-content {
+  flex: 1;
+  padding: 24px;
+  overflow-y: auto;
+}
+
+.wrap {
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+/* Cards */
+.card {
+  background: #fff;
+  border-radius: 16px;
+  padding: 24px;
+  margin-bottom: 18px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06);
+}
+
+.card h2 {
+  font-size: 18px;
+  margin: 0 0 16px;
+  color: #222;
+}
+
+.card .sub {
+  color: #666;
+  font-size: 14px;
+  margin-bottom: 12px;
+}
+
+/* Login */
+.login-container {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #fff0f5, #f0f7ff);
+}
+
+.login-card {
+  background: #fff;
+  border-radius: 22px;
+  padding: 36px 28px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.08);
+  text-align: center;
+  max-width: 420px;
+  width: 90%;
+}
+
+.login-card h1 {
+  color: #ff4d8d;
+  font-size: 24px;
+  margin-bottom: 8px;
+}
+
+/* Buttons & Inputs */
+.btn {
+  background: linear-gradient(135deg, #ff6b9d, #ff8c5a);
+  color: #fff;
+  border: 0;
+  padding: 10px 22px;
+  border-radius: 999px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn.secondary {
+  background: #f3f3f7;
+  color: #555;
+}
+
+.btn.danger {
+  background: linear-gradient(135deg, #ff6b6b, #ee5a6f);
+}
+
+.input {
+  width: 100%;
+  border: 1px solid #eee;
+  border-radius: 10px;
+  padding: 10px 16px;
+  font-size: 14px;
+}
+
+textarea.input {
+  resize: vertical;
+  font-family: inherit;
+}
+
+.row {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+
+.kv {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 16px;
+  font-size: 13px;
+}
+
+.kv b {
+  color: #555;
+}
+
+/* Badges */
+.badge {
+  display: inline-block;
+  padding: 5px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  margin-right: 4px;
+  margin-bottom: 4px;
+}
+
+.badge.ok {
+  background: #e8f8ee;
+  color: #147a3e;
+}
+
+.badge.bad {
+  background: #fde6e6;
+  color: #a33;
+}
+
+.badge.wait {
+  background: #fff8e1;
+  color: #856404;
+}
+
+/* Notice */
+.notice {
+  background: #fff8e1;
+  border: 1px solid #ffd54f;
+  border-radius: 12px;
+  padding: 12px;
+  font-size: 13px;
+  color: #665c00;
+  margin-bottom: 12px;
+  text-align: left;
+}
+
+/* QR Code */
+.qr {
+  border: 1px dashed #ffb6c8;
+  border-radius: 16px;
+  padding: 22px;
+  margin: 16px 0;
+  min-height: 220px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #fffafc;
+}
+
+.qr img {
+  max-width: 220px;
+  max-height: 220px;
+}
+
+/* Chat */
+.chat-box {
+  height: 320px;
+  overflow-y: auto;
+  padding: 12px;
+  background: #fafbff;
+  border-radius: 14px;
+  border: 1px solid #eee;
+}
+
+.msg {
+  margin: 8px 0;
+}
+
+.msg.u {
+  text-align: right;
+}
+
+.msg .bubble {
+  padding: 10px 14px;
+  border-radius: 14px;
+  max-width: 80%;
+  line-height: 1.5;
+  font-size: 14px;
+  display: inline-block;
+}
+
+.msg.u .bubble {
+  background: linear-gradient(135deg, #ff6b9d, #ff8c5a);
+  color: #fff;
+}
+
+.msg.b .bubble {
+  background: #fff;
+  border: 1px solid #eee;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .app-layout {
+    flex-direction: column;
+  }
+
+  .sidebar {
+    width: auto;
+    position: relative;
+  }
+}
