@@ -13,6 +13,7 @@
     "tail": "wrangler tail"
   },
   "dependencies": {
+    "qrcode": "^1.5.4",
     "vue": "^3.4.0",
     "vue-router": "^4.3.0"
   },

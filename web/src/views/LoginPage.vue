@@ -48,6 +48,7 @@
 import { ref, onUnmounted, onMounted } from "vue";
 import { useRouter } from "vue-router";
 import { getQRCode, getQRCodeStatus, checkLogin } from "../api";
+import QRCode from "qrcode";
 
 const router = useRouter();
 
@@ -93,11 +94,22 @@ async function startLogin() {
       return;
     }
     qrCode.value = data.qrcode;
-    const rawUrl = data.qrcode_img_content;
-    console.log('Raw QR image URL:', rawUrl);
-    const cleanedUrl = rawUrl.trim().replace(/^`+|`+$/g, "").trim();
-    console.log('Cleaned URL:', cleanedUrl);
-    qrImage.value = cleanedUrl;
+    // 使用 qrcode 库生成二维码图片
+    try {
+      qrImage.value = await QRCode.toDataURL(data.qrcode, {
+        width: 200,
+        margin: 2,
+        color: {
+          dark: "#000000",
+          light: "#ffffff",
+        },
+      });
+    } catch (e) {
+      console.error("QR code generation error:", e);
+      error.value = "生成二维码失败";
+      loading.value = false;
+      return;
+    }
     qrStatus.value = "等待扫码...";
     pollStatus();
   } catch (e: any) {
