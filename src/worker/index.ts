@@ -14,6 +14,7 @@ import { handleConfig } from "./routes/config";
 
 export interface Env {
   AI: any;
+  ASSETS: { fetch: (request: Request) => Promise<Response> };
   CLAWBOT_KV: KVNamespace;
   CLAWBOT_DB?: D1Database;
   CLAWBOT_R2?: R2Bucket;
@@ -26,45 +27,6 @@ export interface Env {
 function matchRoute(path: string, pattern: string): boolean {
   if (pattern === "/") return path === "/" || path === "/index.html";
   return path === pattern || path === pattern + "/";
-}
-
-// 读取构建后的静态文件
-const STATIC_FILES: Record<string, string> = {
-  // Worker 会通过 assets 方式提供静态文件
-};
-
-async function serveStatic(url: URL): Promise<Response | null> {
-  const path = url.pathname === "/" ? "/index.html" : url.pathname;
-  
-  // 常见静态文件类型
-  const mimeTypes: Record<string, string> = {
-    ".html": "text/html; charset=utf-8",
-    ".js": "application/javascript",
-    ".css": "text/css",
-    ".json": "application/json",
-    ".png": "image/png",
-    ".jpg": "image/jpeg",
-    ".svg": "image/svg+xml",
-    ".ico": "image/x-icon",
-  };
-
-  const ext = path.substring(path.lastIndexOf("."));
-  const contentType = mimeTypes[ext] || "text/plain";
-
-  try {
-    // 尝试从 dist 目录读取
-    const filePath = path.startsWith("/") ? path.slice(1) : path;
-    const res = await fetch(url.origin + "/" + filePath, { cf: { cacheEverything: false } as any });
-    if (res.ok) {
-      return new Response(res.body, {
-        headers: {
-          "Content-Type": contentType,
-          "Cache-Control": "public, max-age=86400",
-        },
-      });
-    }
-  } catch {}
-  return null;
 }
 
 export default {
@@ -95,19 +57,18 @@ export default {
       return json({ ok: true, time: new Date().toISOString() });
     }
 
-    // 静态资源（JS/CSS/图片等）- 尝试获取
-    const staticRes = await fetch(request.url, { cf: { cacheEverything: true } as any });
-    if (staticRes.ok) {
-      return staticRes;
+    // 静态资源 - 使用 Workers Assets
+    if (env.ASSETS) {
+      return env.ASSETS.fetch(request);
     }
 
-    // SPA 路由 - 所有未匹配的路由返回 index.html
-    const indexHtml = await fetch(request.url.replace(/\/[^/]*$/, "/index.html"), { cf: { cacheEverything: false } as any }).catch(() => null);
-    if (indexHtml?.ok) {
-      return new Response(indexHtml.body, {
-        headers: { "Content-Type": "text/html; charset=utf-8" },
-      });
-    }
+    // 如果没有 ASSETS 绑定，尝试自己获取
+    try {
+      const staticRes = await fetch(request.url, { cf: { cacheEverything: false } as any });
+      if (staticRes.ok) {
+        return staticRes;
+      }
+    } catch {}
 
     return html(NOT_LOGGED_HTML);
   },
