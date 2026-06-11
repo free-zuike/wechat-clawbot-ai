@@ -30,7 +30,7 @@
         <button
           class="btn secondary"
           style="width: 100%; margin-top: 20px"
-          @click="resetLogin"
+          @click="reset"
         >
           重新获取
         </button>
@@ -149,6 +149,8 @@ function reset() {
   qrStatus.value = "";
   error.value = "";
   loggedIn.value = false;
+  // 重新发起登录
+  startLogin();
 }
 
 onUnmounted(() => {
