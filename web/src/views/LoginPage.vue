@@ -24,7 +24,7 @@
       <!-- 二维码 -->
       <template v-else-if="!loggedIn">
         <div class="qr">
-          <img :src="qrImage" alt="QR Code" />
+          <img :key="qrImage" :src="qrImage" alt="QR Code" />
         </div>
         <div v-if="qrStatus" class="badge wait">{{ qrStatus }}</div>
         <button
