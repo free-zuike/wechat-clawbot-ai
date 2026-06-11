@@ -22,15 +22,15 @@
       </template>
 
       <!-- 二维码 -->
-      <template v-else-if="!loggedIn">
+      <template v-else-if="!loggedIn && qrImage">
         <div class="qr">
-          <img :key="qrImage" :src="qrImage" alt="QR Code" />
+          <img :src="qrImage" alt="QR Code" />
         </div>
         <div v-if="qrStatus" class="badge wait">{{ qrStatus }}</div>
         <button
           class="btn secondary"
           style="width: 100%; margin-top: 20px"
-          @click="reset"
+          @click="resetLogin"
         >
           重新获取
         </button>
