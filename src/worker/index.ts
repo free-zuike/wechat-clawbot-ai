@@ -79,10 +79,12 @@ export default {
   },
 
   async scheduled(_event: ScheduledEvent, env: Env): Promise<void> {
+    console.log("[cron] scheduled event triggered at", new Date().toISOString());
     try {
       const { processIncomingMessages } = await import("./services/messaging");
-      await processIncomingMessages(env);
-    } catch (e) {
+      const result = await processIncomingMessages(env);
+      console.log("[cron] result:", JSON.stringify(result));
+    } catch (e: any) {
       console.error("[cron] error:", e);
     }
   },

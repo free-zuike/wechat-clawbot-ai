@@ -102,6 +102,7 @@ export async function getUpdates(
   baseUrl = I_LINK_BASE,
   timeoutMs = 4000
 ): Promise<ILinkUpdatesResponse> {
+  console.log("[ilink] getUpdates called, baseUrl:", baseUrl);
   try {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), timeoutMs);
@@ -116,9 +117,20 @@ export async function getUpdates(
       signal: ctrl.signal,
     });
     clearTimeout(timer);
-    if (r.status === 200) return r.json() as Promise<ILinkUpdatesResponse>;
+    console.log("[ilink] getUpdates status:", r.status);
+    const text = await r.text();
+    console.log("[ilink] getUpdates response:", text.slice(0, 500));
+    if (r.status === 200) {
+      try {
+        return JSON.parse(text) as ILinkUpdatesResponse;
+      } catch (e) {
+        console.error("[ilink] getUpdates JSON parse error:", e);
+        return { ret: r.status, msgs: [] };
+      }
+    }
     return { ret: r.status, msgs: [] };
-  } catch {
+  } catch (e: any) {
+    console.error("[ilink] getUpdates error:", e);
     return { ret: -1, msgs: [] };
   }
 }
@@ -131,6 +143,7 @@ export async function sendTextMessage(
   text: string,
   baseUrl = I_LINK_BASE
 ): Promise<{ ret: number }> {
+  console.log("[ilink] sendTextMessage to:", toUserId, "text:", text.slice(0, 100));
   try {
     const r = await fetch(`${baseUrl}/ilink/bot/sendmessage`, {
       method: "POST",
@@ -147,9 +160,19 @@ export async function sendTextMessage(
         },
       }),
     });
-    if (r.status === 200) return r.json() as Promise<{ ret: number }>;
+    console.log("[ilink] sendTextMessage status:", r.status);
+    const textResp = await r.text();
+    console.log("[ilink] sendTextMessage response:", textResp.slice(0, 300));
+    if (r.status === 200) {
+      try {
+        return JSON.parse(textResp) as { ret: number };
+      } catch {
+        return { ret: r.status };
+      }
+    }
     return { ret: r.status };
-  } catch {
+  } catch (e: any) {
+    console.error("[ilink] sendTextMessage error:", e);
     return { ret: -1 };
   }
 }
