@@ -13,11 +13,57 @@ export async function handleQRCode(request: Request, env: Env): Promise<Response
       expirationTtl: 5 * 60,
     });
     
-    // 直接返回微信的原始图片 URL（浏览器能直接打开）
+    // 代理获取图片并转换为 base64
+    if (data.imgUrl.startsWith("http")) {
+      try {
+        const imgRes = await fetch(data.imgUrl);
+        if (imgRes.ok) {
+          const buffer = await imgRes.arrayBuffer();
+          const base64 = arrayBufferToBase64(buffer);
+          const contentType = imgRes.headers.get("Content-Type") || "image/png";
+          const dataUrl = `data:${contentType};base64,${base64}`;
+          return json({ qrcode: data.key, qrcode_img_content: dataUrl });
+        }
+      } catch (e) {
+        console.error("[qrcode] proxy image error:", e);
+      }
+    }
+    
+    // 失败则返回原始 URL（浏览器可能无法显示，但至少能返回）
     return json({ qrcode: data.key, qrcode_img_content: data.imgUrl });
   } catch (e: any) {
     return json({ error: String(e) }, 500);
   }
+}
+
+// ArrayBuffer 转 Base64（Workers 环境兼容）
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  const len = bytes.length;
+  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  let result = "";
+  
+  for (let i = 0; i < len; i += 3) {
+    const b1 = bytes[i];
+    const b2 = bytes[i + 1] || 0;
+    const b3 = bytes[i + 2] || 0;
+    
+    const c1 = (b1 >> 2) & 0x3F;
+    const c2 = ((b1 & 0x03) << 4) | ((b2 >> 4) & 0x0F);
+    const c3 = ((b2 & 0x0F) << 2) | ((b3 >> 6) & 0x03);
+    const c4 = b3 & 0x3F;
+    
+    result += chars[c1] + chars[c2] + chars[c3] + chars[c4];
+  }
+  
+  const padding = len % 3;
+  if (padding === 1) {
+    result = result.slice(0, -2) + "==";
+  } else if (padding === 2) {
+    result = result.slice(0, -1) + "=";
+  }
+  
+  return result;
 }
 
 // 2. 图片代理（避免 CORS）
