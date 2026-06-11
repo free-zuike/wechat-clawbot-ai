@@ -45,9 +45,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onUnmounted } from "vue";
+import { ref, onUnmounted, onMounted } from "vue";
 import { useRouter } from "vue-router";
-import { getQRCode, getQRCodeStatus } from "../api";
+import { getQRCode, getQRCodeStatus, checkLogin } from "../api";
 
 const router = useRouter();
 
@@ -61,6 +61,17 @@ const loggedIn = ref(false);
 
 let pollTimer: number | null = null;
 
+onMounted(async () => {
+  try {
+    const data = await checkLogin();
+    if (data.loggedIn) {
+      router.push("/");
+    }
+  } catch {
+    // 忽略错误，继续显示登录页面
+  }
+});
+
 async function startLogin() {
   error.value = "";
   if (!password.value) {
@@ -73,6 +84,11 @@ async function startLogin() {
     const data = await getQRCode(password.value);
     if (data.error) {
       error.value = data.error;
+      loading.value = false;
+      return;
+    }
+    if (!data.qrcode || !data.qrcode_img_content) {
+      error.value = "获取二维码失败: 返回数据无效";
       loading.value = false;
       return;
     }

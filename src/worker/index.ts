@@ -73,20 +73,12 @@ export default {
     const path = url.pathname;
     const method = request.method;
 
-    // 登录检查
-    const creds = await env.CLAWBOT_KV.get("clawbot:credentials");
-    const isLoggedIn = !!creds;
-
-    // 登录页面
-    if (path === "/login" || path === "/login/") {
-      return new Response("<html><head><meta http-equiv='refresh' content='0;url=/'/></head><body>Redirecting...</body></html>", {
-        status: 302,
-        headers: { "Location": "/" },
-      });
-    }
-
     // API 路由
     if (path.startsWith("/api/")) {
+      // 登录检查（用于 check-login 接口）
+      const creds = await env.CLAWBOT_KV.get("clawbot:credentials");
+      const isLoggedIn = !!creds;
+
       if (path === "/api/qrcode" && method === "GET") return handleQRCode(request, env);
       if (path === "/api/qrcode-status" && method === "GET") return handleQRCodeStatus(request, env);
       if (path === "/api/status") return handleStatus(request, env);
@@ -94,23 +86,8 @@ export default {
       if (path === "/api/trigger-poll" && method === "POST") return handleTriggerPoll(request, env);
       if (path === "/api/logout" && method === "POST") return handleLogout(request, env);
       if (path === "/api/config") return handleConfig(request, env);
+      if (path === "/api/check-login" && method === "GET") return json({ loggedIn: isLoggedIn });
       return json({ error: "Not Found" }, 404);
-    }
-
-    // 根路径 - 未登录则返回登录提示
-    if (path === "/" || path === "/index.html") {
-      if (!isLoggedIn) {
-        // 未登录，返回引导页
-        return html(NOT_LOGGED_HTML);
-      }
-      // 已登录，返回 index.html
-      const indexHtml = await fetch(request.url.replace(/\/(index.html)?$/, "/index.html"), { cf: { cacheEverything: false } as any }).catch(() => null);
-      if (indexHtml?.ok) {
-        return new Response(indexHtml.body, {
-          headers: { "Content-Type": "text/html; charset=utf-8" },
-        });
-      }
-      return html(NOT_LOGGED_HTML);
     }
 
     // 健康检查
@@ -124,8 +101,15 @@ export default {
       return staticRes;
     }
 
-    // 未知路径 - 返回 404
-    return json({ error: "Not Found" }, 404);
+    // SPA 路由 - 所有未匹配的路由返回 index.html
+    const indexHtml = await fetch(request.url.replace(/\/[^/]*$/, "/index.html"), { cf: { cacheEverything: false } as any }).catch(() => null);
+    if (indexHtml?.ok) {
+      return new Response(indexHtml.body, {
+        headers: { "Content-Type": "text/html; charset=utf-8" },
+      });
+    }
+
+    return html(NOT_LOGGED_HTML);
   },
 
   async scheduled(_event: ScheduledEvent, env: Env): Promise<void> {

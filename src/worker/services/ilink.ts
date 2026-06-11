@@ -31,7 +31,12 @@ export async function getQRCode(): Promise<{ key: string; imgUrl: string }> {
     cf: { cacheTtl: 0, cacheEverything: false } as any,
   });
   if (!r.ok) throw new Error(`获取二维码失败 HTTP ${r.status}`);
-  return r.json() as Promise<{ key: string; imgUrl: string }>;
+  const data = await r.json();
+  // 验证返回数据格式
+  if (!data || !data.key) {
+    throw new Error(`获取二维码失败: 返回数据无效 (${JSON.stringify(data)})`);
+  }
+  return data as { key: string; imgUrl: string };
 }
 
 // 轮询扫码状态

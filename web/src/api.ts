@@ -50,6 +50,11 @@ export async function getQRCodeStatus(pwd: string) {
   return res.json();
 }
 
+export async function checkLogin() {
+  const res = await fetch("/api/check-login");
+  return res.json();
+}
+
 export async function chat(message: string) {
   const res = await fetch("/api/chat", {
     method: "POST",
