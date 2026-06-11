@@ -42,7 +42,8 @@ export async function getQRCode(): Promise<{ key: string; imgUrl: string }> {
   
   const key = data?.key || data?.qrcode;
   let imgUrl = data?.imgUrl || data?.qrcode_img_content;
-  
+
+  // 清理反引号和多余字符
   if (typeof imgUrl === "string") {
     imgUrl = imgUrl.trim().replace(/^`+|`+$/g, "").trim();
   }
@@ -87,13 +88,19 @@ export async function getQRCodeStatus(key: string): Promise<{
     data?.botToken ||
     null;
 
-  // 兼容各种可能命名的 base url 字段
+  // 兼容各种可能命名的 base url 字段，并清理反引号和多余字符
+  function cleanUrl(val: any): string | null {
+    if (!val) return null;
+    const str = String(val).trim().replace(/^`+|`+$/g, "").trim();
+    if (!str || !str.startsWith("http")) return null;
+    return str;
+  }
   const baseurl =
-    data?.baseurl ||
-    data?.base_url ||
-    data?.baseUrl ||
-    data?.server_url ||
-    data?.endpoint ||
+    cleanUrl(data?.baseurl) ||
+    cleanUrl(data?.base_url) ||
+    cleanUrl(data?.baseUrl) ||
+    cleanUrl(data?.server_url) ||
+    cleanUrl(data?.endpoint) ||
     null;
 
   const ilinkBotId =
