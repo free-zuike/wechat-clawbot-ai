@@ -1,5 +1,5 @@
 // AI 服务 - Worker AI 集成
-// 默认模型: @cf/mistral/mistral-7b-instruct-v0.3
+// 默认模型: @cf/baichuan/baichuan-7b-chat-v1
 // 可通过配置 KV 中的 AI_MODEL 覆盖
 
 const DEFAULT_SYSTEM_PROMPT =
@@ -51,7 +51,7 @@ export async function callAI(
   const quick = tryQuickReply(cleanMsg);
   if (quick) return quick;
 
-  const model = aiModel || "@cf/mistral/mistral-7b-instruct-v0.3";
+  const model = aiModel || "@cf/baichuan/baichuan-7b-chat-v1";
   const system = systemPrompt || DEFAULT_SYSTEM_PROMPT;
 
   console.log("[ai] calling AI with model:", model);
