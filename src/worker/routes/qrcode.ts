@@ -103,8 +103,14 @@ export async function handleQRCodeStatus(request: Request, env: Env): Promise<Re
       (await env.CLAWBOT_KV.get("clawbot:qrcode_key")) ||
       url.searchParams.get("qrcode") ||
       "";
-    if (!key) return json({ status: "unknown" });
+    console.log("[qrcode-status] checking status for key:", key);
+    if (!key) {
+      console.log("[qrcode-status] no qrcode key found");
+      return json({ status: "unknown" });
+    }
     const status = await getQRCodeStatus(key);
+    console.log("[qrcode-status] received status:", JSON.stringify(status));
+    
     if (status.status === "confirmed" && status.bot_token) {
       const creds = {
         token: status.bot_token,
@@ -115,10 +121,13 @@ export async function handleQRCodeStatus(request: Request, env: Env): Promise<Re
       };
       await env.CLAWBOT_KV.put("clawbot:credentials", JSON.stringify(creds));
       await env.CLAWBOT_KV.delete("clawbot:qrcode_key");
+      console.log("[qrcode-status] login confirmed, credentials saved");
       return json({ status: "confirmed", ok: true });
     }
+    
     return json(status);
   } catch (e: any) {
+    console.error("[qrcode-status] error:", e);
     return json({ error: String(e) }, 500);
   }
 }

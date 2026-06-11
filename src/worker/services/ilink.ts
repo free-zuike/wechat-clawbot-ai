@@ -61,7 +61,9 @@ export async function getQRCodeStatus(key: string): Promise<{
     }
   );
   if (!r.ok) return { status: "pending" };
-  return r.json() as Promise<any>;
+  const data = await r.json();
+  console.log("[ilink] qrcode status raw response:", JSON.stringify(data));
+  return data as any;
 }
 
 // 获取消息更新（轮询拉取）
