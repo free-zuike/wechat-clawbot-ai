@@ -1,12 +1,17 @@
+# ============================================================
+#  🦞 ClawBot AI - Cloudflare Worker 配置
+#  架构参考 bee-swarm:
+#    - src/worker/        后端路由和服务
+#    - 前端通过 CDN Vue 3 动态渲染，无需构建
+# ============================================================
+
 name = "wechat-clawbot-ai"
 main = "src/worker/index.ts"
 compatibility_date = "2024-01-01"
 compatibility_flags = ["nodejs_compat"]
 
-# 静态资源目录（Vite 构建后的产物）
-assets = { directory = "dist" }
-
 # ===== Cron 触发器 (可选) =====
+# 取消注释后，每 2 分钟自动拉取一次消息
 # [triggers]
 # crons = ["*/2 * * * *"]
 
