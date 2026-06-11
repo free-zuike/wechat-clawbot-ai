@@ -2,226 +2,66 @@ import { json } from "../utils";
 import { getUpdates } from "../services/ilink";
 import type { Env } from "../index";
 
-// 诊断登录状态：检查保存的凭证是否正确，测试 getUpdates 是否能正常工作
+// 诊断登录状态
 export async function handleDebugLogin(request: Request, env: Env): Promise<Response> {
   const credsRaw = await env.CLAWBOT_KV.get("clawbot:credentials");
-  if (!credsRaw) {
-    return json({ ok: false, error: "未登录，没有凭证" });
-  }
+  if (!credsRaw) return json({ ok: false, error: "未登录，没有凭证" });
 
   let creds: any;
-  try {
-    creds = JSON.parse(credsRaw);
-  } catch (e) {
-    return json({ ok: false, error: "凭证格式错误: " + String(e) });
-  }
+  try { creds = JSON.parse(credsRaw); } catch (e) { return json({ ok: false, error: "凭证格式错误: " + e }); }
 
   const savedInfo = {
-    hasToken: !!creds.token,
-    tokenPrefix: creds.token ? creds.token.slice(0, 20) + "..." : null,
-    tokenLength: creds.token ? creds.token.length : 0,
+    botTokenPrefix: creds.botToken ? creds.botToken.slice(0, 20) + "..." : null,
+    botTokenLen: creds.botToken?.length || 0,
     baseUrl: creds.baseUrl,
     accountId: creds.accountId,
     userId: creds.userId,
-    createdAt: creds.createdAt ? new Date(creds.createdAt).toISOString() : null,
+    syncBuf: creds.syncBuf ? (creds.syncBuf.slice(0, 40) + "...") : "(empty)",
     loginAgeMs: creds.createdAt ? Date.now() - creds.createdAt : null,
-    rawFields: creds.rawLoginResponse ? Object.keys(creds.rawLoginResponse) : null,
-    rawLoginValues: creds.rawLoginResponse
-      ? Object.fromEntries(
-          Object.entries(creds.rawLoginResponse).map(([k, v]: [string, any]) => {
-            if (typeof v === "string") return [k, v.length > 40 ? v.slice(0, 40) + "..." : v];
-            if (typeof v === "number" || typeof v === "boolean") return [k, v];
-            return [k, typeof v];
-          })
-        )
-      : null,
+    rawResponseKeys: creds.rawLoginResponse ? Object.keys(creds.rawLoginResponse) : null,
   };
 
-  if (!creds.token) {
-    return json({ ok: false, error: "token 为空", savedInfo });
+  if (!creds.botToken || !creds.accountId) {
+    return json({ ok: false, error: "凭证缺少 botToken 或 accountId", savedInfo });
   }
 
-  const baseUrl = creds.baseUrl || "https://ilinkai.weixin.qq.com";
+  const ilinkCreds = {
+    botToken: creds.botToken,
+    accountId: creds.accountId,
+    baseUrl: creds.baseUrl || "https://ilinkai.weixin.qq.com",
+    userId: creds.userId,
+  };
 
-  // 测试 1: 纯网络连通性
-  let networkTest = { ok: false, status: 0, error: "" };
+  // 1. 网络连通性测试（快速 GET）
+  let networkOk = false;
   try {
     const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), 8000);
-    const r = await fetch(baseUrl, { signal: ctrl.signal });
-    clearTimeout(t);
-    const text = await r.text();
-    networkTest = { ok: r.ok, status: r.status, error: text.slice(0, 200) };
+    setTimeout(() => ctrl.abort(), 5000);
+    const r = await fetch(ilinkCreds.baseUrl, { signal: ctrl.signal });
+    networkOk = r.status < 500;
+  } catch {}
+
+  // 2. 调用 getupdates（使用新协议实现）
+  let getUpdatesResult: any = { error: "未执行" };
+  try {
+    const updates = await getUpdates(ilinkCreds, creds.syncBuf || "");
+    getUpdatesResult = {
+      ret: updates.ret,
+      errcode: updates.errcode,
+      errmsg: updates.errmsg,
+      msgsCount: updates.msgs?.length || 0,
+      gotNewBuf: !!updates.get_updates_buf,
+      success: updates.ret === 0 || updates.errcode === 0 || updates.ret === undefined,
+    };
   } catch (e: any) {
-    networkTest = { ok: false, status: 0, error: e.message };
-  }
-
-  // 测试 2: 先尝试一些可能的 token/refresh 接口（获取持久化token）
-  const fullToken = creds.token || "";
-  const tokenParts = fullToken.split(":");
-  const tokenAfterColon = tokenParts.length >= 2 ? tokenParts.slice(1).join(":") : fullToken;
-
-  const authEndpoints = [
-    { name: "POST /ilink/bot/gettoken", path: "/ilink/bot/gettoken" },
-    { name: "POST /ilink/bot/refresh", path: "/ilink/bot/refresh" },
-    { name: "POST /ilink/bot/auth", path: "/ilink/bot/auth" },
-    { name: "POST /ilink/bot/login", path: "/ilink/bot/login" },
-    { name: "POST /ilink/bot/connect", path: "/ilink/bot/connect" },
-    { name: "POST /ilink/bot/open", path: "/ilink/bot/open" },
-    { name: "POST /ilink/bot/activate", path: "/ilink/bot/activate" },
-    { name: "POST /ilink/bot/register", path: "/ilink/bot/register" },
-    { name: "POST /ilink/bot/health", path: "/ilink/bot/health" },
-    { name: "POST /ilink/bot/status", path: "/ilink/bot/status" },
-  ];
-  const authResults: any[] = [];
-  for (const ep of authEndpoints) {
-    try {
-      const ctrl = new AbortController();
-      const t = setTimeout(() => ctrl.abort(), 5000);
-      const r = await fetch(`${baseUrl}${ep.path}`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${tokenAfterColon}`,
-          "iLink-App-ClientVersion": "1",
-        },
-        body: JSON.stringify({ ilink_bot_id: creds.accountId, bot_token: fullToken }),
-        signal: ctrl.signal,
-      });
-      clearTimeout(t);
-      const text = await r.text();
-      authResults.push({
-        name: ep.name,
-        httpStatus: r.status,
-        response: text.slice(0, 200),
-      });
-    } catch (e: any) {
-      authResults.push({ name: ep.name, error: e.message });
-    }
-  }
-
-  // 测试 baseurl 是否有其他路径（可能网关在其他地方）
-  const probePaths = ["/", "/api", "/v1", "/health", "/status", "/bot"];
-  const probeResults: any[] = [];
-  for (const p of probePaths) {
-    try {
-      const ctrl = new AbortController();
-      const t = setTimeout(() => ctrl.abort(), 3000);
-      const r = await fetch(`${baseUrl}${p}`, { signal: ctrl.signal });
-      clearTimeout(t);
-      const text = await r.text();
-      probeResults.push({
-        path: p,
-        httpStatus: r.status,
-        preview: text.slice(0, 100),
-      });
-    } catch (e: any) {
-      probeResults.push({ path: p, error: e.message.slice(0, 80) });
-    }
-  }
-
-  // 测试 3: 更多 getupdates 变体 - 探索可能需要的初始化/激活步骤
-  const variants = [
-    {
-      name: "A. 完整token + Bearer + 空buf",
-      auth: `Bearer ${fullToken}`,
-      body: { get_updates_buf: "" },
-    },
-    {
-      name: "B. 冒号后部分 + Bearer + ilink_bot_id",
-      auth: `Bearer ${tokenAfterColon}`,
-      body: { get_updates_buf: "", ilink_bot_id: creds.accountId },
-    },
-    {
-      name: "C. 冒号后部分 + Bearer + 全字段",
-      auth: `Bearer ${tokenAfterColon}`,
-      body: { get_updates_buf: "", ilink_bot_id: creds.accountId, ilink_user_id: creds.userId },
-    },
-    {
-      name: "D. 冒号后部分 + Bot prefix + bot_token",
-      auth: `Bot ${tokenAfterColon}`,
-      body: { get_updates_buf: "", bot_token: fullToken, ilink_bot_id: creds.accountId },
-    },
-    {
-      name: "E. 冒号后部分 + Bearer + buf=base64('open')",
-      auth: `Bearer ${tokenAfterColon}`,
-      body: { get_updates_buf: "b3Blbg==", ilink_bot_id: creds.accountId },
-    },
-    {
-      name: "F. 冒号后部分 + Bearer + buf=bot_token",
-      auth: `Bearer ${tokenAfterColon}`,
-      body: { get_updates_buf: fullToken, ilink_bot_id: creds.accountId },
-    },
-    {
-      name: "G. 无auth + bot_token + ilink_bot_id",
-      auth: null,
-      body: { get_updates_buf: "", bot_token: fullToken, ilink_bot_id: creds.accountId, ilink_user_id: creds.userId },
-    },
-    {
-      name: "H. GET 方式",
-      auth: `Bearer ${tokenAfterColon}`,
-      body: null,
-      method: "GET",
-    },
-    {
-      name: "I. ilink_bot_id 也加 Authorization",
-      auth: `${creds.accountId} ${tokenAfterColon}`,
-      body: { get_updates_buf: "" },
-    },
-  ];
-
-  const variantResults: any[] = [];
-  let bestOk = false;
-  for (const v of variants) {
-    try {
-      const ctrl = new AbortController();
-      const t = setTimeout(() => ctrl.abort(), 8000);
-      const headers: Record<string, string> = {
-        "Content-Type": "application/json",
-        "iLink-App-ClientVersion": "1",
-      };
-      if (v.auth) headers["Authorization"] = v.auth;
-      const method = (v as any).method || "POST";
-      const fetchOpts: any = { method, headers, signal: ctrl.signal };
-      if (method === "POST" && v.body) fetchOpts.body = JSON.stringify(v.body);
-      const r = await fetch(`${baseUrl}/ilink/bot/getupdates`, fetchOpts);
-      clearTimeout(t);
-      const text = await r.text();
-      let ret: any = r.status;
-      let msgs = 0;
-      try {
-        const parsed = JSON.parse(text);
-        ret = parsed.ret !== undefined ? parsed.ret : parsed.errcode;
-        msgs = parsed.msgs?.length || 0;
-      } catch {}
-      variantResults.push({
-        name: v.name,
-        httpStatus: r.status,
-        ret,
-        msgsCount: msgs,
-        responsePreview: text.slice(0, 120),
-      });
-      if (ret === 0) {
-        bestOk = true;
-        break;
-      }
-    } catch (e: any) {
-      variantResults.push({ name: v.name, error: e.message });
-    }
+    getUpdatesResult = { error: e.message };
   }
 
   return json({
-    ok: bestOk,
+    ok: getUpdatesResult.success || false,
     savedInfo,
-    networkTest,
-    tokenAnalysis: {
-      fullToken: fullToken.slice(0, 30) + "...",
-      partAfterColon: tokenAfterColon.slice(0, 30) + "...",
-    },
-    authEndpointTest: authResults,
-    baseUrlProbe: probeResults,
-    variantResults,
-    workerUrl: new URL(request.url).origin,
-    timestamp: new Date().toISOString(),
+    networkTest: networkOk,
+    getUpdatesResult,
+    serverTime: new Date().toISOString(),
   });
 }

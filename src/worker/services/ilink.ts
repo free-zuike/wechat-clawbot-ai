@@ -1,269 +1,206 @@
-// iLink 协议集成 - 微信官方消息 API
-// 参考: https://ilink.weixin.qq.com/doc/
+// iLink 协议实现 - 基于 weixin-ilink SDK 逆向（源自 @tencent-weixin/openclaw-weixin）
 
-const I_LINK_BASE = "https://ilinkai.weixin.qq.com";
+// ========== 类型定义 ==========
+export const MessageType = { NONE: 0, USER: 1, BOT: 2 } as const;
+export const MessageItemType = { NONE: 0, TEXT: 1, IMAGE: 2, VOICE: 3, FILE: 4, VIDEO: 5 } as const;
+export const MessageState = { NEW: 0, GENERATING: 1, FINISH: 2 } as const;
+export const TypingStatus = { TYPING: 1, CANCEL: 2 } as const;
+
+export interface MessageItem {
+  type?: number;
+  text_item?: { text?: string };
+  voice_item?: { text?: string; encode_type?: number; playtime?: number };
+  image_item?: { url?: string; cdn_url?: string; width?: number; height?: number };
+  file_item?: { url?: string; cdn_url?: string; file_name?: string; file_size?: number };
+  video_item?: { url?: string; cdn_url?: string; thumb_url?: string; width?: number; height?: number; duration?: number };
+  ref_msg?: { title?: string; message_item?: MessageItem };
+}
+
+export interface WeixinMessage {
+  seq?: number;
+  message_id?: number;
+  from_user_id?: string;
+  to_user_id?: string;
+  client_id?: string;
+  session_id?: string;
+  group_id?: string;
+  message_type?: number;
+  message_state?: number;
+  item_list?: MessageItem[];
+  context_token?: string;
+  create_time_ms?: number;
+}
+
+export interface GetUpdatesResp {
+  ret?: number;
+  errcode?: number;
+  errmsg?: string;
+  msgs?: WeixinMessage[];
+  get_updates_buf?: string;
+  longpolling_timeout_ms?: number;
+}
 
 export interface ILinkCredentials {
-  token: string;
+  botToken: string;
   accountId: string;
-  userId: string;
   baseUrl: string;
-  createdAt: number;
+  userId?: string;
 }
 
-export interface ILinkMessage {
-  msg_id: string;
-  from_user_id: string;
-  context_token: string;
-  create_time: number;
-  items: Array<{ type: number; text_item?: { text: string } }>;
+// ========== 常量 ==========
+const DEFAULT_BASE = "https://ilinkai.weixin.qq.com";
+const DEFAULT_CHANNEL_VERSION = "weixin-ilink/0.1.0";
+const DEFAULT_LONG_POLL_MS = 35000;
+const DEFAULT_API_MS = 15000;
+
+// ========== 工具: 生成随机 X-WECHAT-UIN (Cloudflare Workers 兼容)
+function randomWechatUin(): string {
+  const rand = Math.floor(Math.random() * 1_000_000_000);
+  const str = String(rand);
+  if (typeof btoa === "function") {
+    try {
+      return btoa(str);
+    } catch {}
+  }
+  // fallback: 十六进制
+  return rand.toString(16);
 }
 
-export interface ILinkUpdatesResponse {
-  ret: number;
-  msgs: ILinkMessage[];
+function buildHeaders(token: string): Record<string, string> {
+  return {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${token}`,
+    AuthorizationType: "ilink_bot_token",
+    "X-WECHAT-UIN": randomWechatUin(),
+  };
 }
 
-// 获取二维码（用于扫码登录）
-export async function getQRCode(): Promise<{ key: string; imgUrl: string }> {
-  console.log("[ilink] fetching QR code...");
-  const r = await fetch(`${I_LINK_BASE}/ilink/bot/get_bot_qrcode?bot_type=3`, {
-    headers: { "iLink-App-ClientVersion": "1" },
-    cf: { cacheTtl: 0, cacheEverything: false } as any,
-  });
-  console.log("[ilink] QR code response status:", r.status);
-  if (!r.ok) {
-    const text = await r.text();
-    console.error("[ilink] QR code fetch failed:", text);
-    throw new Error(`获取二维码失败 HTTP ${r.status}`);
-  }
-  const data = await r.json();
-  console.log("[ilink] QR code response data:", JSON.stringify(data));
-  
-  const key = data?.key || data?.qrcode;
-  let imgUrl = data?.imgUrl || data?.qrcode_img_content;
-
-  // 清理反引号和多余字符
-  if (typeof imgUrl === "string") {
-    imgUrl = imgUrl.trim().replace(/^`+|`+$/g, "").trim();
-  }
-  
-  if (!key || !imgUrl) {
-    throw new Error(`获取二维码失败: 返回数据无效 (${JSON.stringify(data)})`);
-  }
-  
-  console.log("[ilink] QR code key:", key);
-  console.log("[ilink] QR code imgUrl:", imgUrl);
-  return { key, imgUrl };
-}
-
-// 轮询扫码状态
-export async function getQRCodeStatus(key: string): Promise<{
-  status: "pending" | "scaned" | "confirmed" | "expired";
-  bot_token?: string;
-  ilink_bot_id?: string;
-  ilink_user_id?: string;
-  baseurl?: string;
-  raw?: any; // 原始响应，用于调试
-}> {
-  const r = await fetch(
-    `${I_LINK_BASE}/ilink/bot/get_qrcode_status?qrcode=${encodeURIComponent(key)}`,
-    {
-      headers: { "iLink-App-ClientVersion": "1" },
-      cf: { cacheTtl: 0, cacheEverything: false } as any,
-    }
-  );
-  if (!r.ok) return { status: "pending" };
-  const data = await r.json();
-  console.log("[ilink] qrcode status raw response keys:", Object.keys(data));
-  console.log("[ilink] qrcode status raw response:", JSON.stringify(data));
-
-  // 兼容各种可能命名的 token 字段
-  const token =
-    data?.access_token ||
-    data?.bot_token ||
-    data?.token ||
-    data?.accessToken ||
-    data?.ticket ||
-    data?.botToken ||
-    null;
-
-  // 兼容各种可能命名的 base url 字段，并清理反引号和多余字符
-  function cleanUrl(val: any): string | null {
-    if (!val) return null;
-    const str = String(val).trim().replace(/^`+|`+$/g, "").trim();
-    if (!str || !str.startsWith("http")) return null;
-    return str;
-  }
-  const baseurl =
-    cleanUrl(data?.baseurl) ||
-    cleanUrl(data?.base_url) ||
-    cleanUrl(data?.baseUrl) ||
-    cleanUrl(data?.server_url) ||
-    cleanUrl(data?.endpoint) ||
-    null;
-
-  const ilinkBotId =
-    data?.ilink_bot_id || data?.bot_id || data?.appid || data?.botId || null;
-  const ilinkUserId =
-    data?.ilink_user_id || data?.user_id || data?.userId || data?.openid || null;
-
-  const status = data?.status || data?.ret;
-
-  if (status === "confirmed" || status === 1 || (token && status !== "expired")) {
-    console.log("[ilink] login confirmed — token:", token?.slice(0, 20) + "...", "baseurl:", baseurl, "bot_id:", ilinkBotId);
-    return {
-      status: "confirmed",
-      bot_token: token,
-      ilink_bot_id: ilinkBotId,
-      ilink_user_id: ilinkUserId,
-      baseurl: baseurl,
-      raw: data,
-    };
-  }
-  if (status === "scaned" || status === "scanned" || status === 2) {
-    return { status: "scaned" };
-  }
-  if (status === "expired" || status === 4) {
-    return { status: "expired" };
-  }
-  return { status: "pending" };
-}
-
-// 获取消息更新（轮询拉取）
-// 优先使用已验证的 auth 和 body 配置；如果没有则尝试多种方案
-export async function getUpdates(
-  token: string,
-  baseUrl = I_LINK_BASE,
-  timeoutMs = 4000,
-  extraBody: any = {},
-  customAuth: string | null = null,
-  customBody: any = null
-): Promise<ILinkUpdatesResponse> {
-  const fullUrl = `${baseUrl}/ilink/bot/getupdates`;
-  console.log("[ilink] getUpdates → url:", fullUrl);
-  console.log("[ilink]   customAuth:", customAuth ? customAuth.slice(0, 30) + "..." : "none");
-  console.log("[ilink]   customBody:", customBody ? JSON.stringify(customBody).slice(0, 80) : "none");
-
-  // 有已验证的配置，直接使用
-  if (customAuth || customBody) {
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-      "iLink-App-ClientVersion": "1",
-    };
-    if (customAuth) headers["Authorization"] = customAuth;
-    const body = customBody || { get_updates_buf: "", ...extraBody };
-    return await rawGetUpdates(fullUrl, headers, body, timeoutMs, "custom");
-  }
-
-  // 无已验证配置时，尝试多种方案
-  const attempts = [
-    { auth: `Bearer ${token}`, body: { get_updates_buf: "", ...extraBody }, name: "Bearer" },
-    { auth: `Bearer ${token}`, body: { get_updates_buf: "" }, name: "Bearer-no-extra" },
-    { auth: `Bot ${token}`, body: { get_updates_buf: "", ...extraBody }, name: "Bot" },
-    { auth: null, body: { get_updates_buf: "", token, ...extraBody }, name: "body-token" },
-    { auth: null, body: { get_updates_buf: "", bot_token: token, ...extraBody }, name: "body-bot_token" },
-  ];
-
-  let lastResult: ILinkUpdatesResponse = { ret: -1, msgs: [] };
-  for (const a of attempts) {
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-      "iLink-App-ClientVersion": "1",
-    };
-    if (a.auth) headers["Authorization"] = a.auth;
-    lastResult = await rawGetUpdates(fullUrl, headers, a.body, timeoutMs, a.name);
-    if (lastResult.ret === 0) break;
-  }
-  return lastResult;
-}
-
-async function rawGetUpdates(
-  url: string,
-  headers: Record<string, string>,
-  bodyObj: any,
+async function post(
+  creds: ILinkCredentials,
+  endpoint: string,
+  payload: Record<string, unknown>,
   timeoutMs: number,
-  label: string
-): Promise<ILinkUpdatesResponse> {
-  console.log(`[ilink] rawGetUpdates[${label}] → headers:`, JSON.stringify(headers), "body:", JSON.stringify(bodyObj).slice(0, 100));
+): Promise<any> {
+  const channelVersion = DEFAULT_CHANNEL_VERSION;
+  const base = creds.baseUrl.endsWith("/") ? creds.baseUrl : creds.baseUrl + "/";
+  const url = base + endpoint;
+  const body = JSON.stringify({ ...payload, base_info: { channel_version: channelVersion } });
+  const headers = buildHeaders(creds.botToken);
+
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
-    const r = await fetch(url, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(bodyObj),
-      signal: ctrl.signal,
-    });
+    const r = await fetch(url, { method: "POST", headers, body, signal: ctrl.signal });
     clearTimeout(timer);
     const text = await r.text();
-    console.log(`[ilink] rawGetUpdates[${label}] ← status:`, r.status, "body:", text.slice(0, 200));
-    if (r.status === 200) {
-      try {
-        const parsed = JSON.parse(text);
-        const ret = parsed.ret !== undefined ? parsed.ret : parsed.errcode;
-        const msgs = parsed.msgs || [];
-        return { ret, msgs } as ILinkUpdatesResponse;
-      } catch {
-        return { ret: r.status, msgs: [] };
-      }
-    }
-    return { ret: r.status, msgs: [] };
-  } catch (e: any) {
-    console.error(`[ilink] rawGetUpdates[${label}] error:`, e.message);
-    return { ret: -1, msgs: [] };
+    if (!r.ok) throw new Error(`${endpoint} ${r.status}: ${text}`);
+    return JSON.parse(text);
+  } catch (e) {
+    clearTimeout(timer);
+    throw e;
   }
 }
 
-// 发送文本回复
+// ========== 扫码登录 ==========
+export async function fetchQRCode(baseUrl = DEFAULT_BASE): Promise<{ qrcode: string; qrcode_img_content: string }> {
+  const base = baseUrl.endsWith("/") ? baseUrl : baseUrl + "/";
+  const url = `${base}ilink/bot/get_bot_qrcode?bot_type=3`;
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`获取二维码失败: ${r.status}`);
+  const data = await r.json();
+  return { qrcode: data.qrcode, qrcode_img_content: data.qrcode_img_content };
+}
+
+export async function getQRCodeStatus(qrcode: string, baseUrl = DEFAULT_BASE): Promise<{
+  status: "wait" | "scaned" | "confirmed" | "expired";
+  bot_token?: string;
+  ilink_bot_id?: string;
+  baseurl?: string;
+  ilink_user_id?: string;
+  raw?: any;
+}> {
+  const base = baseUrl.endsWith("/") ? baseUrl : baseUrl + "/";
+  const url = `${base}ilink/bot/get_qrcode_status?qrcode=${encodeURIComponent(qrcode)}`;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 35000);
+  try {
+    const r = await fetch(url, { headers: { "iLink-App-ClientVersion": "1" }, signal: ctrl.signal });
+    clearTimeout(timer);
+    if (!r.ok) return { status: "wait" };
+    const data = await r.json();
+    const s = data?.status;
+    return {
+      status: s || "wait",
+      bot_token: data.bot_token,
+      ilink_bot_id: data.ilink_bot_id,
+      baseurl: data.baseurl,
+      ilink_user_id: data.ilink_user_id,
+      raw: data,
+    };
+  } catch {
+    clearTimeout(timer);
+    return { status: "wait" };
+  }
+}
+
+// ========== 消息拉取（长轮询 35 秒）==========
+export async function getUpdates(
+  creds: ILinkCredentials,
+  buf: string = "",
+): Promise<GetUpdatesResp> {
+  try {
+    const resp = await post(creds, "ilink/bot/getupdates", { get_updates_buf: buf }, DEFAULT_LONG_POLL_MS);
+    return resp as GetUpdatesResp;
+  } catch (e: any) {
+    if (e?.name === "AbortError") {
+      return { ret: 0, msgs: [], get_updates_buf: buf };
+    }
+    throw e;
+  }
+}
+
+// ========== 发送消息 ==========
 export async function sendTextMessage(
-  token: string,
+  creds: ILinkCredentials,
   toUserId: string,
   contextToken: string,
   text: string,
-  baseUrl = I_LINK_BASE
-): Promise<{ ret: number }> {
-  console.log("[ilink] sendTextMessage to:", toUserId, "text:", text.slice(0, 100));
-  try {
-    const r = await fetch(`${baseUrl}/ilink/bot/sendmessage`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-        "iLink-App-ClientVersion": "1",
-      },
-      body: JSON.stringify({
-        msg: {
-          to_user_id: toUserId,
-          context_token: contextToken,
-          item_list: [{ type: 1, text_item: { text } }],
-        },
-      }),
-    });
-    console.log("[ilink] sendTextMessage status:", r.status);
-    const textResp = await r.text();
-    console.log("[ilink] sendTextMessage response:", textResp.slice(0, 300));
-    if (r.status === 200) {
-      try {
-        return JSON.parse(textResp) as { ret: number };
-      } catch {
-        return { ret: r.status };
-      }
-    }
-    return { ret: r.status };
-  } catch (e: any) {
-    console.error("[ilink] sendTextMessage error:", e);
-    return { ret: -1 };
-  }
+): Promise<void> {
+  const msg: WeixinMessage = {
+    from_user_id: "",
+    to_user_id: toUserId,
+    client_id: generateClientId(),
+    message_type: MessageType.BOT,
+    message_state: MessageState.FINISH,
+    context_token: contextToken,
+    item_list: [{ type: MessageItemType.TEXT, text_item: { text } },
+  };
+  await post(creds, "ilink/bot/sendmessage", { msg }, DEFAULT_API_MS);
 }
 
-// 从消息中提取文本
-export function extractMessageText(msg: ILinkMessage): string {
-  const parts: string[] = [];
-  for (const it of msg.items || []) {
-    if (it.type === 1 && it.text_item?.text) {
-      parts.push(it.text_item.text);
+// ========== 工具 ==========
+function generateClientId(): string {
+  const arr = new Uint8Array(6);
+  if (typeof crypto !== "undefined" && crypto.getRandomValues) {
+    crypto.getRandomValues(arr);
+  } else {
+    for (let i = 0; i < 6; i++) arr[i] = Math.floor(Math.random() * 256);
+  }
+  const hex = Array.from(arr).map(b => b.toString(16).padStart(2, "0")).join("");
+  return `ilink-${Date.now()}-${hex}`;
+}
+
+export function extractMessageText(msg: WeixinMessage): string {
+  if (!msg.item_list?.length) return "";
+  for (const item of msg.item_list) {
+    if (item.type === MessageItemType.TEXT && item.text_item?.text) {
+      const ref = item.ref_msg;
+      if (ref?.title) return `[引用: ${ref.title}]\n${item.text_item.text}`;
+      return item.text_item.text;
+    }
+    if (item.type === MessageItemType.VOICE && item.voice_item?.text) {
+      return item.voice_item.text;
     }
   }
-  return parts.join("\n").trim();
+  return "";
 }

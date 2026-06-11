@@ -1,86 +1,66 @@
-import { json } from "../utils";
+import { json, verifyAdmin } from "../utils";
 import { getUpdates } from "../services/ilink";
 import type { Env } from "../index";
 
+function formatAge(ms: number): string {
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return s + "秒";
+  const m = Math.floor(s / 60);
+  if (m < 60) return m + "分钟";
+  const h = Math.floor(m / 60);
+  if (h < 24) return h + "小时";
+  const d = Math.floor(h / 24);
+  return d + "天";
+}
+
+// 状态查询：检查是否登录及 token 健康状态
 export async function handleStatus(request: Request, env: Env): Promise<Response> {
+  // 鉴权（通过 session cookie 或管理员密码）
+  const v = await verifyAdmin(request, env);
+  if (!v.ok) return json({ error: v.error }, 401);
+
   const credsRaw = await env.CLAWBOT_KV.get("clawbot:credentials");
-  let creds: any = null;
-  try {
-    if (credsRaw) creds = JSON.parse(credsRaw);
-  } catch {}
+  if (!credsRaw) return json({ status: "not_logged_in" });
 
-  const configRaw = await env.CLAWBOT_KV.get("clawbot:config");
-  let kvConfig: any = {};
-  try {
-    if (configRaw) kvConfig = JSON.parse(configRaw);
-  } catch {}
+  let creds: any;
+  try { creds = JSON.parse(credsRaw); } catch { return json({ status: "error", message: "凭证格式错误" }); }
 
-  // 计算登录时长
-  let loginAgeMs: number | null = null;
-  let loginAgeText = "";
-  if (creds?.createdAt) {
-    loginAgeMs = Date.now() - creds.createdAt;
-    const totalSec = Math.floor(loginAgeMs / 1000);
-    const hours = Math.floor(totalSec / 3600);
-    const mins = Math.floor((totalSec % 3600) / 60);
-    const secs = totalSec % 60;
-    if (hours > 0) {
-      loginAgeText = `${hours}小时${mins}分`;
-    } else if (mins > 0) {
-      loginAgeText = `${mins}分${secs}秒`;
-    } else {
-      loginAgeText = `${secs}秒`;
-    }
-  }
-
-  // 可选 token 健康检查（通过 ?checkToken=true 触发，只报告状态不清除凭证）
-  // 凭证清除由 messaging.ts 在真正发消息时处理，避免刚登录就被误判过期
-  const url = new URL(request.url);
-  const shouldCheckToken = url.searchParams.get("checkToken") === "true";
-  let tokenHealth: "unknown" | "valid" | "expired" | "error" = "unknown";
-  let tokenCheckRet: number | null = null;
-  if (creds?.token && shouldCheckToken) {
-    try {
-      const updates = await getUpdates(creds.token, creds.baseUrl, 3000);
-      tokenCheckRet = updates.ret;
-      if (updates.ret === 0) {
-        tokenHealth = "valid";
-      } else if (updates.ret === -14 || updates.ret === -10 || updates.ret < 0) {
-        tokenHealth = "expired";
-      } else {
-        tokenHealth = "error";
-      }
-    } catch {
-      tokenHealth = "error";
-    }
-  }
-
-  const statsRaw = await env.CLAWBOT_KV.get("clawbot:stats");
-  let stats: any = null;
-  try {
-    if (statsRaw) stats = JSON.parse(statsRaw);
-  } catch {}
-
-  return json({
-    loggedIn: !!creds,
-    tokenHealth,
-    tokenCheckRet,
+  const loginAgeMs = creds.createdAt ? Date.now() - creds.createdAt : null;
+  const result: any = {
+    loggedIn: true,
+    status: "logged_in",
+    accountId: creds.accountId,
+    baseUrl: creds.baseUrl,
+    userId: creds.userId,
     loginAgeMs,
-    loginAgeText,
-    accountId: creds?.accountId || "",
-    userIdMasked: creds?.userId ? creds.userId.slice(0, 6) + "***" : "",
-    baseUrl: creds?.baseUrl || "",
-    loginAt: creds?.createdAt ? new Date(creds.createdAt).toISOString() : "",
-    hasAi: !!env.AI,
-    hasKv: !!env.CLAWBOT_KV,
-    hasDb: !!env.CLAWBOT_DB,
-    hasR2: !!env.CLAWBOT_R2,
-    hasAdminPwd: !!(env.ADMIN_PASSWORD && env.ADMIN_PASSWORD.length > 3),
-    version: "v2.0-bee-swarm-architecture",
-    config: {
-      aiModel: env.AI_MODEL || kvConfig.aiModel || "",
-      aiSystemPrompt: env.AI_SYSTEM_PROMPT || kvConfig.aiSystemPrompt || "",
-    },
-    stats,
-  });
+    loginAgeText: loginAgeMs ? formatAge(loginAgeMs) : null,
+    hasSyncBuf: !!creds.syncBuf,
+  };
+
+  // 可选：检查 token 健康状态
+  const url = new URL(request.url);
+  const shouldCheck = url.searchParams.get("check") === "1" || url.searchParams.get("checkToken") === "true";
+  if (shouldCheck && creds.botToken) {
+    try {
+      const ilinkCreds = {
+        botToken: creds.botToken,
+        accountId: creds.accountId,
+        baseUrl: creds.baseUrl || "https://ilinkai.weixin.qq.com",
+        userId: creds.userId,
+      };
+      const updates = await getUpdates(ilinkCreds, creds.syncBuf || "");
+      const ret = updates.ret !== undefined ? updates.ret : updates.errcode;
+      result.tokenHealth = ret === 0 ? "valid" : `invalid(ret=${ret}: ${updates.errmsg || ""}`;
+      result.msgsCount = updates.msgs?.length || 0;
+      if (updates.get_updates_buf && updates.get_updates_buf !== creds.syncBuf) {
+        creds.syncBuf = updates.get_updates_buf;
+        await env.CLAWBOT_KV.put("clawbot:credentials", JSON.stringify(creds));
+        result.bufUpdated = true;
+      }
+    } catch (e: any) {
+      result.tokenHealth = "error: " + e.message;
+    }
+  }
+
+  return json(result);
 }
