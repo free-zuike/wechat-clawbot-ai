@@ -88,15 +88,15 @@ async function startLogin() {
       loading.value = false;
       return;
     }
-    if (!data.qrcode) {
+    if (!data.qrcode || !data.qrcode_url) {
       error.value = "获取二维码失败: 返回数据无效";
       loading.value = false;
       return;
     }
     qrCode.value = data.qrcode;
-    // 使用 qrcode 库生成二维码图片
+    // 使用 qrcode 库从完整URL生成二维码图片
     try {
-      qrImage.value = await QRCode.toDataURL(data.qrcode, {
+      qrImage.value = await QRCode.toDataURL(data.qrcode_url, {
         width: 200,
         margin: 2,
         color: {

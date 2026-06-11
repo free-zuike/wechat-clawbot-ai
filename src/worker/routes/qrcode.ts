@@ -11,7 +11,7 @@ export async function handleQRCode(request: Request, env: Env): Promise<Response
     await env.CLAWBOT_KV.put("clawbot:qrcode_key", data.key, {
       expirationTtl: 5 * 60,
     });
-    return json({ qrcode: data.key });
+    return json({ qrcode: data.key, qrcode_url: data.imgUrl });
   } catch (e: any) {
     return json({ error: String(e) }, 500);
   }
