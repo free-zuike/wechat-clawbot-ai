@@ -94,42 +94,53 @@ export async function handleDebugLogin(request: Request, env: Env): Promise<Resp
     }
   }
 
-  // 测试 3: 多种 getupdates 变体
+  // 测试 3: 更多 getupdates 变体 - 探索可能需要的初始化/激活步骤
   const variants = [
     {
-      name: "A. 完整token + Bearer + get_updates_buf=''",
+      name: "A. 完整token + Bearer + 空buf",
       auth: `Bearer ${fullToken}`,
       body: { get_updates_buf: "" },
     },
     {
-      name: "B. 完整token + Bearer + 含ilink_bot_id",
-      auth: `Bearer ${fullToken}`,
-      body: { get_updates_buf: "", ilink_bot_id: creds.accountId },
-    },
-    {
-      name: "C. 冒号后部分 + Bearer + 含ilink_bot_id",
+      name: "B. 冒号后部分 + Bearer + ilink_bot_id",
       auth: `Bearer ${tokenAfterColon}`,
       body: { get_updates_buf: "", ilink_bot_id: creds.accountId },
     },
     {
-      name: "D. 冒号后部分 + Bearer + bot_token字段",
-      auth: `Bearer ${tokenAfterColon}`,
-      body: { get_updates_buf: "", bot_token: fullToken },
-    },
-    {
-      name: "E. token放body里",
-      auth: null,
-      body: { get_updates_buf: "", token: fullToken, ilink_bot_id: creds.accountId },
-    },
-    {
-      name: "F. 冒号后部分 + Bot prefix",
-      auth: `Bot ${tokenAfterColon}`,
-      body: { get_updates_buf: "", ilink_bot_id: creds.accountId },
-    },
-    {
-      name: "G. ilink_user_id也放body",
+      name: "C. 冒号后部分 + Bearer + 全字段",
       auth: `Bearer ${tokenAfterColon}`,
       body: { get_updates_buf: "", ilink_bot_id: creds.accountId, ilink_user_id: creds.userId },
+    },
+    {
+      name: "D. 冒号后部分 + Bot prefix + bot_token",
+      auth: `Bot ${tokenAfterColon}`,
+      body: { get_updates_buf: "", bot_token: fullToken, ilink_bot_id: creds.accountId },
+    },
+    {
+      name: "E. 冒号后部分 + Bearer + buf=base64('open')",
+      auth: `Bearer ${tokenAfterColon}`,
+      body: { get_updates_buf: "b3Blbg==", ilink_bot_id: creds.accountId },
+    },
+    {
+      name: "F. 冒号后部分 + Bearer + buf=bot_token",
+      auth: `Bearer ${tokenAfterColon}`,
+      body: { get_updates_buf: fullToken, ilink_bot_id: creds.accountId },
+    },
+    {
+      name: "G. 无auth + bot_token + ilink_bot_id",
+      auth: null,
+      body: { get_updates_buf: "", bot_token: fullToken, ilink_bot_id: creds.accountId, ilink_user_id: creds.userId },
+    },
+    {
+      name: "H. GET 方式",
+      auth: `Bearer ${tokenAfterColon}`,
+      body: null,
+      method: "GET",
+    },
+    {
+      name: "I. ilink_bot_id 也加 Authorization",
+      auth: `${creds.accountId} ${tokenAfterColon}`,
+      body: { get_updates_buf: "" },
     },
   ];
 
@@ -144,12 +155,10 @@ export async function handleDebugLogin(request: Request, env: Env): Promise<Resp
         "iLink-App-ClientVersion": "1",
       };
       if (v.auth) headers["Authorization"] = v.auth;
-      const r = await fetch(`${baseUrl}/ilink/bot/getupdates`, {
-        method: "POST",
-        headers,
-        body: JSON.stringify(v.body),
-        signal: ctrl.signal,
-      });
+      const method = (v as any).method || "POST";
+      const fetchOpts: any = { method, headers, signal: ctrl.signal };
+      if (method === "POST" && v.body) fetchOpts.body = JSON.stringify(v.body);
+      const r = await fetch(`${baseUrl}/ilink/bot/getupdates`, fetchOpts);
       clearTimeout(t);
       const text = await r.text();
       let ret: any = r.status;
@@ -168,11 +177,6 @@ export async function handleDebugLogin(request: Request, env: Env): Promise<Resp
       });
       if (ret === 0) {
         bestOk = true;
-        // 成功后把正确的token前缀保存到kv
-        if (v.name.startsWith("C.") || v.name.startsWith("D.") || v.name.startsWith("F.") || v.name.startsWith("G.")) {
-          creds.token = tokenAfterColon;
-          await env.CLAWBOT_KV.put("clawbot:credentials", JSON.stringify(creds));
-        }
         break;
       }
     } catch (e: any) {
