@@ -26,33 +26,39 @@ export async function handleDebugLogin(request: Request, env: Env): Promise<Resp
     userId: creds.userId,
     createdAt: creds.createdAt ? new Date(creds.createdAt).toISOString() : null,
     loginAgeMs: creds.createdAt ? Date.now() - creds.createdAt : null,
-    // 原始响应字段
     rawFields: creds.rawLoginResponse ? Object.keys(creds.rawLoginResponse) : null,
   };
 
-  // 测试 getUpdates
   if (!creds.token) {
-    return json({
-      ok: false,
-      error: "token 为空",
-      savedInfo,
-    });
+    return json({ ok: false, error: "token 为空", savedInfo });
   }
 
   const baseUrl = creds.baseUrl || "https://ilinkai.weixin.qq.com";
-  const testResult = await getUpdates(creds.token, baseUrl, 5000);
+
+  // 测试 1: 纯网络连通性（GET 请求到 baseUrl）
+  let networkTest = { ok: false, status: 0, error: "" };
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 8000);
+    const r = await fetch(baseUrl, { signal: ctrl.signal });
+    clearTimeout(t);
+    const text = await r.text();
+    networkTest = { ok: r.ok, status: r.status, error: text.slice(0, 200) };
+  } catch (e: any) {
+    networkTest = { ok: false, status: 0, error: e.message };
+  }
+
+  // 测试 2: getUpdates（15 秒超时）
+  const testResult = await getUpdates(creds.token, baseUrl, 15000);
   const testOk = testResult.ret === 0;
 
   return json({
     ok: testOk,
     savedInfo,
+    networkTest,
     testResult: {
       ret: testResult.ret,
       msgsCount: testResult.msgs?.length || 0,
-      msgsSample: testResult.msgs?.slice(0, 2).map((m: any) => ({
-        from: m.from_user_id,
-        text: m.items?.[0]?.text_item?.text?.slice(0, 50),
-      })),
     },
     workerUrl: new URL(request.url).origin,
     timestamp: new Date().toISOString(),
