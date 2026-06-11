@@ -13,13 +13,14 @@
 //
 //  效果：每日 KV 写操作从 ~1500 → 0~10，免费额度不再是瓶颈
 // ======================================================================
+//
+// 注意：使用 Cloudflare Worker AI 原生绑定（通过 env.AI 访问）
+// 不需要 @cloudflare/ai npm 包
 
 // R2 长期历史存储格式（可选绑定 CLAWBOT_R2 后启用）:
 //   key: history/<user_id>/<yyyy-mm>/<ts>-<rand>
 //   value: JSON { role, content, ts, fromShortcut, fromCache, fromR2 }
 // 每天每个用户最多保留 200 条（防过量存储）
-
-import { Ai } from "@cloudflare/ai";
 
 // 全局注入 R2 binding（不配置也不影响运行）
 let _r2: R2Bucket | null = null;
@@ -433,7 +434,8 @@ export async function aiReply(
 
   // 3) 正常走 Worker AI（加超时 + 输出硬上限）
   try {
-    const ai = new Ai(aiBinding);
+    // 使用原生绑定：aiBinding 是 Cloudflare Worker AI 的原生绑定
+    // 直接调用 run 方法，不需要 new Ai()
 
     // 3a) 构建压缩后的历史（每个 turn 最多 MAX_TURN_CHARS 字）
     const history = ctx.turns
@@ -448,7 +450,7 @@ export async function aiReply(
 
     // 3b) 调用 + 超时控制（aiModel 可能是环境变量传入的自定义模型）
     const response = await runWithTimeout(
-      ai.run(model as any, { messages, max_tokens: MAX_TOKENS }),
+      aiBinding.run(model as any, { messages, max_tokens: MAX_TOKENS }),
       AI_TIMEOUT_MS,
       "ai timeout"
     );
