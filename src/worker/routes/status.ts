@@ -33,20 +33,20 @@ export async function handleStatus(request: Request, env: Env): Promise<Response
     }
   }
 
-  // 可选 token 健康检查（通过 ?checkToken=true 触发，避免频繁调用微信 API）
+  // 可选 token 健康检查（通过 ?checkToken=true 触发，只报告状态不清除凭证）
+  // 凭证清除由 messaging.ts 在真正发消息时处理，避免刚登录就被误判过期
   const url = new URL(request.url);
   const shouldCheckToken = url.searchParams.get("checkToken") === "true";
   let tokenHealth: "unknown" | "valid" | "expired" | "error" = "unknown";
+  let tokenCheckRet: number | null = null;
   if (creds?.token && shouldCheckToken) {
     try {
       const updates = await getUpdates(creds.token, creds.baseUrl, 3000);
+      tokenCheckRet = updates.ret;
       if (updates.ret === 0) {
         tokenHealth = "valid";
       } else if (updates.ret === -14 || updates.ret === -10 || updates.ret < 0) {
-        // token 已过期，自动清除
         tokenHealth = "expired";
-        await env.CLAWBOT_KV.delete("clawbot:credentials");
-        creds = null;
       } else {
         tokenHealth = "error";
       }
@@ -64,6 +64,7 @@ export async function handleStatus(request: Request, env: Env): Promise<Response
   return json({
     loggedIn: !!creds,
     tokenHealth,
+    tokenCheckRet,
     loginAgeMs,
     loginAgeText,
     accountId: creds?.accountId || "",
