@@ -1,20 +1,26 @@
 {
   "name": "wechat-clawbot-ai",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
-  "description": "ClawBot AI — 基于 Cloudflare Worker + Worker AI 的微信个人号机器人 (iLink 协议)",
+  "description": "基于 Cloudflare Workers + Worker AI 的微信个人号机器人（架构参考 bee-swarm）",
+  "type": "module",
   "scripts": {
-    "dev": "wrangler dev --test-scheduled",
-    "deploy": "wrangler deploy",
-    "start": "wrangler dev --test-scheduled",
+    "dev": "vite",
+    "build": "vite build",
+    "deploy": "npm run build && wrangler deploy",
+    "dev:worker": "wrangler dev src/worker/index.ts",
+    "preview": "vite preview",
     "tail": "wrangler tail"
   },
   "dependencies": {
-    "base64-js": "^1.5.1"
+    "vue": "^3.4.0",
+    "vue-router": "^4.3.0"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20240925.0",
-    "typescript": "^5.5.4",
-    "wrangler": "^4.25.0"
+    "@vitejs/plugin-vue": "^5.2.4",
+    "typescript": "^5.9.3",
+    "vite": "^5.4.21",
+    "wrangler": "^3.80.0"
   }
 }

@@ -1,88 +1,35 @@
 # ============================================================
-#  爪爪 ClawBot AI —— 基于 Cloudflare Worker + Worker AI 的微信个人号机器人
-#
-#  部署前准备（需在 Cloudflare Dashboard 或 CLI 创建）:
-#    1) 安装依赖: npm install
-#    2) 登录: wrangler login 或设置 CLOUDFLARE_API_TOKEN
-#    3) 创建 KV Namespace: wrangler kv namespace create CLAWBOT_KV
-#        把返回的 id 填到下面 [[kv_namespaces]] 的 id 字段（必需）
-#    4) (可选) 创建 D1 数据库: wrangler d1 create clawbot-stats
-#        填 [[d1_databases]] 后执行: wrangler d1 execute clawbot-stats --file=./schema.sql
-#    5) (可选) 创建 R2 Bucket: wrangler r2 bucket create clawbot-history
-#        填 [[r2_buckets]] 开启长期对话历史
-#    6) (可选) 创建 Queue: wrangler queues create clawbot-messages
-#        取消注释 [[queues.producers]] 和 [[queues.consumers]] 开启异步消息处理
-#    7) 设置环境变量: wrangler secret put ADMIN_PASSWORD
-#    8) 部署: wrangler deploy
-#    9) 打开 https://<你的域名>/login 扫码登录
+#  🦞 ClawBot AI - Cloudflare Worker 配置
+#  架构参考 bee-swarm:
+#    - src/worker/   后端路由和服务
+#    - web/          Vue 前端源码（通过 npm run build 构建到 dist/）
 # ============================================================
 
 name = "wechat-clawbot-ai"
-main = "src/index.ts"
+main = "src/worker/index.ts"
 compatibility_date = "2024-01-01"
 compatibility_flags = ["nodejs_compat"]
 
+# 静态资源目录（Vite 构建产物）
+assets = { directory = "./dist", binding = "ASSETS" }
+
 # ===== Cron 触发器 (可选) =====
-# 每 2 分钟触发一次消息拉取
-# 如需启用, 确保 API Token 有 Workers Triggers 权限
-# 想更实时可改回 "* * * * *"
-#[triggers]
-#crons = ["*/2 * * * *"]
+# 取消注释后，每 2 分钟自动拉取一次消息
+# [triggers]
+# crons = ["*/2 * * * *"]
 
 # ===== AI 绑定 =====
 [ai]
 binding = "AI"
 
-# ===== KV 存储 (仅保留: bot_token 凭证 + 登录流程中的 qrcode key) =====
-# 对话上下文已迁移到 Cache API, 消息去重已迁移到 Cache API
+# ===== KV 存储 (必需) =====
 [[kv_namespaces]]
 binding = "CLAWBOT_KV"
 id = "2fac06f019ce476084f5066e432a1183"
 preview_id = "2fac06f019ce476084f5066e432a1183"
 
-# ===== D1 统计数据库 (可选, 没有也不崩) =====
-# 如需启用, 先运行: wrangler d1 create clawbot-stats
-# [[d1_databases]]
-# binding = "CLAWBOT_DB"
-# database_name = "clawbot-stats"
-# database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
-
-# ===== R2 长期对话历史 (可选, 没有也不崩) =====
-# Cache API 只保留 3 小时上下文；R2 可长期存历史用于回溯
+# ===== R2 长期对话历史 (可选) =====
 [[r2_buckets]]
 binding = "CLAWBOT_R2"
 bucket_name = "clawbot-history"
 preview_bucket_name = "clawbot-history"
-
-# ===== Queues 异步消息处理 (可选, 没有也不崩) =====
-# 配置 Queue 后, cron 拉取消息会入队, 由 queue 消费者异步处理
-# 避免 cron 超时, 消息多时更可靠
-# 如需启用, 先运行: wrangler queues create clawbot-messages
-# [[queues.producers]]
-# binding = "CLAWBOT_QUEUE"
-# queue = "clawbot-messages"
-# 
-# [[queues.consumers]]
-# queue = "clawbot-messages"
-# max_batch_size = 10
-# max_batch_timeout = 5
-
-# ===== AI Gateway (可选, 可在 Cloudflare Dashboard 创建后填下面) =====
-# 开启后, AI 调用会走 AI Gateway, 可以观察调用次数、错误率
-# [ai_gateway]
-# name = "clawbot-gateway"
-# slug = "clawbot-gateway"
-
-# ===== 环境变量 (可选) =====
-# ADMIN_PASSWORD: 管理页面密码（扫码登录/手动触发需验证）
-# AI_SYSTEM_PROMPT: 自定义 AI 人设提示词
-# TURNSTILE_SECRET_KEY: Cloudflare Turnstile 保护登录页 (可选)
-# [vars]
-# ADMIN_PASSWORD = "change-this"
-# AI_SYSTEM_PROMPT = "你是爪爪，一个友好的 AI 助手..."
-# TURNSTILE_SITE_KEY = "你的-turnstile-site-key"
-
-# ===== 或使用 secret, 更安全: =====
-#   wrangler secret put ADMIN_PASSWORD
-#   wrangler secret put AI_SYSTEM_PROMPT
-#   wrangler secret put TURNSTILE_SECRET_KEY
