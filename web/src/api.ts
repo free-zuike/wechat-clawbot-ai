@@ -7,8 +7,9 @@ function withPwd(path: string, pwd: string): string {
   return API_BASE + path + sep + "pwd=" + encodeURIComponent(pwd);
 }
 
-export async function fetchStatus() {
-  const res = await fetch(API_BASE + "/api/status");
+export async function fetchStatus(checkToken = false) {
+  const url = checkToken ? API_BASE + "/api/status?checkToken=true" : API_BASE + "/api/status";
+  const res = await fetch(url);
   return res.json();
 }
 

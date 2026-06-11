@@ -43,9 +43,9 @@ export async function processIncomingMessages(env: Env): Promise<ProcessResult> 
   const updates = await getUpdates(creds.token, creds.baseUrl, 4000);
   console.log("[messaging] getUpdates result - ret:", updates.ret, "msgs count:", updates.msgs?.length || 0);
 
-  // 检测 token 是否过期
-  if (updates.ret === -14 || updates.ret === -10 || (typeof updates.ret === "string" && /timeout|expire|invalid/i.test(updates.ret))) {
-    console.error("[messaging] token expired, clearing credentials");
+  // 检测 token 是否过期（errcode=-14 是微信 session timeout，负值通常也是认证类错误）
+  if (updates.ret === -14 || updates.ret === -10 || updates.ret < 0) {
+    console.error("[messaging] token expired (ret=" + updates.ret + "), clearing credentials");
     await env.CLAWBOT_KV.delete("clawbot:credentials");
     return {
       pulled: 0,

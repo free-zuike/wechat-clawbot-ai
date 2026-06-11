@@ -18,6 +18,10 @@
         </div>
       </nav>
 
+      <div style="margin-top:12px;padding:10px 12px;background:#fff7ed;border-radius:10px;font-size:12px;color:#c2410c;line-height:1.6">
+        💡 微信 iLink Token 有效期较短，提示未登录时请重新扫码
+      </div>
+
       <button class="logout-btn" @click="handleLogout">退出登录</button>
     </aside>
 
@@ -32,6 +36,19 @@
             <div class="stat-item">
               <div class="stat-label">登录状态</div>
               <div class="stat-value">{{ status.loggedIn ? "✅ 在线" : "❌ 未登录" }}</div>
+            </div>
+            <div class="stat-item" v-if="status.loginAgeText">
+              <div class="stat-label">登录时长</div>
+              <div class="stat-value">{{ status.loginAgeText }}</div>
+            </div>
+            <div class="stat-item" v-if="status.tokenHealth && status.tokenHealth !== 'unknown'">
+              <div class="stat-label">Token 状态</div>
+              <div class="stat-value">
+                <span v-if="status.tokenHealth === 'valid'" style="color:#16a34a">有效</span>
+                <span v-else-if="status.tokenHealth === 'expired'" style="color:#dc2626">已过期</span>
+                <span v-else-if="status.tokenHealth === 'error'" style="color:#d97706">检查失败</span>
+                <span v-else style="color:#6b7280">未检测</span>
+              </div>
             </div>
             <div class="stat-item">
               <div class="stat-label">累计轮询</div>
@@ -56,6 +73,9 @@
           </div>
           <div style="margin-top: 16px; font-size: 13px; color: #888">
             最后轮询: {{ status.lastPollAt }}
+          </div>
+          <div v-if="status.tokenHealth === 'expired'" style="margin-top:12px;padding:10px 14px;background:#fef2f2;border-radius:8px;font-size:13px;color:#b91c1c">
+            ⚠️ Token 已过期，需要重新扫码登录
           </div>
         </div>
       </section>
@@ -180,9 +200,12 @@ const navItems = [
 ];
 
 const activeSection = ref("status");
+let isFirstRefresh = true;
 
 const status = reactive({
   loggedIn: false,
+  tokenHealth: "",
+  loginAgeText: "",
   polls: 0,
   handled: 0,
   aiCalls: 0,
@@ -206,8 +229,10 @@ let refreshTimer: number | null = null;
 
 async function handleRefreshStatus() {
   try {
-    const d = await fetchStatus();
+    const d = await fetchStatus(isFirstRefresh);
     status.loggedIn = !!d.loggedIn;
+    status.tokenHealth = d.tokenHealth || "";
+    status.loginAgeText = d.loginAgeText || "";
     status.polls = d.stats?.polls || 0;
     status.handled = d.stats?.handled || 0;
     status.aiCalls = d.stats?.aiCalls || 0;
@@ -217,6 +242,7 @@ async function handleRefreshStatus() {
       : "从未";
     status.lastLatencyMs =
       d.stats?.lastLatencyMs == null ? "—" : d.stats.lastLatencyMs + " ms";
+    isFirstRefresh = false;
   } catch {}
 }
 
