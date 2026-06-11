@@ -41,4 +41,7 @@ invocation_logs = true
 
 [observability.traces]
 
+[observability.logs]
+[observability.traces]
+enabled = true
 
