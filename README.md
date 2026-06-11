@@ -48,7 +48,6 @@ npm run deploy
 # 统计数据库（D1）
 npx wrangler d1 create clawbot-stats
 npx wrangler d1 execute clawbot-stats --file=./schema.sql
-# 把 database_id 填入 [[d1_databases]]
 
 # 异步消息队列（Queues）—— 防止 cron 超时
 npx wrangler queues create clawbot-messages
@@ -95,7 +94,7 @@ max_batch_size = 10
 
 ## 📱 扫码绑定微信
 
-1. 打开 `https://<你的 Worker 域名>/login`
+1. 打开 `https://<你的 Worker 域名>/login`（需输入管理员密码）
 2. 在微信里：`我 → 设置 → 插件 → ClawBot`
 3. 用微信扫描页面上的二维码
 4. 手机上点确认 → 页面提示"登录成功" → 自动跳回首页
@@ -120,20 +119,26 @@ max_batch_size = 10
 | 方法 | 路径 | 用途 | 权限 |
 | --- | --- | --- | --- |
 | GET | `/` | 管理面板（状态 + 聊天测试） | 公开 |
-| GET | `/login` | 扫码登录页 | 需密码（若配置） |
-| GET | `/api/qrcode` | 申请新二维码 | 需密码（若配置） |
-| GET | `/api/qrcode-status` | 轮询扫码状态 | 需密码（若配置） |
-| POST | `/api/trigger-poll` | 手动触发消息拉取 | 需密码（若配置） |
+| GET | `/login` | 扫码登录页 | ✅ 需密码 |
+| GET | `/api/qrcode` | 申请新二维码 | ✅ 需密码 |
+| GET | `/api/qrcode-status` | 轮询扫码状态 | ✅ 需密码 |
+| POST | `/api/trigger-poll` | 手动触发消息拉取 | ✅ 需密码 |
 | GET | `/api/status` | 实时状态 JSON | 公开 |
 | GET | `/api/history` | D1 小时统计 | 公开 |
-| GET | `/api/r2-history` | R2 对话历史 | 需密码 |
-| POST | `/api/logout` | 退出登录 | 需密码（若配置） |
+| GET | `/api/r2-history` | R2 对话历史 | ✅ 需密码 |
+| POST | `/api/logout` | 退出登录 | ✅ 需密码 |
 | POST | `/api/chat` | `{ message, userId }` → AI | 公开 |
 | GET | `/healthz` | 健康检查 | 公开 |
 
+### 密码访问方式
+
+- **URL 参数**：`https://xxx.workers.dev/login?pwd=你的密码`
+- **Basic Auth**：`Authorization: Basic base64(admin:你的密码)`
+- **登录页**：页面内自带密码输入框
+
 ---
 
-## ⚙️ 后台配置
+## ⚙️ 环境变量配置
 
 | 配置项 | 必填 | 说明 | 设置方式 |
 | --- | --- | --- | --- |
@@ -143,38 +148,7 @@ max_batch_size = 10
 | **TURNSTILE_SECRET_KEY** | ❌ 可选 | Turnstile 人机验证 | `wrangler secret put TURNSTILE_SECRET_KEY` |
 | **TURNSTILE_SITE_KEY** | ❌ 可选 | Turnstile 公钥 | `wrangler.toml` 的 `[vars]` |
 
-### 必需步骤 —— 设置管理员密码
-
-```bash
-wrangler secret put ADMIN_PASSWORD
-wrangler deploy
-```
-
-> 未设置密码前，`/api/qrcode`、`/api/trigger-poll`、`/api/r2-history`、`/login` 等接口都会返回 401 错误。
-
----
-
-## 🌐 路由一览
-
-| 方法 | 路径 | 用途 | 权限 |
-| --- | --- | --- | --- |
-| GET | `/` | 管理面板（状态 + 聊天测试） | 公开 |
-| GET | `/login` | 扫码登录页 | 需密码 |
-| GET | `/api/qrcode` | 申请新二维码 | 需密码 |
-| GET | `/api/qrcode-status` | 轮询扫码状态 | 需密码 |
-| POST | `/api/trigger-poll` | 手动触发消息拉取 | 需密码 |
-| GET | `/api/status` | 实时状态 JSON | 公开 |
-| GET | `/api/history` | D1 小时统计 | 公开 |
-| GET | `/api/r2-history` | R2 对话历史 | 需密码 |
-| POST | `/api/logout` | 退出登录 | 需密码 |
-| POST | `/api/chat` | `{ message, userId }` → AI | 公开 |
-| GET | `/healthz` | 健康检查 | 公开 |
-
-### 密码访问方式
-
-- **URL 参数**：`https://xxx.workers.dev/login?pwd=你的密码`
-- **Basic Auth**：`Authorization: Basic base64(admin:你的密码)`
-- **登录页**：页面内自带密码输入框
+> **注意**：未设置 `ADMIN_PASSWORD` 前，敏感接口会返回 401 错误，提示先设置密码。
 
 ---
 
@@ -229,25 +203,13 @@ wrangler deploy
 
 ---
 
-## ⚙️ 后台配置项
-
-| 环境变量 | 说明 | 设置方式 |
-| --- | --- | --- |
-| `ADMIN_PASSWORD` | 管理密码（可选） | `wrangler secret put ADMIN_PASSWORD` |
-| `TURNSTILE_SECRET_KEY` | Turnstile 人机验证（可选） | `wrangler secret put TURNSTILE_SECRET_KEY` |
-| `TURNSTILE_SITE_KEY` | Turnstile 公钥（可选） | `wrangler.toml` 的 `[vars]` |
-| `AI_MODEL` | AI 模型（可选，默认 llama-3-8b） | `wrangler secret put AI_MODEL` |
-| `AI_SYSTEM_PROMPT` | 自定义 AI 人设（可选） | `wrangler secret put AI_SYSTEM_PROMPT` |
-
----
-
 ## 📊 管理面板
 
 访问 `https://<你的域名>/` 查看：
 
 - **实时状态**：轮询次数、AI 调用、错误统计
 - **历史统计**：过去 24 小时 / 7 天数据
-- **AI 测试**：直接对话测试
+- **AI 测试**：直接对话测试（公开）
 - **R2 历史**：查询用户对话记录（需密码）
 
 ---
@@ -268,7 +230,7 @@ A: iLink 协议主要面向私聊，群聊支持视微信策略而定。
 
 **Q: 可以换成别的 AI 模型吗？**
 
-A: 可以。修改 `src/ai-service.ts` 的 `DEFAULT_MODEL`，Worker AI 支持多种模型。
+A: 可以。通过 `AI_MODEL` 环境变量设置，支持 Worker AI 的所有模型。
 
 **Q: 免费额度够用吗？**
 
@@ -280,12 +242,12 @@ A: 完全够用。Cache API 代替 KV 后，写入几乎为零；D1 每小时只
 
 ### v1.5 Cloudflare Suite（最新）
 
+- ✅ 管理员密码 **必需**（保护敏感接口）
 - ✅ 集成 Cloudflare Queues — 异步消息处理
 - ✅ 集成 R2 — 长期对话历史存储
-- ✅ 集成 Turnstile — 防机器人
-- ✅ 管理员密码保护
+- ✅ 集成 Turnstile — 防机器人（可选）
+- ✅ AI 模型可配置（通过 `AI_MODEL` 环境变量）
 - ✅ 管理面板全面升级
-- ✅ 修复类型错误
 
 ### v1.4 D1 统计
 
