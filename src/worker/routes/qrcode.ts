@@ -8,17 +8,13 @@ export async function handleQRCode(request: Request, env: Env): Promise<Response
   if (!v.ok) return json({ error: v.error }, 401);
   try {
     const data = await getQRCode();
-    // 保存 key 和图片 URL 到 KV，5 分钟过期
+    // 保存 key 到 KV，5 分钟过期
     await env.CLAWBOT_KV.put("clawbot:qrcode_key", data.key, {
       expirationTtl: 5 * 60,
     });
-    if (data.imgUrl.startsWith("http")) {
-      await env.CLAWBOT_KV.put("clawbot:qrcode_img_url", data.imgUrl, {
-        expirationTtl: 5 * 60,
-      });
-    }
     
-    return json({ qrcode: data.key, qrcode_img_content: "/api/qrcode-image" });
+    // 直接返回微信的原始图片 URL（浏览器能直接打开）
+    return json({ qrcode: data.key, qrcode_img_content: data.imgUrl });
   } catch (e: any) {
     return json({ error: String(e) }, 500);
   }

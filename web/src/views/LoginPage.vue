@@ -93,13 +93,7 @@ async function startLogin() {
       return;
     }
     qrCode.value = data.qrcode;
-    const imgUrl = data.qrcode_img_content.trim().replace(/^`+|`+$/g, "").trim();
-    // 确保是绝对路径，添加时间戳避免缓存
-    const finalUrl = imgUrl.startsWith("/") ? window.location.origin + imgUrl : imgUrl;
-    qrImage.value = "";
-    setTimeout(() => {
-      qrImage.value = finalUrl + "?t=" + Date.now();
-    }, 0);
+    qrImage.value = data.qrcode_img_content.trim().replace(/^`+|`+$/g, "").trim();
     qrStatus.value = "等待扫码...";
     pollStatus();
   } catch (e: any) {
