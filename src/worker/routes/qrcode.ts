@@ -19,7 +19,10 @@ export async function handleQRCode(request: Request, env: Env): Promise<Response
       const imgRes = await fetch(data.imgUrl);
       if (imgRes.ok) {
         const buffer = await imgRes.arrayBuffer();
-        imgContent = Buffer.from(buffer).toString("base64");
+        // Workers 环境没有 Buffer，用原生方式转换
+        const uint8Array = new Uint8Array(buffer);
+        const base64String = btoa(String.fromCharCode(...uint8Array));
+        imgContent = base64String;
       }
     }
     
