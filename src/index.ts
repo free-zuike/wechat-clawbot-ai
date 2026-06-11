@@ -96,39 +96,36 @@ async function deleteCredentials(env: Env) {
   await env.CLAWBOT_KV.delete(KV_CRED);
 }
 
-// ---------- 管理访问控制（可选） ----------
-// 若配置了 ADMIN_PASSWORD，扫码登录/管理接口需要通过密码
-// 可以配合 TURNSTILE 做真人验证
-function needsAdmin(env: Env): boolean {
+// ---------- 管理访问控制（必需） ----------
+// 管理密码保护敏感接口；若未配置 ADMIN_PASSWORD 则提示先设置
+function hasAdminPassword(env: Env): boolean {
   return !!(env.ADMIN_PASSWORD && env.ADMIN_PASSWORD.length > 3);
 }
 
-// Basic Auth 解析: Authorization: Basic <base64(user:pass)>
-function parseBasicAuth(authHeader: string | null): { ok: boolean; reason?: string } {
-  if (!authHeader) return { ok: false, reason: "需要 Authorization 头" };
-  const m = authHeader.match(/^Basic\s+(.+)$/i);
-  if (!m) return { ok: false, reason: "Basic Auth 格式错误" };
-  try {
-    const decoded = atob(m[1]);
-    const colon = decoded.indexOf(":");
-    const pass = colon >= 0 ? decoded.slice(colon + 1) : decoded;
-    if (pass) return { ok: true };
-  } catch {}
-  return { ok: false, reason: "密码解析失败" };
-}
-
-function requireAdmin(request: Request, env: Env): Response | null {
-  if (!needsAdmin(env)) return null;
+// 验证管理员密码
+function verifyAdmin(request: Request, env: Env): { ok: boolean; error?: string } {
+  // 必须配置密码
+  if (!hasAdminPassword(env)) {
+    return { ok: false, error: "请先配置 ADMIN_PASSWORD（wrangler secret put ADMIN_PASSWORD）" };
+  }
+  // 检查 Authorization 头
   const authHeader = request.headers.get("Authorization") || "";
+  const m = authHeader.match(/^Basic\s+(.+)$/i);
+  let headerOk = false;
+  if (m) {
+    try {
+      const decoded = atob(m[1]);
+      const colon = decoded.indexOf(":");
+      const pass = colon >= 0 ? decoded.slice(colon + 1) : decoded;
+      headerOk = pass === env.ADMIN_PASSWORD;
+    } catch {}
+  }
+  // 检查 URL 参数
   const queryPwd = new URL(request.url).searchParams.get("pwd") || "";
-  const bodyPwd = ""; // POST body 在每个 handler 自行读取
-  const headerOk = parseBasicAuth(authHeader).ok && atob(authHeader.replace(/^Basic\s+/i, "")).split(":")[1] === env.ADMIN_PASSWORD;
-  const queryOk = queryPwd === env.ADMIN_PASSWORD;
-  if (headerOk || queryOk) return null;
-  return new Response(
-    JSON.stringify({ error: "需要管理员权限 (请在 URL 加 ?pwd=xxx 或用 Basic Auth" }),
-    { status: 401, headers: { "Content-Type": "application/json; charset=utf-8" } }
-  );
+  if (headerOk || queryPwd === env.ADMIN_PASSWORD) {
+    return { ok: true };
+  }
+  return { ok: false, error: "管理员密码不正确" };
 }
 
 // Turnstile 验证（可选，仅在配置 TURNSTILE_SECRET_KEY 后生效）
@@ -482,36 +479,12 @@ export default {
     if (path === "/healthz")
       return json({ ok: true, time: new Date().toISOString() });
 
-    // ---------- 扫码登录（需要管理员密码才能扫） ----------
-    const adminCheck = (): Response | null => {
-      if (needsAdmin(env)) {
-        const header = request.headers.get("Authorization") || "";
-        const q = url.searchParams.get("pwd") || "";
-        const basicOk = (() => {
-          try {
-            const m = header.match(/^Basic\s+(.+)$/i);
-            if (!m) return false;
-            const decoded = atob(m[1]);
-            const colon = decoded.indexOf(":");
-            const pass = colon >= 0 ? decoded.slice(colon + 1) : decoded;
-            return pass === env.ADMIN_PASSWORD;
-          } catch {
-            return false;
-          }
-        })();
-        if (!basicOk && q !== env.ADMIN_PASSWORD) {
-          return new Response(
-            JSON.stringify({ error: "需要管理员密码" }),
-            { status: 401, headers: { "Content-Type": "application/json; charset=utf-8" } }
-          );
-        }
-      }
-      return null;
-    };
+    // ---------- 需要管理员密码的接口 ----------
+    // 扫码登录、手动触发、历史查询等全部需要正确的 ADMIN_PASSWORD
 
     if (path === "/api/qrcode" && method === "GET") {
-      const denied = adminCheck();
-      if (denied) return denied;
+      const v = verifyAdmin(request, env);
+      if (!v.ok) return json({ error: v.error || "无权访问" }, 401);
       try {
         const { key, imgUrl } = await ilink.getQRCode();
         await env.CLAWBOT_KV.put("clawbot:qrcode_key", key, {
@@ -524,8 +497,8 @@ export default {
     }
 
     if (path === "/api/qrcode-status" && method === "GET") {
-      const denied = adminCheck();
-      if (denied) return denied;
+      const v = verifyAdmin(request, env);
+      if (!v.ok) return json({ error: v.error || "无权访问" }, 401);
       try {
         const key =
           (await env.CLAWBOT_KV.get("clawbot:qrcode_key")) ||
@@ -553,8 +526,8 @@ export default {
 
     // ---------- 手动触发一次消息拉取 (需要管理员) ----------
     if (path === "/api/trigger-poll" && method === "POST") {
-      const denied = adminCheck();
-      if (denied) return denied;
+      const v = verifyAdmin(request, env);
+      if (!v.ok) return json({ error: v.error || "无权访问" }, 401);
       // 可选: Turnstile 机器人检查
       if (env.TURNSTILE_SECRET_KEY) {
         const tsToken = request.headers.get("X-Turnstile-Token") ||
@@ -581,7 +554,7 @@ export default {
         hasDb: !!env.CLAWBOT_DB,
         hasQueue: !!env.CLAWBOT_QUEUE,
         hasR2: !!env.CLAWBOT_R2,
-        needAdmin: needsAdmin(env),
+        hasAdminPwd: hasAdminPassword(env),
         version: "v1.5-cloudflare-suite",
         stats: getStatsSnapshot(),
       });
@@ -599,8 +572,8 @@ export default {
 
     // ---------- R2 长期对话历史查询 (需要管理员) ----------
     if (path === "/api/r2-history" && method === "GET") {
-      const denied = adminCheck();
-      if (denied) return denied;
+      const v = verifyAdmin(request, env);
+      if (!v.ok) return json({ error: v.error || "无权访问" }, 401);
       const userId = url.searchParams.get("user") || "all";
       const limit = Math.max(1, Math.min(100, parseInt(url.searchParams.get("limit") || "20", 10)));
       if (!env.CLAWBOT_R2) return json({ error: "未配置 R2" }, 400);
@@ -622,8 +595,8 @@ export default {
 
     // ---------- 退出登录 ----------
     if (path === "/api/logout" && method === "POST") {
-      const denied = adminCheck();
-      if (denied) return denied;
+      const v = verifyAdmin(request, env);
+      if (!v.ok) return json({ error: v.error || "无权访问" }, 401);
       await deleteCredentials(env);
       return json({ ok: true });
     }
@@ -653,12 +626,12 @@ export default {
     }
 
     // ---------- 扫码登录页（含管理员密码输入框）----------
-    if (path === "/login") return html(LOGIN_PAGE(env, needsAdmin(env)));
+    if (path === "/login") return html(LOGIN_PAGE(env, hasAdminPassword(env)));
 
     // ---------- 管理面板 ----------
     if (path === "/" || path === "") {
       const creds = await getCredentials(env);
-      return html(HOME_PAGE(env, !!creds, needsAdmin(env)));
+      return html(HOME_PAGE(env, !!creds, hasAdminPassword(env)));
     }
 
     return json({ error: "Not Found" }, 404);
@@ -732,7 +705,7 @@ export default {
 // ======================================================================
 //  HTML 页面
 // ======================================================================
-function HOME_PAGE(env: Env, loggedIn: boolean, needAdmin: boolean): string {
+function HOME_PAGE(env: Env, loggedIn: boolean, hasAdmin: boolean): string {
   const statusBadge = (ok: boolean, text: string) =>
     `<span class="badge ${ok ? "ok" : "bad"}">${ok ? "✓" : "✗"} ${text}</span>`;
 
@@ -742,6 +715,10 @@ function HOME_PAGE(env: Env, loggedIn: boolean, needAdmin: boolean): string {
   const turnstileWidget = env.TURNSTILE_SITE_KEY
     ? `<div class="cf-turnstile" data-sitekey="${env.TURNSTILE_SITE_KEY}"></div>`
     : "";
+
+  const needPwdNotice = hasAdmin
+    ? ""
+    : `<div class="notice" style="margin-top:12px">🔐 管理功能需要先设置管理员密码。<br/>执行：<code>wrangler secret put ADMIN_PASSWORD</code> 然后 <code>wrangler deploy</code></div>`;
 
   return `<!doctype html>
 <html lang="zh-CN">
@@ -1032,7 +1009,11 @@ setInterval(refreshStats, 30000);
 </html>`;
 }
 
-function LOGIN_PAGE(_env: Env, needAdmin: boolean): string {
+function LOGIN_PAGE(_env: Env, hasAdmin: boolean): string {
+  const pwdNotice = hasAdmin
+    ? ""
+    : `<div class="notice" style="margin-bottom:12px">🔐 请先设置管理员密码后重新部署：<br/><code>wrangler secret put ADMIN_PASSWORD</code><br/><code>wrangler deploy</code></div>`;
+
   return `<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -1044,6 +1025,7 @@ function LOGIN_PAGE(_env: Env, needAdmin: boolean): string {
   .card{background:#fff;border-radius:22px;padding:36px 28px;box-shadow:0 8px 28px rgba(0,0,0,.08);text-align:center;max-width:420px;width:90%}
   h1{color:#ff4d8d;margin:0 0 8px;font-size:24px}
   .sub{color:#666;font-size:14px;margin-bottom:20px}
+  .notice{background:#fff8e1;border:1px solid #ffd54f;border-radius:12px;padding:12px;font-size:13px;color:#665c00;margin-bottom:12px;text-align:left}
   .qr{border:1px dashed #ffb6c8;border-radius:16px;padding:22px;margin:16px 0;min-height:220px;display:flex;align-items:center;justify-content:center;background:#fffafc}
   .qr img{max-width:220px;max-height:220px}
   .status{margin:14px 0;font-size:14px;color:#555}
@@ -1057,7 +1039,8 @@ function LOGIN_PAGE(_env: Env, needAdmin: boolean): string {
 <div class="card">
   <h1>🦞 登录微信 ClawBot</h1>
   <div class="sub">微信 → 设置 → 插件 → ClawBot → 扫描下面的二维码</div>
-  ${needAdmin ? `<div style="margin-bottom:12px"><input id="pwd" class="input" placeholder="管理员密码"/></div>` : ""}
+  ${pwdNotice}
+  <input id="pwd" class="input" placeholder="管理员密码"/>
   <div class="qr" id="qr"><button class="btn" onclick="getQR()">获取二维码</button></div>
   <div class="status" id="status">点击按钮开始</div>
 </div>
@@ -1075,7 +1058,7 @@ async function getQR(){
   try {
     const r = await fetch(urlWithPwd('/api/qrcode'), {cache:'no-store'});
     const d = await r.json();
-    if(d.error){ throw new Error(d.error); }
+    if(d.error){ stEl.textContent = '错误：' + d.error; stEl.className='status bad'; return; }
     if(!d.qrcode_img_content) throw new Error('未返回二维码');
     qrEl.innerHTML = '<img src="' + d.qrcode_img_content + '" alt="wechat qrcode"/>';
     stEl.textContent = '请用微信扫描二维码';

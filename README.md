@@ -35,7 +35,10 @@ npx wrangler login
 npx wrangler kv:namespace create CLAWBOT_KV
 # 把输出的 id 填入 wrangler.toml 的 [[kv_namespaces]]
 
-# 4. 部署
+# 4. ⚠️ 设置管理员密码（必需）
+npx wrangler secret put ADMIN_PASSWORD
+
+# 5. 部署
 npm run deploy
 ```
 
@@ -53,8 +56,12 @@ npx wrangler queues create clawbot-messages
 # 长期对话历史（R2）—— 永久存储
 npx wrangler r2 bucket create clawbot-history
 
-# 管理密码（安全）
-npx wrangler secret put ADMIN_PASSWORD
+# AI 模型自定义
+npx wrangler secret put AI_MODEL
+# 可用：@cf/meta/llama-3-8b-instruct, @cf/mistral/mistral-7b-instruct-v0.1 等
+
+# 自定义人设
+npx wrangler secret put AI_SYSTEM_PROMPT
 ```
 
 ### 配置文件
@@ -126,40 +133,52 @@ max_batch_size = 10
 
 ---
 
-## ⚙️ 后台配置（可选）
+## ⚙️ 后台配置
 
-以下功能通过环境变量配置，按需启用：
+| 配置项 | 必填 | 说明 | 设置方式 |
+| --- | --- | --- | --- |
+| **ADMIN_PASSWORD** | ✅ 必需 | 管理接口密码 | `wrangler secret put ADMIN_PASSWORD` |
+| **AI_MODEL** | ❌ 可选 | AI 模型（默认 llama-3-8b） | `wrangler secret put AI_MODEL` |
+| **AI_SYSTEM_PROMPT** | ❌ 可选 | 自定义人设提示词 | `wrangler secret put AI_SYSTEM_PROMPT` |
+| **TURNSTILE_SECRET_KEY** | ❌ 可选 | Turnstile 人机验证 | `wrangler secret put TURNSTILE_SECRET_KEY` |
+| **TURNSTILE_SITE_KEY** | ❌ 可选 | Turnstile 公钥 | `wrangler.toml` 的 `[vars]` |
+
+### 必需步骤 —— 设置管理员密码
 
 ```bash
-# 管理密码（保护管理接口，需要时设置）
 wrangler secret put ADMIN_PASSWORD
-
-# Turnstile 人机验证（保护管理接口，需要时设置）
-wrangler secret put TURNSTILE_SECRET_KEY
-
-# AI 模型（默认 @cf/meta/llama-3-8b-instruct，可自定义）
-wrangler secret put AI_MODEL
-# 可选模型: @cf/meta/llama-3-8b-instruct, @cf/meta/llama-3-16k, @cf/mistral/mistral-7b-instruct-v0.1 等
-
-# 自定义 AI 人设提示词
-wrangler secret put AI_SYSTEM_PROMPT
+wrangler deploy
 ```
 
-### 密码保护说明
-
-设置 `ADMIN_PASSWORD` 后，以下接口需要验证：
-- `/login` - 扫码登录页
-- `/api/qrcode` - 获取二维码
-- `/api/trigger-poll` - 手动触发消息拉取
-- `/api/r2-history` - 查询对话历史
-
-访问方式：
-- URL 参数：`https://xxx.workers.dev/login?pwd=你的密码`
-- Basic Auth：`Authorization: Basic base64(admin:密码)`
+> 未设置密码前，`/api/qrcode`、`/api/trigger-poll`、`/api/r2-history`、`/login` 等接口都会返回 401 错误。
 
 ---
 
-## 📁 文件结构
+## 🌐 路由一览
+
+| 方法 | 路径 | 用途 | 权限 |
+| --- | --- | --- | --- |
+| GET | `/` | 管理面板（状态 + 聊天测试） | 公开 |
+| GET | `/login` | 扫码登录页 | 需密码 |
+| GET | `/api/qrcode` | 申请新二维码 | 需密码 |
+| GET | `/api/qrcode-status` | 轮询扫码状态 | 需密码 |
+| POST | `/api/trigger-poll` | 手动触发消息拉取 | 需密码 |
+| GET | `/api/status` | 实时状态 JSON | 公开 |
+| GET | `/api/history` | D1 小时统计 | 公开 |
+| GET | `/api/r2-history` | R2 对话历史 | 需密码 |
+| POST | `/api/logout` | 退出登录 | 需密码 |
+| POST | `/api/chat` | `{ message, userId }` → AI | 公开 |
+| GET | `/healthz` | 健康检查 | 公开 |
+
+### 密码访问方式
+
+- **URL 参数**：`https://xxx.workers.dev/login?pwd=你的密码`
+- **Basic Auth**：`Authorization: Basic base64(admin:你的密码)`
+- **登录页**：页面内自带密码输入框
+
+---
+
+## 🏗️ 架构
 
 ```
 微信用户 → 微信服务器 (ilinkai.weixin.qq.com)
