@@ -1,10 +1,10 @@
-import { json, verifyAdmin } from "../utils";
+import { json, verifyAdmin, generateSessionToken, createSessionCookie } from "../utils";
 import { getQRCode, getQRCodeStatus } from "../services/ilink";
 import type { Env } from "../index";
 
 // 1. 获取二维码
 export async function handleQRCode(request: Request, env: Env): Promise<Response> {
-  const v = verifyAdmin(request, env);
+  const v = await verifyAdmin(request, env);
   if (!v.ok) return json({ error: v.error }, 401);
   try {
     const data = await getQRCode();
@@ -19,7 +19,7 @@ export async function handleQRCode(request: Request, env: Env): Promise<Response
 
 // 3. 轮询扫码状态
 export async function handleQRCodeStatus(request: Request, env: Env): Promise<Response> {
-  const v = verifyAdmin(request, env);
+  const v = await verifyAdmin(request, env);
   if (!v.ok) return json({ error: v.error }, 401);
   try {
     const url = new URL(request.url);
@@ -44,9 +44,20 @@ export async function handleQRCodeStatus(request: Request, env: Env): Promise<Re
         createdAt: Date.now(),
       };
       await env.CLAWBOT_KV.put("clawbot:credentials", JSON.stringify(creds));
+      
+      // 生成 session token
+      const sessionToken = generateSessionToken();
+      await env.CLAWBOT_KV.put(`clawbot:session:${sessionToken}`, "valid", {
+        expirationTtl: 24 * 60 * 60,
+      });
+      
       await env.CLAWBOT_KV.delete("clawbot:qrcode_key");
       console.log("[qrcode-status] login confirmed, credentials saved");
-      return json({ status: "confirmed", ok: true });
+      
+      // 返回带有 session cookie 的响应
+      return json({ status: "confirmed", ok: true }, 200, {
+        "Set-Cookie": createSessionCookie(sessionToken),
+      });
     }
     
     return json(status);

@@ -7,18 +7,18 @@ function withPwd(path: string, pwd: string): string {
   return API_BASE + path + sep + "pwd=" + encodeURIComponent(pwd);
 }
 
-export async function fetchStatus(pwd: string) {
-  const res = await fetch(withPwd("/api/status", pwd));
+export async function fetchStatus() {
+  const res = await fetch(API_BASE + "/api/status");
   return res.json();
 }
 
-export async function fetchConfig(pwd: string) {
-  const res = await fetch(withPwd("/api/config", pwd));
+export async function fetchConfig() {
+  const res = await fetch(API_BASE + "/api/config");
   return res.json();
 }
 
-export async function saveConfig(pwd: string, config: any) {
-  const res = await fetch(withPwd("/api/config", pwd), {
+export async function saveConfig(config: any) {
+  const res = await fetch(API_BASE + "/api/config", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(config),
@@ -26,15 +26,15 @@ export async function saveConfig(pwd: string, config: any) {
   return res.json();
 }
 
-export async function triggerPoll(pwd: string) {
-  const res = await fetch(withPwd("/api/trigger-poll", pwd), {
+export async function triggerPoll() {
+  const res = await fetch(API_BASE + "/api/trigger-poll", {
     method: "POST",
   });
   return res.json();
 }
 
-export async function logout(pwd: string) {
-  const res = await fetch(withPwd("/api/logout", pwd), {
+export async function logout() {
+  const res = await fetch(API_BASE + "/api/logout", {
     method: "POST",
   });
   return res.json();

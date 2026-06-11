@@ -1,10 +1,11 @@
 // 通用工具函数
-export function json(data: any, status = 200): Response {
+export function json(data: any, status = 200, headers: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(data, null, 2), {
     status,
     headers: {
       "Content-Type": "application/json; charset=utf-8",
       "Cache-Control": "no-store",
+      ...headers,
     },
   });
 }
@@ -19,15 +20,41 @@ export function html(body: string, status = 200): Response {
   });
 }
 
-// 验证管理员密码
-export function verifyAdmin(request: Request, env: any): { ok: boolean; error?: string } {
+// 生成随机 session token
+export function generateSessionToken(): string {
+  return crypto.randomUUID().replace(/-/g, "");
+}
+
+// 创建 session cookie
+export function createSessionCookie(token: string): string {
+  return `clawbot_session=${token}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${24 * 60 * 60}`;
+}
+
+// 清除 session cookie
+export function clearSessionCookie(): string {
+  return "clawbot_session=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0";
+}
+
+// 验证管理员密码或 session
+export async function verifyAdmin(request: Request, env: any): Promise<{ ok: boolean; error?: string }> {
+  // 先检查 session cookie
+  const cookieHeader = request.headers.get("Cookie") || "";
+  const sessionMatch = cookieHeader.match(/clawbot_session=([^;]+)/);
+  if (sessionMatch && env.CLAWBOT_KV) {
+    const sessionToken = sessionMatch[1];
+    const sessionValid = await env.CLAWBOT_KV.get(`clawbot:session:${sessionToken}`);
+    if (sessionValid) {
+      return { ok: true };
+    }
+  }
+
+  // 再检查管理员密码（兼容旧方式）
   if (!env.ADMIN_PASSWORD || env.ADMIN_PASSWORD.length < 3) {
     return { ok: false, error: "请先配置 ADMIN_PASSWORD（wrangler secret put ADMIN_PASSWORD）" };
   }
   const url = new URL(request.url);
   const queryPwd = url.searchParams.get("pwd") || "";
 
-  // 支持 Query 参数或 Authorization header
   const authHeader = request.headers.get("Authorization") || "";
   let headerOk = false;
   const m = authHeader.match(/^Basic\s+(.+)$/i);

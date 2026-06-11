@@ -19,7 +19,7 @@ export async function handleConfig(request: Request, env: Env): Promise<Response
 
   // POST - 保存配置
   if (request.method === "POST") {
-    const v = verifyAdmin(request, env);
+    const v = await verifyAdmin(request, env);
     if (!v.ok) return json({ error: v.error }, 401);
     try {
       const body: any = await request.json();

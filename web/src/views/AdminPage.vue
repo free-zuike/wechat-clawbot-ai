@@ -18,11 +18,7 @@
         </div>
       </nav>
 
-      <div class="password-box">
-        <label>🔐 管理员密码</label>
-        <input v-model="password" type="password" placeholder="执行操作前填写" />
-        <button class="logout-btn" @click="handleLogout">退出登录</button>
-      </div>
+      <button class="logout-btn" @click="handleLogout">退出登录</button>
     </aside>
 
     <!-- 主内容 -->
@@ -184,7 +180,6 @@ const navItems = [
 ];
 
 const activeSection = ref("status");
-const password = ref("");
 
 const status = reactive({
   loggedIn: false,
@@ -211,7 +206,7 @@ let refreshTimer: number | null = null;
 
 async function handleRefreshStatus() {
   try {
-    const d = await fetchStatus(password.value);
+    const d = await fetchStatus();
     status.loggedIn = !!d.loggedIn;
     status.polls = d.stats?.polls || 0;
     status.handled = d.stats?.handled || 0;
@@ -226,14 +221,10 @@ async function handleRefreshStatus() {
 }
 
 async function handleTriggerPoll() {
-  if (!password.value) {
-    pollResult.value = "❌ 请先填写管理员密码";
-    return;
-  }
   isPolling.value = true;
   pollResult.value = "正在轮询...";
   try {
-    const d = await triggerPoll(password.value);
+    const d = await triggerPoll();
     pollResult.value =
       `✅ 轮询完成\n` +
       `拉取: ${d.pulled || 0} 条\n` +
@@ -249,13 +240,9 @@ async function handleTriggerPoll() {
 }
 
 async function handleLoadConfig() {
-  if (!password.value) {
-    configResult.value = "❌ 请先填写管理员密码";
-    return;
-  }
   configResult.value = "加载中...";
   try {
-    const d = await fetchConfig(password.value);
+    const d = await fetchConfig();
     config.aiModel = d.aiModel || "";
     config.aiSystemPrompt = d.aiSystemPrompt || "";
     configResult.value = "✅ 已加载当前配置";
@@ -265,13 +252,9 @@ async function handleLoadConfig() {
 }
 
 async function handleSaveConfig() {
-  if (!password.value) {
-    configResult.value = "❌ 请先填写管理员密码";
-    return;
-  }
   configResult.value = "保存中...";
   try {
-    const d = await saveConfig(password.value, config);
+    const d = await saveConfig(config);
     if (d.ok) {
       configResult.value = "✅ 配置已保存！下次消息将使用新配置";
     } else {
@@ -299,13 +282,9 @@ async function handleSendChat() {
 }
 
 async function handleLogout() {
-  if (!password.value) {
-    alert("请先填写管理员密码");
-    return;
-  }
   if (!confirm("确认退出登录？退出后需重新扫码。")) return;
   try {
-    await logout(password.value);
+    await logout();
   } catch {}
   router.push("/login");
 }
