@@ -66,6 +66,12 @@ export async function handleDebugLogin(request: Request, env: Env): Promise<Resp
     { name: "POST /ilink/bot/refresh", path: "/ilink/bot/refresh" },
     { name: "POST /ilink/bot/auth", path: "/ilink/bot/auth" },
     { name: "POST /ilink/bot/login", path: "/ilink/bot/login" },
+    { name: "POST /ilink/bot/connect", path: "/ilink/bot/connect" },
+    { name: "POST /ilink/bot/open", path: "/ilink/bot/open" },
+    { name: "POST /ilink/bot/activate", path: "/ilink/bot/activate" },
+    { name: "POST /ilink/bot/register", path: "/ilink/bot/register" },
+    { name: "POST /ilink/bot/health", path: "/ilink/bot/health" },
+    { name: "POST /ilink/bot/status", path: "/ilink/bot/status" },
   ];
   const authResults: any[] = [];
   for (const ep of authEndpoints) {
@@ -91,6 +97,26 @@ export async function handleDebugLogin(request: Request, env: Env): Promise<Resp
       });
     } catch (e: any) {
       authResults.push({ name: ep.name, error: e.message });
+    }
+  }
+
+  // 测试 baseurl 是否有其他路径（可能网关在其他地方）
+  const probePaths = ["/", "/api", "/v1", "/health", "/status", "/bot"];
+  const probeResults: any[] = [];
+  for (const p of probePaths) {
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 3000);
+      const r = await fetch(`${baseUrl}${p}`, { signal: ctrl.signal });
+      clearTimeout(t);
+      const text = await r.text();
+      probeResults.push({
+        path: p,
+        httpStatus: r.status,
+        preview: text.slice(0, 100),
+      });
+    } catch (e: any) {
+      probeResults.push({ path: p, error: e.message.slice(0, 80) });
     }
   }
 
@@ -193,6 +219,7 @@ export async function handleDebugLogin(request: Request, env: Env): Promise<Resp
       partAfterColon: tokenAfterColon.slice(0, 30) + "...",
     },
     authEndpointTest: authResults,
+    baseUrlProbe: probeResults,
     variantResults,
     workerUrl: new URL(request.url).origin,
     timestamp: new Date().toISOString(),
