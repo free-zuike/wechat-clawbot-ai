@@ -26,6 +26,15 @@ export async function handleDebugLogin(request: Request, env: Env): Promise<Resp
     createdAt: creds.createdAt ? new Date(creds.createdAt).toISOString() : null,
     loginAgeMs: creds.createdAt ? Date.now() - creds.createdAt : null,
     rawFields: creds.rawLoginResponse ? Object.keys(creds.rawLoginResponse) : null,
+    rawLoginValues: creds.rawLoginResponse
+      ? Object.fromEntries(
+          Object.entries(creds.rawLoginResponse).map(([k, v]: [string, any]) => {
+            if (typeof v === "string") return [k, v.length > 40 ? v.slice(0, 40) + "..." : v];
+            if (typeof v === "number" || typeof v === "boolean") return [k, v];
+            return [k, typeof v];
+          })
+        )
+      : null,
   };
 
   if (!creds.token) {
