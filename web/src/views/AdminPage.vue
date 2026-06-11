@@ -78,6 +78,18 @@
             ⚠️ Token 已过期，需要重新扫码登录
           </div>
         </div>
+
+        <!-- 调试面板 -->
+        <div class="card" style="margin-top:16px">
+          <h2>🔧 登录诊断</h2>
+          <div class="desc">查看登录凭证和 getUpdates 测试结果</div>
+          <button class="btn secondary" :disabled="debugLoading" @click="handleDebug">
+            {{ debugLoading ? "诊断中..." : "🔍 运行诊断" }}
+          </button>
+          <div v-if="debugInfo" style="margin-top:12px">
+            <pre style="background:#1e1e1e;color:#d4d4d4;padding:12px;border-radius:8px;font-size:12px;overflow:auto;max-height:300px;white-space:pre-wrap;word-break:break-all">{{ debugInfo }}</pre>
+          </div>
+        </div>
       </section>
 
       <!-- 消息控制 -->
@@ -188,6 +200,7 @@ import {
   logout,
   chat,
   checkLogin,
+  debugLogin,
 } from "../api";
 
 const router = useRouter();
@@ -224,6 +237,8 @@ const chatMessages = ref<Array<{ role: string; text: string }>>([]);
 const chatInput = ref("");
 const pollResult = ref("");
 const isPolling = ref(false);
+const debugInfo = ref("");
+const debugLoading = ref(false);
 
 let refreshTimer: number | null = null;
 
@@ -313,6 +328,19 @@ async function handleLogout() {
     await logout();
   } catch {}
   router.push("/login");
+}
+
+async function handleDebug() {
+  debugLoading.value = true;
+  debugInfo.value = "诊断中...";
+  try {
+    const d = await debugLogin();
+    debugInfo.value = JSON.stringify(d, null, 2);
+  } catch (e: any) {
+    debugInfo.value = "错误: " + e.message;
+  } finally {
+    debugLoading.value = false;
+  }
 }
 
 onMounted(async () => {

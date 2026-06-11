@@ -64,3 +64,8 @@ export async function chat(message: string) {
   });
   return res.json();
 }
+
+export async function debugLogin() {
+  const res = await fetch("/api/debug-login");
+  return res.json();
+}

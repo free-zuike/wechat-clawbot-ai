@@ -11,6 +11,7 @@ import { handleChat } from "./routes/chat";
 import { handleTriggerPoll } from "./routes/trigger";
 import { handleLogout } from "./routes/logout";
 import { handleConfig } from "./routes/config";
+import { handleDebugLogin } from "./routes/debug";
 
 export interface Env {
   AI: any;
@@ -49,6 +50,7 @@ export default {
       if (path === "/api/logout" && method === "POST") return handleLogout(request, env);
       if (path === "/api/config") return handleConfig(request, env);
       if (path === "/api/check-login" && method === "GET") return json({ loggedIn: isLoggedIn });
+      if (path === "/api/debug-login" && method === "GET") return handleDebugLogin(request, env);
       return json({ error: "Not Found" }, 404);
     }
 
