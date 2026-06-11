@@ -226,6 +226,10 @@ async function handleRefreshStatus() {
 }
 
 async function handleTriggerPoll() {
+  if (!password.value) {
+    pollResult.value = "❌ 请先填写管理员密码";
+    return;
+  }
   isPolling.value = true;
   pollResult.value = "正在轮询...";
   try {
@@ -245,6 +249,10 @@ async function handleTriggerPoll() {
 }
 
 async function handleLoadConfig() {
+  if (!password.value) {
+    configResult.value = "❌ 请先填写管理员密码";
+    return;
+  }
   configResult.value = "加载中...";
   try {
     const d = await fetchConfig(password.value);
@@ -257,6 +265,10 @@ async function handleLoadConfig() {
 }
 
 async function handleSaveConfig() {
+  if (!password.value) {
+    configResult.value = "❌ 请先填写管理员密码";
+    return;
+  }
   configResult.value = "保存中...";
   try {
     const d = await saveConfig(password.value, config);
@@ -287,6 +299,10 @@ async function handleSendChat() {
 }
 
 async function handleLogout() {
+  if (!password.value) {
+    alert("请先填写管理员密码");
+    return;
+  }
   if (!confirm("确认退出登录？退出后需重新扫码。")) return;
   try {
     await logout(password.value);
