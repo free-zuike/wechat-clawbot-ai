@@ -32,11 +32,17 @@ export async function getQRCode(): Promise<{ key: string; imgUrl: string }> {
   });
   if (!r.ok) throw new Error(`获取二维码失败 HTTP ${r.status}`);
   const data = await r.json();
-  // 验证返回数据格式
-  if (!data || !data.key) {
+  // 兼容两种字段命名：{ key, imgUrl } 或 { qrcode, qrcode_img_content }
+  const key = data?.key || data?.qrcode;
+  let imgUrl = data?.imgUrl || data?.qrcode_img_content;
+  // 去除值两端的反引号（部分 API 响应会把 URL 包在反引号中）
+  if (typeof imgUrl === "string") {
+    imgUrl = imgUrl.trim().replace(/^`+|`+$/g, "").trim();
+  }
+  if (!key || !imgUrl) {
     throw new Error(`获取二维码失败: 返回数据无效 (${JSON.stringify(data)})`);
   }
-  return data as { key: string; imgUrl: string };
+  return { key, imgUrl };
 }
 
 // 轮询扫码状态
