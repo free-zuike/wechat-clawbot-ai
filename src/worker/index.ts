@@ -5,7 +5,7 @@
 //    - web/          Vue 前端源码（通过 vite build 构建到 dist/）
 // ======================================================================
 
-import { handleQRCode, handleQRCodeStatus, handleQRCodeImage } from "./routes/qrcode";
+import { handleQRCode, handleQRCodeStatus } from "./routes/qrcode";
 import { handleStatus } from "./routes/status";
 import { handleChat } from "./routes/chat";
 import { handleTriggerPoll } from "./routes/trigger";
@@ -42,7 +42,6 @@ export default {
       const isLoggedIn = !!creds;
 
       if (path === "/api/qrcode" && method === "GET") return handleQRCode(request, env);
-      if (path === "/api/qrcode-image" && method === "GET") return handleQRCodeImage(request, env);
       if (path === "/api/qrcode-status" && method === "GET") return handleQRCodeStatus(request, env);
       if (path === "/api/status") return handleStatus(request, env);
       if (path === "/api/chat" && method === "POST") return handleChat(request, env);

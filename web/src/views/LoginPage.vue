@@ -88,7 +88,7 @@ async function startLogin() {
       loading.value = false;
       return;
     }
-    if (!data.qrcode || !data.qrcode_img_content) {
+    if (!data.qrcode) {
       error.value = "获取二维码失败: 返回数据无效";
       loading.value = false;
       return;
