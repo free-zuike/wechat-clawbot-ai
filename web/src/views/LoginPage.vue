@@ -4,40 +4,42 @@
       <h1>🦞 ClawBot AI</h1>
       <div class="sub">微信机器人管理面板</div>
 
-      <div v-if="errorMsg" class="notice" style="text-align: center">
-        {{ errorMsg }}
-      </div>
+      <!-- 错误提示 -->
+      <div v-if="error" class="notice">{{ error }}</div>
 
-      <div v-if="!qrCode">
+      <!-- 登录表单 -->
+      <template v-if="!qrCode">
         <input
-          class="input"
           v-model="password"
-          placeholder="管理员密码"
+          class="input"
           type="password"
+          placeholder="管理员密码"
           @keyup.enter="startLogin"
-          style="margin-top: 12px"
         />
-        <button class="btn" style="width: 100%; margin-top: 16px" @click="startLogin">
-          获取二维码
+        <button class="btn" :disabled="loading" @click="startLogin">
+          {{ loading ? "加载中..." : "获取二维码" }}
         </button>
-      </div>
+      </template>
 
-      <div v-else-if="!loggedIn">
+      <!-- 二维码 -->
+      <template v-else-if="!loggedIn">
         <div class="qr">
           <img :src="qrImage" alt="QR Code" />
         </div>
         <div v-if="qrStatus" class="badge wait">{{ qrStatus }}</div>
-        <div style="margin-top: 16px">
-          <button class="btn secondary" @click="reset">重新获取</button>
-        </div>
-      </div>
-
-      <div v-else>
-        <span class="badge ok">登录成功！</span>
-        <button class="btn" style="width: 100%; margin-top: 16px" @click="goAdmin">
-          进入管理面板
+        <button
+          class="btn secondary"
+          style="width: 100%; margin-top: 20px"
+          @click="reset"
+        >
+          重新获取
         </button>
-      </div>
+      </template>
+
+      <!-- 登录成功 -->
+      <template v-else>
+        <div class="badge ok">✅ 登录成功！正在跳转...</div>
+      </template>
     </div>
   </div>
 </template>
@@ -45,28 +47,33 @@
 <script setup lang="ts">
 import { ref, onUnmounted } from "vue";
 import { useRouter } from "vue-router";
+import { getQRCode, getQRCodeStatus } from "../api";
 
 const router = useRouter();
+
 const password = ref("");
 const qrCode = ref("");
 const qrImage = ref("");
 const qrStatus = ref("");
+const error = ref("");
+const loading = ref(false);
 const loggedIn = ref(false);
-const errorMsg = ref("");
 
 let pollTimer: number | null = null;
 
 async function startLogin() {
-  errorMsg.value = "";
+  error.value = "";
   if (!password.value) {
-    errorMsg.value = "请输入管理员密码";
+    error.value = "请输入管理员密码";
     return;
   }
+
+  loading.value = true;
   try {
-    const res = await fetch(`/api/qrcode?pwd=${encodeURIComponent(password.value)}`);
-    const data = await res.json();
+    const data = await getQRCode(password.value);
     if (data.error) {
-      errorMsg.value = data.error;
+      error.value = data.error;
+      loading.value = false;
       return;
     }
     qrCode.value = data.qrcode;
@@ -74,20 +81,19 @@ async function startLogin() {
     qrStatus.value = "等待扫码...";
     pollStatus();
   } catch (e: any) {
-    errorMsg.value = "获取二维码失败: " + e.message;
+    error.value = "获取二维码失败: " + e.message;
+  } finally {
+    loading.value = false;
   }
 }
 
 async function pollStatus() {
   try {
-    const res = await fetch(
-      `/api/qrcode-status?pwd=${encodeURIComponent(password.value)}`
-    );
-    const data = await res.json();
+    const data = await getQRCodeStatus(password.value);
     if (data.ok || data.status === "confirmed") {
-      qrStatus.value = "扫码确认成功";
+      qrStatus.value = "登录成功！";
       loggedIn.value = true;
-      if (pollTimer) clearTimeout(pollTimer);
+      setTimeout(() => router.push("/"), 1500);
       return;
     }
     if (data.status === "scaned") {
@@ -95,10 +101,12 @@ async function pollStatus() {
     } else if (data.status === "expired") {
       qrStatus.value = "二维码已过期，请刷新重试";
       return;
+    } else {
+      qrStatus.value = "等待扫码...";
     }
     pollTimer = window.setTimeout(pollStatus, 2000);
   } catch {
-    pollTimer = window.setTimeout(pollStatus, 2000);
+    pollTimer = window.setTimeout(pollStatus, 3000);
   }
 }
 
@@ -107,12 +115,8 @@ function reset() {
   qrCode.value = "";
   qrImage.value = "";
   qrStatus.value = "";
+  error.value = "";
   loggedIn.value = false;
-  errorMsg.value = "";
-}
-
-function goAdmin() {
-  router.push("/");
 }
 
 onUnmounted(() => {

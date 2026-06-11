@@ -1,64 +1,60 @@
+// API 封装
 const API_BASE = "";
 
-export async function fetchJSON(path: string, options: RequestInit = {}) {
-  const res = await fetch(API_BASE + path, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...(options.headers || {}),
-    },
+function withPwd(path: string, pwd: string): string {
+  if (!pwd) return API_BASE + path;
+  const sep = path.includes("?") ? "&" : "?";
+  return API_BASE + path + sep + "pwd=" + encodeURIComponent(pwd);
+}
+
+export async function fetchStatus(pwd: string) {
+  const res = await fetch(withPwd("/api/status", pwd));
+  return res.json();
+}
+
+export async function fetchConfig(pwd: string) {
+  const res = await fetch(withPwd("/api/config", pwd));
+  return res.json();
+}
+
+export async function saveConfig(pwd: string, config: any) {
+  const res = await fetch(withPwd("/api/config", pwd), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(config),
   });
   return res.json();
 }
 
-export async function getStatus(pwd: string) {
-  return fetchJSON(`/api/status?pwd=${encodeURIComponent(pwd)}`);
-}
-
 export async function triggerPoll(pwd: string) {
-  return fetchJSON(`/api/trigger-poll?pwd=${encodeURIComponent(pwd)}`, {
+  const res = await fetch(withPwd("/api/trigger-poll", pwd), {
     method: "POST",
   });
+  return res.json();
 }
 
 export async function logout(pwd: string) {
-  return fetchJSON(`/api/logout?pwd=${encodeURIComponent(pwd)}`, {
+  const res = await fetch(withPwd("/api/logout", pwd), {
     method: "POST",
   });
-}
-
-export async function chat(message: string) {
-  return fetchJSON("/api/chat", {
-    method: "POST",
-    body: JSON.stringify({ message }),
-  });
-}
-
-export async function loadConfig(pwd: string) {
-  return fetchJSON(`/api/config?pwd=${encodeURIComponent(pwd)}`);
-}
-
-export async function saveConfig(pwd: string, config: any) {
-  return fetchJSON(`/api/config?pwd=${encodeURIComponent(pwd)}`, {
-    method: "POST",
-    body: JSON.stringify(config),
-  });
+  return res.json();
 }
 
 export async function getQRCode(pwd: string) {
-  return fetchJSON(`/api/qrcode?pwd=${encodeURIComponent(pwd)}`);
+  const res = await fetch(withPwd("/api/qrcode", pwd));
+  return res.json();
 }
 
 export async function getQRCodeStatus(pwd: string) {
-  return fetchJSON(`/api/qrcode-status?pwd=${encodeURIComponent(pwd)}`);
+  const res = await fetch(withPwd("/api/qrcode-status", pwd));
+  return res.json();
 }
 
-export async function getHistory(pwd: string) {
-  return fetchJSON(`/api/history?pwd=${encodeURIComponent(pwd)}&hours=24`);
-}
-
-export async function getR2History(pwd: string, user = "") {
-  return fetchJSON(
-    `/api/r2-history?pwd=${encodeURIComponent(pwd)}&user=${encodeURIComponent(user)}&limit=30`
-  );
+export async function chat(message: string) {
+  const res = await fetch("/api/chat", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ message }),
+  });
+  return res.json();
 }

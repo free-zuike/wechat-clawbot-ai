@@ -1,384 +1,302 @@
 <template>
   <div class="app-layout">
+    <!-- 侧边栏 -->
     <aside class="sidebar">
       <h1>🦞 ClawBot AI</h1>
-      <div class="sub">v1.5 Cloudflare Suite</div>
+      <div class="version">v2.0 · bee-swarm arch</div>
+
       <nav>
-        <a
+        <div
           v-for="item in navItems"
           :key="item.key"
-          :href="'#'"
-          @click.prevent="activeSection = item.key"
+          class="nav-item"
           :class="{ active: activeSection === item.key }"
+          @click="activeSection = item.key"
         >
-          {{ item.icon }} {{ item.label }}
-        </a>
+          <span class="nav-icon">{{ item.icon }}</span>
+          <span>{{ item.label }}</span>
+        </div>
       </nav>
-      <div class="status">
-        <div class="badge" style="color: #fff">系统状态</div>
-        <div style="margin-top: 8px">
-          <span class="badge ok">✓ 已登录</span>
-        </div>
-        <div style="margin-top: 12px">
-          <input
-            class="input"
-            v-model="password"
-            placeholder="管理员密码"
-            type="password"
-            style="font-size: 13px"
-          />
-          <button class="btn danger" style="width: 100%; margin-top: 8px" @click="doLogout">
-            退出登录
-          </button>
-        </div>
+
+      <div class="password-box">
+        <label>🔐 管理员密码</label>
+        <input v-model="password" type="password" placeholder="执行操作前填写" />
+        <button class="logout-btn" @click="handleLogout">退出登录</button>
       </div>
     </aside>
 
+    <!-- 主内容 -->
     <main class="main-content">
-      <div class="wrap">
-        <!-- 状态监控 -->
-        <section v-if="activeSection === 'status'">
-          <div class="card">
-            <h2>📊 实时状态</h2>
-            <div class="kv" id="live-stats">
-              <b>登录状态</b><span>{{ status.loggedIn ? "✅" : "❌" }}</span>
-              <b>轮询次数</b><span>{{ status.polls }}</span>
-              <b>累计处理</b><span>{{ status.handled }}</span>
-              <b>AI 调用</b><span>{{ status.aiCalls }}</span>
-              <b>AI 失败</b><span>{{ status.aiFails }}</span>
-              <b>连续失败</b
-              ><span
-                ><span :class="status.consecutiveFails > 0 ? 'badge bad' : 'badge ok'">
-                  {{ status.consecutiveFails }}
-                </span></span
-              >
-              <b>上次轮询</b><span>{{ status.lastPollAt }}</span>
-              <b>上次耗时</b><span>{{ status.lastLatencyMs }}</span>
+      <!-- 状态监控 -->
+      <section v-if="activeSection === 'status'">
+        <div class="card">
+          <h2>📊 实时状态</h2>
+          <div class="desc">机器人运行状态、API 调用统计</div>
+          <div class="stat-grid">
+            <div class="stat-item">
+              <div class="stat-label">登录状态</div>
+              <div class="stat-value">{{ status.loggedIn ? "✅ 在线" : "❌ 未登录" }}</div>
             </div>
-            <h3 style="font-size: 14px; color: #666; margin: 16px 0 8px">📈 过去 24 小时统计</h3>
-            <div class="sub" style="white-space: pre-wrap">
-              {{ historyText }}
+            <div class="stat-item">
+              <div class="stat-label">累计轮询</div>
+              <div class="stat-value">{{ status.polls }}</div>
             </div>
-            <h3 style="font-size: 14px; color: #666; margin: 16px 0 8px">🚨 最近错误</h3>
-            <div class="sub" style="white-space: pre-wrap">{{ errorsText }}</div>
-            <div class="row">
-              <button class="btn" @click="refreshData">🔄 刷新</button>
+            <div class="stat-item">
+              <div class="stat-label">累计处理</div>
+              <div class="stat-value">{{ status.handled }}</div>
             </div>
-          </div>
-        </section>
-
-        <!-- 控制中心 -->
-        <section v-if="activeSection === 'control'">
-          <div class="card">
-            <h2>🎮 控制中心</h2>
-            <div class="sub">手动触发消息拉取和查看历史记录</div>
-            <div class="row">
-              <button class="btn" @click="doTriggerPoll">🔄 手动触发轮询</button>
-              <button class="btn secondary" @click="doLoadR2">📋 查看 R2 历史</button>
+            <div class="stat-item">
+              <div class="stat-label">AI 调用</div>
+              <div class="stat-value">{{ status.aiCalls }}</div>
             </div>
-            <div class="sub" style="margin-top: 12px">{{ pollResult }}</div>
-            <div style="margin-top: 14px">
-              <label style="font-size: 13px; color: #555">查询用户</label>
-              <input
-                v-model="r2User"
-                class="input"
-                placeholder="用户 ID（留空查询全部）"
-                style="margin-top: 6px"
-              />
+            <div class="stat-item">
+              <div class="stat-label">AI 失败</div>
+              <div class="stat-value">{{ status.aiFails }}</div>
             </div>
-            <div class="sub" style="white-space: pre-wrap; margin-top: 12px; max-height: 300px; overflow-y: auto">
-              {{ r2Result }}
+            <div class="stat-item">
+              <div class="stat-label">上次耗时</div>
+              <div class="stat-value">{{ status.lastLatencyMs }}</div>
             </div>
           </div>
-        </section>
-
-        <!-- 系统设置 -->
-        <section v-if="activeSection === 'config'">
-          <div class="card">
-            <h2>⚙️ 系统设置</h2>
-            <div class="sub">配置 AI 模型、人设提示词等参数（配置保存在 KV 中）</div>
-            <div style="margin-bottom: 14px">
-              <label style="font-size: 13px; color: #555">AI 模型</label>
-              <input
-                v-model="config.aiModel"
-                class="input"
-                placeholder="@cf/meta/llama-3-8b-instruct"
-                style="margin-top: 6px"
-              />
-            </div>
-            <div style="margin-bottom: 14px">
-              <label style="font-size: 13px; color: #555">AI 人设提示词</label>
-              <textarea
-                v-model="config.aiSystemPrompt"
-                class="input"
-                rows="4"
-                placeholder="你是爪爪，一个友好的 AI 助手..."
-                style="border-radius: 12px; margin-top: 6px; resize: vertical"
-              ></textarea>
-            </div>
-            <div class="row">
-              <button class="btn" @click="doLoadConfig">加载配置</button>
-              <button class="btn" @click="doSaveConfig">保存配置</button>
-            </div>
-            <div class="sub" style="margin-top: 12px">{{ configResult }}</div>
+          <div style="margin-top: 16px; font-size: 13px; color: #888">
+            最后轮询: {{ status.lastPollAt }}
           </div>
-        </section>
+        </div>
+      </section>
 
-        <!-- AI 测试 -->
-        <section v-if="activeSection === 'chat'">
-          <div class="card">
-            <h2>🤖 AI 测试聊天</h2>
-            <div class="sub">直接测试 AI 回复效果</div>
-            <div class="chat-box">
-              <div v-for="(msg, idx) in chatMessages" :key="idx" class="msg" :class="msg.role">
-                <div class="bubble">{{ msg.text }}</div>
-              </div>
-            </div>
-            <div class="row" style="margin-top: 12px">
-              <input
-                v-model="chatInput"
-                class="input"
-                placeholder="输入消息..."
-                @keyup.enter="sendChat"
-              />
-              <button class="btn" @click="sendChat">发送</button>
+      <!-- 消息控制 -->
+      <section v-if="activeSection === 'control'">
+        <div class="card">
+          <h2>🎮 消息控制</h2>
+          <div class="desc">手动触发消息拉取，测试微信消息流</div>
+          <button class="btn" :disabled="isPolling" @click="handleTriggerPoll">
+            {{ isPolling ? "轮询中..." : "🔄 立即拉取消息" }}
+          </button>
+          <div v-if="pollResult" class="result-box">{{ pollResult }}</div>
+          <div class="notice" style="margin-top: 20px">
+            💡 <strong>提示：</strong>手动轮询适合测试场景。生产环境建议在
+            wrangler.toml 中配置 cron 触发器，每 2 分钟自动拉取一次消息。
+          </div>
+        </div>
+      </section>
+
+      <!-- 系统配置 -->
+      <section v-if="activeSection === 'config'">
+        <div class="card">
+          <h2>⚙️ 系统配置</h2>
+          <div class="desc">配置 AI 模型和人设提示词，保存后即时生效</div>
+
+          <div class="field">
+            <label>AI 模型</label>
+            <input
+              v-model="config.aiModel"
+              class="input"
+              placeholder="@cf/meta/llama-3-8b-instruct"
+            />
+            <div style="font-size: 12px; color: #888; margin-top: 6px">
+              留空使用默认模型。支持 Cloudflare Worker AI 系列模型
             </div>
           </div>
-        </section>
 
-        <!-- 部署命令 -->
-        <section v-if="activeSection === 'deploy'">
-          <div class="card">
-            <h2>📦 部署命令</h2>
-            <div class="sub">常用的 Cloudflare 部署命令</div>
-            <pre
-              class="code"
-              style="
-                background: #1e2230;
-                color: #f5f5f5;
-                padding: 14px;
-                border-radius: 12px;
-                overflow-x: auto;
-                font-size: 12px;
-                line-height: 1.6;
-              "
+          <div class="field">
+            <label>人设提示词 (system prompt)</label>
+            <textarea
+              v-model="config.aiSystemPrompt"
+              class="input"
+              placeholder="你是爪爪，一个友好的 AI 助手..."
+            ></textarea>
+            <div style="font-size: 12px; color: #888; margin-top: 6px">
+              定义机器人的性格和行为。留空使用默认人设
+            </div>
+          </div>
+
+          <div style="display: flex; gap: 10px; margin-top: 16px">
+            <button class="btn secondary" @click="handleLoadConfig">📥 加载当前配置</button>
+            <button class="btn" @click="handleSaveConfig">💾 保存配置</button>
+          </div>
+          <div v-if="configResult" class="result-box">{{ configResult }}</div>
+        </div>
+      </section>
+
+      <!-- AI 测试 -->
+      <section v-if="activeSection === 'chat'">
+        <div class="card">
+          <h2>🤖 AI 测试聊天</h2>
+          <div class="desc">直接与 AI 对话，测试回复效果和配置</div>
+
+          <div class="chat-box">
+            <div
+              v-if="chatMessages.length === 0"
+              style="text-align: center; color: #aaa; padding: 40px 20px"
             >
-# 安装依赖
-npm install
-
-# 创建 KV Namespace（必需）
-wrangler kv namespace create CLAWBOT_KV
-
-# 创建 R2 Bucket（可选）
-wrangler r2 bucket create clawbot-history
-
-# 设置环境变量
-wrangler secret put ADMIN_PASSWORD
-
-# 部署
-wrangler deploy</pre
+              👋 开始输入你的问题吧...
+            </div>
+            <div
+              v-for="(msg, i) in chatMessages"
+              :key="i"
+              class="msg"
+              :class="msg.role"
             >
+              <div class="bubble">{{ msg.text }}</div>
+            </div>
           </div>
-        </section>
-      </div>
+
+          <div class="chat-input">
+            <input
+              v-model="chatInput"
+              class="input"
+              placeholder="输入消息..."
+              @keyup.enter="handleSendChat"
+            />
+            <button class="btn" @click="handleSendChat">发送</button>
+          </div>
+
+          <div class="notice" style="margin-top: 16px">
+            💬 <strong>提示：</strong>常见问候语使用本地快捷回复（零 Token 消耗），其他消息走
+            Cloudflare Worker AI 模型。
+          </div>
+        </div>
+      </section>
     </main>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from "vue";
+import { ref, reactive, onMounted, onUnmounted } from "vue";
 import { useRouter } from "vue-router";
+import {
+  fetchStatus,
+  fetchConfig,
+  saveConfig,
+  triggerPoll,
+  logout,
+  chat,
+} from "../api";
 
 const router = useRouter();
 
 const navItems = [
   { key: "status", label: "状态监控", icon: "📊" },
-  { key: "control", label: "控制中心", icon: "🎮" },
-  { key: "config", label: "系统设置", icon: "⚙️" },
+  { key: "control", label: "消息控制", icon: "🎮" },
+  { key: "config", label: "系统配置", icon: "⚙️" },
   { key: "chat", label: "AI 测试", icon: "🤖" },
-  { key: "deploy", label: "部署命令", icon: "📦" },
 ];
 
 const activeSection = ref("status");
 const password = ref("");
 
-const status = ref({
+const status = reactive({
   loggedIn: false,
   polls: 0,
   handled: 0,
   aiCalls: 0,
   aiFails: 0,
-  consecutiveFails: 0,
   lastPollAt: "从未",
   lastLatencyMs: "—",
 });
 
-const historyText = ref("加载中...");
-const errorsText = ref("暂无");
-const pollResult = ref("");
-const r2User = ref("");
-const r2Result = ref("");
-const configResult = ref("");
-
-const config = ref({
+const config = reactive({
   aiModel: "",
   aiSystemPrompt: "",
 });
 
-const chatMessages = ref([{ role: "b", text: "你好！我是爪爪 AI。" }]);
+const configResult = ref("");
+const chatMessages = ref<Array<{ role: string; text: string }>>([]);
 const chatInput = ref("");
+const pollResult = ref("");
+const isPolling = ref(false);
 
 let refreshTimer: number | null = null;
 
-async function refreshData() {
+async function handleRefreshStatus() {
   try {
-    const res = await fetch(`/api/status?pwd=${encodeURIComponent(password.value)}`);
-    const data = await res.json();
-    const s = data.stats || {};
-    status.value = {
-      loggedIn: !!data.loggedIn,
-      polls: s.polls ?? 0,
-      handled: s.handled ?? 0,
-      aiCalls: s.aiCalls ?? 0,
-      aiFails: s.aiFails ?? 0,
-      consecutiveFails: s.consecutiveFails ?? 0,
-      lastPollAt: s.lastPollAt ? new Date(s.lastPollAt).toLocaleString() : "从未",
-      lastLatencyMs: s.lastLatencyMs == null ? "—" : s.lastLatencyMs + " ms",
-    };
-    const errs = (s.recentErrors || []).slice(0, 10);
-    errorsText.value = !errs.length
-      ? "✅ 最近无错误"
-      : errs.map((e: any) => new Date(e.t).toLocaleString() + " —— " + (e.msg || "(无消息)")).join("\n");
-
-    const h24 = await fetch(`/api/history?hours=24&pwd=${encodeURIComponent(password.value)}`).catch(() => null);
-    if (h24) {
-      const hd = await h24.json();
-      const rows = (hd.data || []).slice(0, 24);
-      if (!rows.length) historyText.value = "(暂无数据, cron 运行后会累积)";
-      else
-        historyText.value = rows
-          .map((r: any) => {
-            const t = new Date(r.hour_unix * 1000).toLocaleString();
-            return `${t}  轮询 ${r.polls}  回复 ${r.handled}  AI ${r.ai_calls}`;
-          })
-          .join("\n");
-    } else historyText.value = "(暂无数据)";
-  } catch {
-    // ignore
-  }
+    const d = await fetchStatus(password.value);
+    status.loggedIn = !!d.loggedIn;
+    status.polls = d.stats?.polls || 0;
+    status.handled = d.stats?.handled || 0;
+    status.aiCalls = d.stats?.aiCalls || 0;
+    status.aiFails = d.stats?.aiFails || 0;
+    status.lastPollAt = d.stats?.lastPollAt
+      ? new Date(d.stats.lastPollAt).toLocaleString()
+      : "从未";
+    status.lastLatencyMs =
+      d.stats?.lastLatencyMs == null ? "—" : d.stats.lastLatencyMs + " ms";
+  } catch {}
 }
 
-async function doTriggerPoll() {
-  pollResult.value = "调用中...";
+async function handleTriggerPoll() {
+  isPolling.value = true;
+  pollResult.value = "正在轮询...";
   try {
-    const res = await fetch(`/api/trigger-poll?pwd=${encodeURIComponent(password.value)}`, { method: "POST" });
-    const data = await res.json();
-    pollResult.value = "结果: " + JSON.stringify(data, null, 2);
-    refreshData();
+    const d = await triggerPoll(password.value);
+    pollResult.value =
+      `✅ 轮询完成\n` +
+      `拉取: ${d.pulled || 0} 条\n` +
+      `回复: ${d.handled || 0} 条\n` +
+      `耗时: ${d.latencyMs || 0}ms` +
+      (d.error ? `\n⚠️ ${d.error}` : "");
+    handleRefreshStatus();
   } catch (e: any) {
-    pollResult.value = "错误: " + e.message;
+    pollResult.value = "❌ 失败: " + e.message;
+  } finally {
+    isPolling.value = false;
   }
 }
 
-async function doLoadR2() {
-  r2Result.value = "查询中...";
-  try {
-    const user = encodeURIComponent(r2User.value);
-    const res = await fetch(
-      `/api/r2-history?pwd=${encodeURIComponent(password.value)}&user=${user}&limit=30`
-    );
-    const data = await res.json();
-    if (data.error) {
-      r2Result.value = "❌ " + data.error;
-      return;
-    }
-    const items = data.items || [];
-    if (!items.length) r2Result.value = "(无数据)";
-    else
-      r2Result.value = items
-        .slice(0, 30)
-        .map((it: any) => {
-          let content;
-          try {
-            content = JSON.parse(it.content);
-          } catch {
-            content = it.content;
-          }
-          const text = typeof content === "object" ? content.content || "" : content;
-          return new Date(it.ts).toLocaleString() + "  " + String(text).slice(0, 120);
-        })
-        .join("\n");
-  } catch (e: any) {
-    r2Result.value = "错误: " + e.message;
-  }
-}
-
-async function doLoadConfig() {
+async function handleLoadConfig() {
   configResult.value = "加载中...";
   try {
-    const res = await fetch(`/api/config?pwd=${encodeURIComponent(password.value)}`);
-    const data = await res.json();
-    config.value.aiModel = data.aiModel || "";
-    config.value.aiSystemPrompt = data.aiSystemPrompt || "";
-    configResult.value = "✅ 配置加载成功";
+    const d = await fetchConfig(password.value);
+    config.aiModel = d.aiModel || "";
+    config.aiSystemPrompt = d.aiSystemPrompt || "";
+    configResult.value = "✅ 已加载当前配置";
   } catch (e: any) {
     configResult.value = "❌ 加载失败: " + e.message;
   }
 }
 
-async function doSaveConfig() {
+async function handleSaveConfig() {
   configResult.value = "保存中...";
   try {
-    const res = await fetch(`/api/config?pwd=${encodeURIComponent(password.value)}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(config.value),
-    });
-    const data = await res.json();
-    if (data.ok) {
-      configResult.value = "✅ 配置保存成功";
+    const d = await saveConfig(password.value, config);
+    if (d.ok) {
+      configResult.value = "✅ 配置已保存！下次消息将使用新配置";
     } else {
-      configResult.value = "❌ " + (data.error || "保存失败");
+      configResult.value = "❌ " + (d.error || "保存失败");
     }
   } catch (e: any) {
     configResult.value = "❌ 保存失败: " + e.message;
   }
 }
 
-async function sendChat() {
+async function handleSendChat() {
   const q = chatInput.value.trim();
   if (!q) return;
   chatMessages.value.push({ role: "u", text: q });
   chatInput.value = "";
   try {
-    const res = await fetch("/api/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message: q }),
-    });
-    const data = await res.json();
+    const d = await chat(q);
     chatMessages.value.push({
       role: "b",
-      text: (data.reply || "") + (data.source === "shortcut" ? " [快捷回复]" : ""),
+      text: d.reply + (d.source === "shortcut" ? " [快捷回复]" : ""),
     });
   } catch (e: any) {
     chatMessages.value.push({ role: "b", text: "错误: " + e.message });
   }
 }
 
-async function doLogout() {
-  if (!confirm("确认退出登录？")) return;
+async function handleLogout() {
+  if (!confirm("确认退出登录？退出后需重新扫码。")) return;
   try {
-    await fetch(`/api/logout?pwd=${encodeURIComponent(password.value)}`, { method: "POST" });
-  } catch {
-    // ignore
-  }
+    await logout(password.value);
+  } catch {}
   router.push("/login");
 }
 
 onMounted(() => {
-  refreshData();
-  refreshTimer = window.setInterval(refreshData, 30000);
+  handleRefreshStatus();
+  handleLoadConfig();
+  refreshTimer = window.setInterval(handleRefreshStatus, 30000);
 });
 
 onUnmounted(() => {

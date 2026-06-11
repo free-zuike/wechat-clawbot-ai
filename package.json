@@ -5,14 +5,22 @@
   "description": "基于 Cloudflare Workers + Worker AI 的微信个人号机器人（架构参考 bee-swarm）",
   "type": "module",
   "scripts": {
-    "deploy": "wrangler deploy",
-    "dev": "wrangler dev src/worker/index.ts",
-    "tail": "wrangler tail",
-    "info": "wrangler info"
+    "dev": "vite",
+    "build": "vite build",
+    "deploy": "npm run build && wrangler deploy",
+    "dev:worker": "wrangler dev src/worker/index.ts",
+    "preview": "vite preview",
+    "tail": "wrangler tail"
   },
-  "dependencies": {},
+  "dependencies": {
+    "vue": "^3.4.0",
+    "vue-router": "^4.3.0"
+  },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20240925.0",
+    "@vitejs/plugin-vue": "^5.2.4",
+    "typescript": "^5.9.3",
+    "vite": "^5.4.21",
     "wrangler": "^3.80.0"
   }
 }
