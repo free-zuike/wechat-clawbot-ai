@@ -819,7 +819,7 @@ function HOME_PAGE(env: Env, loggedIn: boolean, hasAdmin: boolean): string {
   .msg.u{text-align:right}.msg.u .bubble{background:linear-gradient(135deg,#ff6b9d,#ff8c5a);color:#fff;display:inline-block;text-align:left}
   .msg.b .bubble{background:#fff;border:1px solid #eee;display:inline-block}
   h2{font-size:18px;margin:0 0 8px;color:#ff4d8d}
-  h3{font-size:14px;margin:14px 0 4px;color:#ff4d8d}
+  h3{font-size:14px;margin:14px 0 4px;color:#666}
   .badge{display:inline-block;padding:5px 12px;border-radius:999px;font-size:12px;font-weight:600}
   .badge.ok{background:#e8f8ee;color:#147a3e}
   .badge.bad{background:#fde6e6;color:#a33}
@@ -845,6 +845,17 @@ ${turnstileScript}
   </div>
 
   <div class="card">
+    <h2>📱 1. 扫码登录微信</h2>
+    <div class="sub">在微信 → 设置 → 插件 → ClawBot 里扫描二维码。</div>
+    <div class="row">
+      ${hasAdmin ? `<input id="login-pwd" class="input" placeholder="管理员密码" style="max-width:220px"/>` : ""}
+      <button class="btn" onclick="goLogin()">去扫码登录</button>
+      ${loggedIn ? `<button class="btn danger" onclick="logout()">退出登录</button>` : ""}
+    </div>
+    ${needPwdNotice}
+  </div>
+
+  <div class="card">
     <h2>📊 实时状态</h2>
     <div id="live-stats" class="kv">
       <b>登录状态</b><span>—</span>
@@ -862,16 +873,6 @@ ${turnstileScript}
     <div id="history-7d" class="sub" style="white-space:pre-wrap">加载中...</div>
     <h3>🚨 最近错误</h3>
     <div id="recent-errors" class="sub" style="white-space:pre-wrap">暂无</div>
-  </div>
-
-  <div class="card">
-    <h2>📱 1. 扫码登录微信</h2>
-    <div class="sub">在微信 → 设置 → 插件 → ClawBot 里扫描二维码。</div>
-    <div class="row">
-      ${hasAdmin ? `<input id="login-pwd" class="input" placeholder="管理员密码（可选）" style="max-width:220px"/>` : ""}
-      <button class="btn" onclick="goLogin()">去扫码登录</button>
-      ${loggedIn ? `<button class="btn danger" onclick="logout()">退出登录</button>` : ""}
-    </div>
   </div>
 
   <div class="card">
