@@ -1031,7 +1031,7 @@ function showSection(id){
   event.preventDefault();
   event.target?.classList.add('active');
 }
-function getPwd(id){ return (document.getElementById(id) as HTMLInputElement)?.value.trim() || ''; }
+function getPwd(id){ const el = document.getElementById(id); return el ? el.value.trim() : ''; }
 function urlWithPwd(base, field){
   const pwd = getPwd(field);
   if(!pwd) return base;
@@ -1099,7 +1099,7 @@ async function loadR2History(){
   const el = document.getElementById('r2-history');
   el.textContent = '查询中...';
   try {
-    const user = (document.getElementById('r2-user') as HTMLInputElement)?.value.trim() || '';
+    const user = document.getElementById('r2-user')?.value.trim() || '';
     let base = '/api/r2-history?limit=30';
     if(user) base += '&user=' + encodeURIComponent(user);
     const url = urlWithPwd(base, 'control-pwd');
@@ -1128,9 +1128,9 @@ async function loadConfig(){
   try {
     const r = await fetch('/api/config', {cache:'no-store'});
     const d = await r.json();
-    (document.getElementById('config-model') as HTMLInputElement).value = d.aiModel || '';
-    (document.getElementById('config-prompt') as HTMLTextAreaElement).value = d.aiSystemPrompt || '';
-    (document.getElementById('config-turnstile') as HTMLInputElement).value = d.turnstileSiteKey || '';
+    document.getElementById('config-model').value = d.aiModel || '';
+    document.getElementById('config-prompt').value = d.aiSystemPrompt || '';
+    document.getElementById('config-turnstile').value = d.turnstileSiteKey || '';
     el.textContent = '✅ 配置加载成功';
   } catch(e){ el.textContent = '❌ 加载失败：' + e.message; }
 }
@@ -1139,9 +1139,9 @@ async function saveConfig(){
   el.textContent = '保存中...';
   try {
     const pwd = getPwd('config-pwd');
-    const model = (document.getElementById('config-model') as HTMLInputElement)?.value.trim() || '';
-    const prompt = (document.getElementById('config-prompt') as HTMLTextAreaElement)?.value.trim() || '';
-    const turnstile = (document.getElementById('config-turnstile') as HTMLInputElement)?.value.trim() || '';
+    const model = document.getElementById('config-model')?.value.trim() || '';
+    const prompt = document.getElementById('config-prompt')?.value.trim() || '';
+    const turnstile = document.getElementById('config-turnstile')?.value.trim() || '';
     const url = '/api/config' + (pwd ? '?pwd=' + encodeURIComponent(pwd) : '');
     const r = await fetch(url, {
       method: 'POST',
@@ -1162,10 +1162,10 @@ function addMsg(role,text){
   const b = document.createElement('div'); b.className='bubble'; b.textContent=text;
   d.appendChild(b); chatBox.appendChild(d); chatBox.scrollTop = chatBox.scrollHeight;
 }
-(document.getElementById('chat-input') as HTMLInputElement).addEventListener('keydown',e=>{ if(e.key==='Enter') sendChat(); });
+document.getElementById('chat-input')?.addEventListener('keydown',e=>{ if(e.key==='Enter') sendChat(); });
 async function sendChat(){
-  const inp = document.getElementById('chat-input') as HTMLInputElement;
-  const q = inp.value.trim(); if(!q) return;
+  const inp = document.getElementById('chat-input');
+  const q = inp ? inp.value.trim() : ''; if(!q) return;
   addMsg('u',q); inp.value='';
   try {
     const r = await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},
