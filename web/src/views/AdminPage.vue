@@ -171,6 +171,7 @@ import {
   triggerPoll,
   logout,
   chat,
+  checkLogin,
 } from "../api";
 
 const router = useRouter();
@@ -293,7 +294,17 @@ async function handleLogout() {
   router.push("/login");
 }
 
-onMounted(() => {
+onMounted(async () => {
+  try {
+    const d = await checkLogin();
+    if (!d.loggedIn) {
+      router.push("/login");
+      return;
+    }
+  } catch {
+    router.push("/login");
+    return;
+  }
   handleRefreshStatus();
   handleLoadConfig();
   refreshTimer = window.setInterval(handleRefreshStatus, 30000);
