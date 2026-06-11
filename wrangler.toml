@@ -39,10 +39,11 @@ id = "2fac06f019ce476084f5066e432a1183"
 preview_id = "2fac06f019ce476084f5066e432a1183"
 
 # ===== D1 统计数据库 (可选, 没有也不崩) =====
-[[d1_databases]]
-binding = "CLAWBOT_DB"
-database_name = "clawbot-stats"
-database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+# 如需启用, 先运行: wrangler d1 create clawbot-stats
+# [[d1_databases]]
+# binding = "CLAWBOT_DB"
+# database_name = "clawbot-stats"
+# database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
 
 # ===== R2 长期对话历史 (可选, 没有也不崩) =====
 # Cache API 只保留 3 小时上下文；R2 可长期存历史用于回溯
