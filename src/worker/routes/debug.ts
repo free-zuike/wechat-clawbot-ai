@@ -16,7 +16,6 @@ export async function handleDebugLogin(request: Request, env: Env): Promise<Resp
     return json({ ok: false, error: "凭证格式错误: " + String(e) });
   }
 
-  // 返回保存的凭证信息（隐藏敏感字段）
   const savedInfo = {
     hasToken: !!creds.token,
     tokenPrefix: creds.token ? creds.token.slice(0, 20) + "..." : null,
@@ -35,7 +34,7 @@ export async function handleDebugLogin(request: Request, env: Env): Promise<Resp
 
   const baseUrl = creds.baseUrl || "https://ilinkai.weixin.qq.com";
 
-  // 测试 1: 纯网络连通性（GET 请求到 baseUrl）
+  // 测试 1: 纯网络连通性
   let networkTest = { ok: false, status: 0, error: "" };
   try {
     const ctrl = new AbortController();
@@ -48,8 +47,8 @@ export async function handleDebugLogin(request: Request, env: Env): Promise<Resp
     networkTest = { ok: false, status: 0, error: e.message };
   }
 
-  // 测试 2: getUpdates（15 秒超时）
-  const testResult = await getUpdates(creds.token, baseUrl, 15000);
+  // 测试 2: getUpdates（会尝试多种认证方式）
+  const testResult = await getUpdates(creds.token, baseUrl, 15000, { ilink_bot_id: creds.accountId });
   const testOk = testResult.ret === 0;
 
   return json({

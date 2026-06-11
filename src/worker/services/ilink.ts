@@ -138,42 +138,70 @@ export async function getUpdates(
   extraBody: any = {}
 ): Promise<ILinkUpdatesResponse> {
   const fullUrl = `${baseUrl}/ilink/bot/getupdates`;
-  console.log("[ilink] getUpdates → url:", fullUrl, "token prefix:", token?.slice(0, 10));
+  console.log("[ilink] getUpdates →");
+  console.log("[ilink]   url:", fullUrl);
+  console.log("[ilink]   token (raw):", token);
+  console.log("[ilink]   token length:", token?.length);
+  console.log("[ilink]   extraBody:", JSON.stringify(extraBody));
+
+  // 尝试方案 1: Bearer token in header + bot_id in body
+  const result1 = await tryGetUpdates(fullUrl, token, extraBody, "Bearer");
+  if (result1.ret === 0) return result1;
+
+  // 尝试方案 2: Bot token in header
+  const result2 = await tryGetUpdates(fullUrl, token, extraBody, "Bot");
+  if (result2.ret === 0) return result2;
+
+  // 尝试方案 3: token 作为 body 字段
+  const body3 = { get_updates_buf: "", token, ...extraBody };
+  const result3 = await tryGetUpdates(fullUrl, null, body3, "body-token");
+  if (result3.ret === 0) return result3;
+
+  // 返回最佳结果（优先用方案1）
+  return result1;
+}
+
+async function tryGetUpdates(
+  url: string,
+  token: string | null,
+  bodyObj: any,
+  method: string
+): Promise<ILinkUpdatesResponse> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "iLink-App-ClientVersion": "1",
+  };
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+  console.log(`[ilink] tryGetUpdates method=${method} headers:`, JSON.stringify(headers));
+  console.log(`[ilink] tryGetUpdates body:`, JSON.stringify(bodyObj));
+
   try {
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
-    const bodyObj: any = { get_updates_buf: "", ...extraBody };
-    console.log("[ilink] getUpdates request body:", JSON.stringify(bodyObj));
-    const r = await fetch(fullUrl, {
+    const timer = setTimeout(() => ctrl.abort(), 15000);
+    const r = await fetch(url, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-        "iLink-App-ClientVersion": "1",
-      },
+      headers,
       body: JSON.stringify(bodyObj),
       signal: ctrl.signal,
     });
     clearTimeout(timer);
-    console.log("[ilink] getUpdates status:", r.status);
     const text = await r.text();
-    console.log("[ilink] getUpdates response:", text.slice(0, 800));
+    console.log(`[ilink] tryGetUpdates ${method} → status:`, r.status, "body:", text.slice(0, 300));
     if (r.status === 200) {
       try {
         const parsed = JSON.parse(text);
-        console.log("[ilink] getUpdates parsed keys:", Object.keys(parsed));
-        // 微信可能返回 ret 或 errcode 字段
         const ret = parsed.ret !== undefined ? parsed.ret : parsed.errcode;
         const msgs = parsed.msgs || [];
         return { ret, msgs } as ILinkUpdatesResponse;
-      } catch (e) {
-        console.error("[ilink] getUpdates JSON parse error:", e);
+      } catch {
         return { ret: r.status, msgs: [] };
       }
     }
     return { ret: r.status, msgs: [] };
   } catch (e: any) {
-    console.error("[ilink] getUpdates error:", e);
+    console.error(`[ilink] tryGetUpdates ${method} error:`, e.message);
     return { ret: -1, msgs: [] };
   }
 }
