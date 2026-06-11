@@ -63,6 +63,7 @@ export async function getQRCodeStatus(key: string): Promise<{
   ilink_bot_id?: string;
   ilink_user_id?: string;
   baseurl?: string;
+  raw?: any; // 原始响应，用于调试
 }> {
   const r = await fetch(
     `${I_LINK_BASE}/ilink/bot/get_qrcode_status?qrcode=${encodeURIComponent(key)}`,
@@ -73,18 +74,44 @@ export async function getQRCodeStatus(key: string): Promise<{
   );
   if (!r.ok) return { status: "pending" };
   const data = await r.json();
+  console.log("[ilink] qrcode status raw response keys:", Object.keys(data));
   console.log("[ilink] qrcode status raw response:", JSON.stringify(data));
-  
+
+  // 兼容各种可能命名的 token 字段
+  const token =
+    data?.access_token ||
+    data?.bot_token ||
+    data?.token ||
+    data?.accessToken ||
+    data?.ticket ||
+    data?.botToken ||
+    null;
+
+  // 兼容各种可能命名的 base url 字段
+  const baseurl =
+    data?.baseurl ||
+    data?.base_url ||
+    data?.baseUrl ||
+    data?.server_url ||
+    data?.endpoint ||
+    null;
+
+  const ilinkBotId =
+    data?.ilink_bot_id || data?.bot_id || data?.appid || data?.botId || null;
+  const ilinkUserId =
+    data?.ilink_user_id || data?.user_id || data?.userId || data?.openid || null;
+
   const status = data?.status || data?.ret;
-  const token = data?.bot_token || data?.token;
-  
+
   if (status === "confirmed" || status === 1 || (token && status !== "expired")) {
+    console.log("[ilink] login confirmed — token:", token?.slice(0, 20) + "...", "baseurl:", baseurl, "bot_id:", ilinkBotId);
     return {
       status: "confirmed",
       bot_token: token,
-      ilink_bot_id: data?.ilink_bot_id || data?.bot_id,
-      ilink_user_id: data?.ilink_user_id || data?.user_id,
-      baseurl: data?.baseurl || data?.base_url,
+      ilink_bot_id: ilinkBotId,
+      ilink_user_id: ilinkUserId,
+      baseurl: baseurl,
+      raw: data,
     };
   }
   if (status === "scaned" || status === "scanned" || status === 2) {
@@ -100,29 +127,34 @@ export async function getQRCodeStatus(key: string): Promise<{
 export async function getUpdates(
   token: string,
   baseUrl = I_LINK_BASE,
-  timeoutMs = 4000
+  timeoutMs = 4000,
+  extraBody: any = {}
 ): Promise<ILinkUpdatesResponse> {
-  console.log("[ilink] getUpdates called, baseUrl:", baseUrl);
+  const fullUrl = `${baseUrl}/ilink/bot/getupdates`;
+  console.log("[ilink] getUpdates → url:", fullUrl, "token prefix:", token?.slice(0, 10));
   try {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), timeoutMs);
-    const r = await fetch(`${baseUrl}/ilink/bot/getupdates`, {
+    const bodyObj: any = { get_updates_buf: "", ...extraBody };
+    console.log("[ilink] getUpdates request body:", JSON.stringify(bodyObj));
+    const r = await fetch(fullUrl, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}`,
         "iLink-App-ClientVersion": "1",
       },
-      body: JSON.stringify({ get_updates_buf: "" }),
+      body: JSON.stringify(bodyObj),
       signal: ctrl.signal,
     });
     clearTimeout(timer);
     console.log("[ilink] getUpdates status:", r.status);
     const text = await r.text();
-    console.log("[ilink] getUpdates response:", text.slice(0, 500));
+    console.log("[ilink] getUpdates response:", text.slice(0, 800));
     if (r.status === 200) {
       try {
         const parsed = JSON.parse(text);
+        console.log("[ilink] getUpdates parsed keys:", Object.keys(parsed));
         // 微信可能返回 ret 或 errcode 字段
         const ret = parsed.ret !== undefined ? parsed.ret : parsed.errcode;
         const msgs = parsed.msgs || [];

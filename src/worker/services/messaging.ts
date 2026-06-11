@@ -20,11 +20,16 @@ export async function processIncomingMessages(env: Env): Promise<ProcessResult> 
   if (!credsRaw) {
     return { pulled: 0, handled: 0, error: "未登录，请先扫码", latencyMs: Date.now() - start };
   }
-  let creds: ILinkCredentials;
+  let creds: any;
   try {
     creds = JSON.parse(credsRaw);
-    console.log("[messaging] credentials parsed, token prefix:", creds.token?.slice(0, 10), "baseUrl:", creds.baseUrl);
-  } catch {
+    console.log("[messaging] credentials saved keys:", Object.keys(creds));
+    console.log("[messaging] credentials — token prefix:", creds.token?.slice(0, 15), "baseUrl:", creds.baseUrl, "accountId:", creds.accountId, "userId:", creds.userId, "loginAgeMs:", Date.now() - (creds.createdAt || 0));
+    if (creds.rawLoginResponse) {
+      console.log("[messaging] raw login response keys:", Object.keys(creds.rawLoginResponse));
+    }
+  } catch (e) {
+    console.error("[messaging] credentials parse error:", e);
     return { pulled: 0, handled: 0, error: "凭证格式错误", latencyMs: Date.now() - start };
   }
 
@@ -40,7 +45,10 @@ export async function processIncomingMessages(env: Env): Promise<ProcessResult> 
 
   // 3. 拉取消息
   console.log("[messaging] calling getUpdates...");
-  const updates = await getUpdates(creds.token, creds.baseUrl, 4000);
+  // 尝试把 bot_id 加入请求体（某些 iLink 实现需要）
+  const extraBody: any = {};
+  if (creds.accountId) extraBody.ilink_bot_id = creds.accountId;
+  const updates = await getUpdates(creds.token, creds.baseUrl, 4000, extraBody);
   console.log("[messaging] getUpdates result - ret:", updates.ret, "msgs count:", updates.msgs?.length || 0);
 
   // 检测 token 是否过期（errcode=-14 是微信 session timeout，负值通常也是认证类错误）

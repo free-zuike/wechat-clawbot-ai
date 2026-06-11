@@ -46,18 +46,20 @@ export async function handleQRCodeStatus(request: Request, env: Env): Promise<Re
         userId: status.ilink_user_id || "",
         baseUrl: status.baseurl || "https://ilinkai.weixin.qq.com",
         createdAt: Date.now(),
+        rawLoginResponse: status.raw,
       };
       await env.CLAWBOT_KV.put("clawbot:credentials", JSON.stringify(creds));
-      
+      console.log("[qrcode-status] credentials saved with keys:", Object.keys(status.raw || {}));
+
       // 生成 session token
       const sessionToken = generateSessionToken();
       await env.CLAWBOT_KV.put(`clawbot:session:${sessionToken}`, "valid", {
         expirationTtl: 24 * 60 * 60,
       });
-      
+
       await env.CLAWBOT_KV.delete("clawbot:qrcode_key");
       console.log("[qrcode-status] login confirmed, credentials saved");
-      
+
       // 返回带有 session cookie 的响应
       return json({ status: "confirmed", ok: true }, 200, {
         "Set-Cookie": createSessionCookie(sessionToken),
