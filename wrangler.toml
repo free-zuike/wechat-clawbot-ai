@@ -1,19 +1,20 @@
 # ============================================================
 #  爪爪 ClawBot AI —— 基于 Cloudflare Worker + Worker AI 的微信个人号机器人
 #
-#  部署:
-#    1)  npm install
-#    2)  wrangler login
-#    3)  wrangler kv:namespace create CLAWBOT_KV
-#        把返回的 id 填到下面 [[kv_namespaces]] 的 id 字段
-#    4)  (可选) wrangler d1 create clawbot-stats
+#  部署前准备（需在 Cloudflare Dashboard 或 CLI 创建）:
+#    1) 安装依赖: npm install
+#    2) 登录: wrangler login 或设置 CLOUDFLARE_API_TOKEN
+#    3) 创建 KV Namespace: wrangler kv namespace create CLAWBOT_KV
+#        把返回的 id 填到下面 [[kv_namespaces]] 的 id 字段（必需）
+#    4) (可选) 创建 D1 数据库: wrangler d1 create clawbot-stats
 #        填 [[d1_databases]] 后执行: wrangler d1 execute clawbot-stats --file=./schema.sql
-#    5)  (可选) wrangler r2 bucket create clawbot-history
+#    5) (可选) 创建 R2 Bucket: wrangler r2 bucket create clawbot-history
 #        填 [[r2_buckets]] 开启长期对话历史
-#    6)  (可选) wrangler queues create clawbot-messages
-#        填 [[queues.producers]] 开启异步消息处理
-#    7)  wrangler deploy
-#    8)  打开 https://<你的域名>/login 扫码登录
+#    6) (可选) 创建 Queue: wrangler queues create clawbot-messages
+#        取消注释 [[queues.producers]] 和 [[queues.consumers]] 开启异步消息处理
+#    7) 设置环境变量: wrangler secret put ADMIN_PASSWORD
+#    8) 部署: wrangler deploy
+#    9) 打开 https://<你的域名>/login 扫码登录
 # ============================================================
 
 name = "wechat-clawbot-ai"
