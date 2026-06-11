@@ -170,6 +170,37 @@ async function markMessageSeen(msgId: string): Promise<boolean> {
   }
 }
 
+// ---------- 配置存储（KV） ----------
+// 除 ADMIN_PASSWORD 外，其他配置都存在 KV 中，可通过管理面板修改
+const KV_CONFIG = "clawbot:config";
+
+interface BotConfig {
+  aiModel?: string;
+  aiSystemPrompt?: string;
+  turnstileSiteKey?: string;
+}
+
+async function saveConfig(env: Env, config: BotConfig): Promise<void> {
+  await env.CLAWBOT_KV.put(KV_CONFIG, JSON.stringify(config));
+}
+
+async function loadConfig(env: Env): Promise<BotConfig> {
+  try {
+    const raw = await env.CLAWBOT_KV.get(KV_CONFIG);
+    if (raw) return JSON.parse(raw);
+  } catch {}
+  return {};
+}
+
+// 合并配置：环境变量优先（兼容旧配置），然后是 KV 配置
+function mergeConfig(env: Env, kvConfig: BotConfig): BotConfig {
+  return {
+    aiModel: env.AI_MODEL || kvConfig.aiModel,
+    aiSystemPrompt: env.AI_SYSTEM_PROMPT || kvConfig.aiSystemPrompt,
+    turnstileSiteKey: env.TURNSTILE_SITE_KEY || kvConfig.turnstileSiteKey,
+  };
+}
+
 // ---------- R2 历史查询辅助 ----------
 async function listR2History(env: Env, userId: string, limit = 20): Promise<Array<{ key: string; content: string }>> {
   if (!env.CLAWBOT_R2) return [];
@@ -334,6 +365,10 @@ async function pollAndReply(env: Env): Promise<{
   const creds = await getCredentials(env);
   if (!creds) return { pulled: 0, handled: 0, queued: 0, error: "未登录", latencyMs: 0 };
 
+  // 加载配置（优先环境变量，其次 KV 配置）
+  const kvConfig = await loadConfig(env);
+  const config = mergeConfig(env, kvConfig);
+
   const res = await ilink.getUpdates(
     creds.token,
     "",
@@ -419,7 +454,7 @@ async function pollAndReply(env: Env): Promise<{
       }
 
       ilink.sendTyping(creds.token, from, true, creds.baseUrl).catch(() => {});
-      const reply = await turnAndSave(env.AI, from, text, env.AI_SYSTEM_PROMPT, env.AI_MODEL);
+      const reply = await turnAndSave(env.AI, from, text, config.aiSystemPrompt, config.aiModel);
       await ilink.replyText(creds.token, from, ctxToken, reply, creds.baseUrl);
       stats.aiCalls++;
       stats.handled++;
@@ -543,6 +578,8 @@ export default {
     // ---------- 状态 ----------
     if (path === "/api/status") {
       const creds = await getCredentials(env);
+      const config = await loadConfig(env);
+      const merged = mergeConfig(env, config);
       return json({
         loggedIn: !!creds,
         accountId: creds?.accountId || "",
@@ -557,7 +594,35 @@ export default {
         hasAdminPwd: hasAdminPassword(env),
         version: "v1.5-cloudflare-suite",
         stats: getStatsSnapshot(),
+        config: merged,
       });
+    }
+
+    // ---------- 获取配置（公开） ----------
+    if (path === "/api/config" && method === "GET") {
+      const config = await loadConfig(env);
+      return json(mergeConfig(env, config));
+    }
+
+    // ---------- 保存配置（需要管理员密码） ----------
+    if (path === "/api/config" && method === "POST") {
+      const v = verifyAdmin(request, env);
+      if (!v.ok) return json({ error: v.error || "无权访问" }, 401);
+      try {
+        const body = (await request.json()) as Partial<BotConfig>;
+        const current = await loadConfig(env);
+        // 只允许修改指定字段
+        const updated: BotConfig = {
+          ...current,
+          aiModel: body.aiModel || undefined,
+          aiSystemPrompt: body.aiSystemPrompt || undefined,
+          turnstileSiteKey: body.turnstileSiteKey || undefined,
+        };
+        await saveConfig(env, updated);
+        return json({ ok: true, config: mergeConfig(env, updated) });
+      } catch (e) {
+        return json({ error: String(e) }, 500);
+      }
     }
 
     // ---------- 历史统计 ----------
@@ -608,6 +673,10 @@ export default {
         const message = body?.message;
         if (!message) return json({ error: "missing message" }, 400);
 
+        // 加载配置（优先环境变量，其次 KV 配置）
+        const kvConfig = await loadConfig(env);
+        const config = mergeConfig(env, kvConfig);
+
         // 先试关键词
         const cmd = tryHandleCommand(message);
         if (cmd.handled) {
@@ -618,7 +687,7 @@ export default {
         }
 
         const uid = body.userId || "web_user";
-        const reply = await turnAndSave(env.AI, uid, message, env.AI_SYSTEM_PROMPT, env.AI_MODEL);
+        const reply = await turnAndSave(env.AI, uid, message, config.aiSystemPrompt, config.aiModel);
         return json({ reply, source: "ai" });
       } catch (e) {
         return json({ error: String(e) }, 500);
@@ -649,6 +718,10 @@ export default {
   // Queue 消费者：逐条处理入队消息
   async queue(batch: MessageBatch, env: Env): Promise<void> {
     const handledBy = new Set<string>();
+    // 加载配置（优先环境变量，其次 KV 配置）
+    const kvConfig = await loadConfig(env);
+    const config = mergeConfig(env, kvConfig);
+
     for (const m of batch.messages) {
       try {
         const body = (m.body || {}) as {
@@ -684,7 +757,7 @@ export default {
         }
 
         ilink.sendTyping(body.token, from, true, body.baseUrl).catch(() => {});
-        const reply = await turnAndSave(env.AI, from, text, env.AI_SYSTEM_PROMPT, env.AI_MODEL);
+        const reply = await turnAndSave(env.AI, from, text, config.aiSystemPrompt, config.aiModel);
         await ilink.replyText(body.token, from, body.context_token, reply, body.baseUrl);
         stats.aiCalls++;
         stats.handled++;
@@ -829,7 +902,35 @@ ${turnstileScript}
   </div>
 
   <div class="card">
-    <h2>🤖 4. 直接测试 AI 回复</h2>
+    <h2>⚙️ 5. 系统设置（需管理员密码）</h2>
+    <div class="sub">在此配置 AI 模型、人设提示词等参数（配置保存在 KV 中）。</div>
+    ${hasAdmin ? `
+    <div class="row" style="align-items:center">
+      <input id="config-pwd" class="input" placeholder="管理员密码" style="max-width:180px"/>
+    </div>
+    <div style="margin-top:14px">
+      <label style="font-size:13px;color:#555">AI 模型</label>
+      <input id="config-model" class="input" placeholder="@cf/meta/llama-3-8b-instruct" style="margin-top:6px" />
+      <small style="color:#888;font-size:12px">可选: @cf/meta/llama-3-8b-instruct, @cf/mistral/mistral-7b-instruct-v0.1</small>
+    </div>
+    <div style="margin-top:14px">
+      <label style="font-size:13px;color:#555">AI 人设提示词</label>
+      <textarea id="config-prompt" class="input" rows="4" placeholder="你是爪爪，一个友好的 AI 助手..." style="border-radius:12px;margin-top:6px;resize:vertical"></textarea>
+    </div>
+    <div style="margin-top:14px">
+      <label style="font-size:13px;color:#555">Turnstile Site Key（可选）</label>
+      <input id="config-turnstile" class="input" placeholder="你的 Turnstile Site Key" style="margin-top:6px" />
+    </div>
+    <div class="row" style="margin-top:14px">
+      <button class="btn" onclick="loadConfig()">加载配置</button>
+      <button class="btn" onclick="saveConfig()">保存配置</button>
+    </div>
+    <div id="config-result" class="sub" style="margin-top:12px"></div>
+    ` : '<div class="sub" style="color:#999">请先设置管理员密码以使用设置功能</div>'}
+  </div>
+
+  <div class="card">
+    <h2>🤖 6. 直接测试 AI 回复</h2>
     <div id="chat" class="chat-box">
       <div class="msg b"><div class="bubble">你好！我是爪爪 AI。<br/>💡 常见问题走本地快捷回复表，零 Token 消耗。<br/>相同问题 12 小时内走 Cache 缓存。</div></div>
     </div>
@@ -983,6 +1084,40 @@ async function logout(){
   const url = urlWithPwd('/api/logout', 'poll-pwd');
   await fetch(url, {method:'POST'});
   location.reload();
+}
+async function loadConfig(){
+  const el = document.getElementById('config-result');
+  el.textContent = '加载中...';
+  try {
+    const r = await fetch('/api/config', {cache:'no-store'});
+    const d = await r.json();
+    (document.getElementById('config-model') as HTMLInputElement).value = d.aiModel || '';
+    (document.getElementById('config-prompt') as HTMLTextAreaElement).value = d.aiSystemPrompt || '';
+    (document.getElementById('config-turnstile') as HTMLInputElement).value = d.turnstileSiteKey || '';
+    el.textContent = '✅ 配置加载成功';
+  } catch(e){ el.textContent = '❌ 加载失败：' + e.message; }
+}
+async function saveConfig(){
+  const el = document.getElementById('config-result');
+  el.textContent = '保存中...';
+  try {
+    const pwd = (document.getElementById('config-pwd') as HTMLInputElement)?.value.trim() || '';
+    const model = (document.getElementById('config-model') as HTMLInputElement)?.value.trim() || '';
+    const prompt = (document.getElementById('config-prompt') as HTMLTextAreaElement)?.value.trim() || '';
+    const turnstile = (document.getElementById('config-turnstile') as HTMLInputElement)?.value.trim() || '';
+    const url = '/api/config' + (pwd ? '?pwd=' + encodeURIComponent(pwd) : '');
+    const r = await fetch(url, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ aiModel: model, aiSystemPrompt: prompt, turnstileSiteKey: turnstile })
+    });
+    const d = await r.json();
+    if(d.ok){
+      el.innerHTML = '✅ 配置保存成功！<br/>AI 模型: ' + (d.config?.aiModel || '(默认)') + '<br/>提示词: ' + (d.config?.aiSystemPrompt?.length || 0) + ' 字符';
+    } else {
+      el.textContent = '❌ ' + (d.error || '保存失败');
+    }
+  } catch(e){ el.textContent = '❌ 保存失败：' + e.message; }
 }
 const chat = document.getElementById('chat');
 function addMsg(role,text){

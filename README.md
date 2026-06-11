@@ -143,12 +143,29 @@ max_batch_size = 10
 | 配置项 | 必填 | 说明 | 设置方式 |
 | --- | --- | --- | --- |
 | **ADMIN_PASSWORD** | ✅ 必需 | 管理接口密码 | `wrangler secret put ADMIN_PASSWORD` |
-| **AI_MODEL** | ❌ 可选 | AI 模型（默认 llama-3-8b） | `wrangler secret put AI_MODEL` |
-| **AI_SYSTEM_PROMPT** | ❌ 可选 | 自定义人设提示词 | `wrangler secret put AI_SYSTEM_PROMPT` |
-| **TURNSTILE_SECRET_KEY** | ❌ 可选 | Turnstile 人机验证 | `wrangler secret put TURNSTILE_SECRET_KEY` |
-| **TURNSTILE_SITE_KEY** | ❌ 可选 | Turnstile 公钥 | `wrangler.toml` 的 `[vars]` |
+| **AI_MODEL** | ❌ 可选 | AI 模型（默认 llama-3-8b） | 管理面板设置 / 环境变量 |
+| **AI_SYSTEM_PROMPT** | ❌ 可选 | 自定义人设提示词 | 管理面板设置 / 环境变量 |
+| **TURNSTILE_SECRET_KEY** | ❌ 可选 | Turnstile 人机验证私钥 | `wrangler secret put TURNSTILE_SECRET_KEY` |
+| **TURNSTILE_SITE_KEY** | ❌ 可选 | Turnstile 公钥 | 管理面板设置 / 环境变量 |
 
-> **注意**：未设置 `ADMIN_PASSWORD` 前，敏感接口会返回 401 错误，提示先设置密码。
+### 配置优先级
+
+1. **环境变量**（优先级最高）：适合需要通过 CI/CD 部署的场景
+2. **管理面板设置**（保存在 KV）：适合运行时动态修改
+
+> **注意**：`ADMIN_PASSWORD` 必须通过环境变量设置，其他配置均可在管理面板中设置。
+
+---
+
+## 📊 管理面板
+
+访问 `https://<你的域名>/` 查看：
+
+- **实时状态**：轮询次数、AI 调用、错误统计
+- **历史统计**：过去 24 小时 / 7 天数据
+- **AI 测试**：直接对话测试（公开）
+- **R2 历史**：查询用户对话记录（需密码）
+- **系统设置**：配置 AI 模型、人设提示词、Turnstile（需密码）
 
 ---
 
