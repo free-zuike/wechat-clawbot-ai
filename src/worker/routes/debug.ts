@@ -56,18 +56,140 @@ export async function handleDebugLogin(request: Request, env: Env): Promise<Resp
     networkTest = { ok: false, status: 0, error: e.message };
   }
 
-  // 测试 2: getUpdates（会尝试多种认证方式）
-  const testResult = await getUpdates(creds.token, baseUrl, 15000, { ilink_bot_id: creds.accountId });
-  const testOk = testResult.ret === 0;
+  // 测试 2: 先尝试一些可能的 token/refresh 接口（获取持久化token）
+  const fullToken = creds.token || "";
+  const tokenParts = fullToken.split(":");
+  const tokenAfterColon = tokenParts.length >= 2 ? tokenParts.slice(1).join(":") : fullToken;
+
+  const authEndpoints = [
+    { name: "POST /ilink/bot/gettoken", path: "/ilink/bot/gettoken" },
+    { name: "POST /ilink/bot/refresh", path: "/ilink/bot/refresh" },
+    { name: "POST /ilink/bot/auth", path: "/ilink/bot/auth" },
+    { name: "POST /ilink/bot/login", path: "/ilink/bot/login" },
+  ];
+  const authResults: any[] = [];
+  for (const ep of authEndpoints) {
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 5000);
+      const r = await fetch(`${baseUrl}${ep.path}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${tokenAfterColon}`,
+          "iLink-App-ClientVersion": "1",
+        },
+        body: JSON.stringify({ ilink_bot_id: creds.accountId, bot_token: fullToken }),
+        signal: ctrl.signal,
+      });
+      clearTimeout(t);
+      const text = await r.text();
+      authResults.push({
+        name: ep.name,
+        httpStatus: r.status,
+        response: text.slice(0, 200),
+      });
+    } catch (e: any) {
+      authResults.push({ name: ep.name, error: e.message });
+    }
+  }
+
+  // 测试 3: 多种 getupdates 变体
+  const variants = [
+    {
+      name: "A. 完整token + Bearer + get_updates_buf=''",
+      auth: `Bearer ${fullToken}`,
+      body: { get_updates_buf: "" },
+    },
+    {
+      name: "B. 完整token + Bearer + 含ilink_bot_id",
+      auth: `Bearer ${fullToken}`,
+      body: { get_updates_buf: "", ilink_bot_id: creds.accountId },
+    },
+    {
+      name: "C. 冒号后部分 + Bearer + 含ilink_bot_id",
+      auth: `Bearer ${tokenAfterColon}`,
+      body: { get_updates_buf: "", ilink_bot_id: creds.accountId },
+    },
+    {
+      name: "D. 冒号后部分 + Bearer + bot_token字段",
+      auth: `Bearer ${tokenAfterColon}`,
+      body: { get_updates_buf: "", bot_token: fullToken },
+    },
+    {
+      name: "E. token放body里",
+      auth: null,
+      body: { get_updates_buf: "", token: fullToken, ilink_bot_id: creds.accountId },
+    },
+    {
+      name: "F. 冒号后部分 + Bot prefix",
+      auth: `Bot ${tokenAfterColon}`,
+      body: { get_updates_buf: "", ilink_bot_id: creds.accountId },
+    },
+    {
+      name: "G. ilink_user_id也放body",
+      auth: `Bearer ${tokenAfterColon}`,
+      body: { get_updates_buf: "", ilink_bot_id: creds.accountId, ilink_user_id: creds.userId },
+    },
+  ];
+
+  const variantResults: any[] = [];
+  let bestOk = false;
+  for (const v of variants) {
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 8000);
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+        "iLink-App-ClientVersion": "1",
+      };
+      if (v.auth) headers["Authorization"] = v.auth;
+      const r = await fetch(`${baseUrl}/ilink/bot/getupdates`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(v.body),
+        signal: ctrl.signal,
+      });
+      clearTimeout(t);
+      const text = await r.text();
+      let ret: any = r.status;
+      let msgs = 0;
+      try {
+        const parsed = JSON.parse(text);
+        ret = parsed.ret !== undefined ? parsed.ret : parsed.errcode;
+        msgs = parsed.msgs?.length || 0;
+      } catch {}
+      variantResults.push({
+        name: v.name,
+        httpStatus: r.status,
+        ret,
+        msgsCount: msgs,
+        responsePreview: text.slice(0, 120),
+      });
+      if (ret === 0) {
+        bestOk = true;
+        // 成功后把正确的token前缀保存到kv
+        if (v.name.startsWith("C.") || v.name.startsWith("D.") || v.name.startsWith("F.") || v.name.startsWith("G.")) {
+          creds.token = tokenAfterColon;
+          await env.CLAWBOT_KV.put("clawbot:credentials", JSON.stringify(creds));
+        }
+        break;
+      }
+    } catch (e: any) {
+      variantResults.push({ name: v.name, error: e.message });
+    }
+  }
 
   return json({
-    ok: testOk,
+    ok: bestOk,
     savedInfo,
     networkTest,
-    testResult: {
-      ret: testResult.ret,
-      msgsCount: testResult.msgs?.length || 0,
+    tokenAnalysis: {
+      fullToken: fullToken.slice(0, 30) + "...",
+      partAfterColon: tokenAfterColon.slice(0, 30) + "...",
     },
+    authEndpointTest: authResults,
+    variantResults,
     workerUrl: new URL(request.url).origin,
     timestamp: new Date().toISOString(),
   });
