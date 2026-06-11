@@ -58,8 +58,13 @@ export default {
     }
 
     // 静态资源 - 使用 Workers Assets
+    // SPA 路由（如 /login）不存在文件，ASSETS 会返回 404，需要回退到 index.html
     if (env.ASSETS) {
-      return env.ASSETS.fetch(request);
+      const res = await env.ASSETS.fetch(request);
+      if (res.status === 404) {
+        return env.ASSETS.fetch(new Request(new URL("/index.html", request.url)));
+      }
+      return res;
     }
 
     // 如果没有 ASSETS 绑定，尝试自己获取
