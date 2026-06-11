@@ -26,22 +26,33 @@ export interface ILinkUpdatesResponse {
 
 // 获取二维码（用于扫码登录）
 export async function getQRCode(): Promise<{ key: string; imgUrl: string }> {
+  console.log("[ilink] fetching QR code...");
   const r = await fetch(`${I_LINK_BASE}/ilink/bot/get_bot_qrcode?bot_type=3`, {
     headers: { "iLink-App-ClientVersion": "1" },
     cf: { cacheTtl: 0, cacheEverything: false } as any,
   });
-  if (!r.ok) throw new Error(`获取二维码失败 HTTP ${r.status}`);
+  console.log("[ilink] QR code response status:", r.status);
+  if (!r.ok) {
+    const text = await r.text();
+    console.error("[ilink] QR code fetch failed:", text);
+    throw new Error(`获取二维码失败 HTTP ${r.status}`);
+  }
   const data = await r.json();
-  // 兼容两种字段命名：{ key, imgUrl } 或 { qrcode, qrcode_img_content }
+  console.log("[ilink] QR code response data:", JSON.stringify(data));
+  
   const key = data?.key || data?.qrcode;
   let imgUrl = data?.imgUrl || data?.qrcode_img_content;
-  // 去除值两端的反引号（部分 API 响应会把 URL 包在反引号中）
+  
   if (typeof imgUrl === "string") {
     imgUrl = imgUrl.trim().replace(/^`+|`+$/g, "").trim();
   }
+  
   if (!key || !imgUrl) {
     throw new Error(`获取二维码失败: 返回数据无效 (${JSON.stringify(data)})`);
   }
+  
+  console.log("[ilink] QR code key:", key);
+  console.log("[ilink] QR code imgUrl:", imgUrl);
   return { key, imgUrl };
 }
 

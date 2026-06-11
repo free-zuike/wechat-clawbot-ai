@@ -4,15 +4,21 @@ import type { Env } from "../index";
 
 // 1. 获取二维码
 export async function handleQRCode(request: Request, env: Env): Promise<Response> {
+  console.log("[qrcode] handleQRCode called");
   const v = await verifyAdmin(request, env);
-  if (!v.ok) return json({ error: v.error }, 401);
+  if (!v.ok) {
+    console.warn("[qrcode] auth failed:", v.error);
+    return json({ error: v.error }, 401);
+  }
   try {
     const data = await getQRCode();
     await env.CLAWBOT_KV.put("clawbot:qrcode_key", data.key, {
       expirationTtl: 5 * 60,
     });
+    console.log("[qrcode] QR code saved to KV:", data.key);
     return json({ qrcode: data.key, qrcode_url: data.imgUrl });
   } catch (e: any) {
+    console.error("[qrcode] error:", e);
     return json({ error: String(e) }, 500);
   }
 }
