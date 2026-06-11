@@ -140,20 +140,42 @@ max_batch_size = 10
 
 ## ⚙️ 环境变量配置
 
-| 配置项 | 必填 | 说明 | 设置方式 |
+### 必需配置（必须设置）
+
+| 配置项 | 说明 | 设置命令 |
+| --- | --- | --- |
+| **ADMIN_PASSWORD** | 管理接口密码（保护登录、设置等敏感功能） | `wrangler secret put ADMIN_PASSWORD` |
+
+### 可选配置（可在管理面板设置）
+
+| 配置项 | 说明 | 默认值 | 设置方式 |
 | --- | --- | --- | --- |
-| **ADMIN_PASSWORD** | ✅ 必需 | 管理接口密码 | `wrangler secret put ADMIN_PASSWORD` |
-| **AI_MODEL** | ❌ 可选 | AI 模型（默认 llama-3-8b） | 管理面板设置 / 环境变量 |
-| **AI_SYSTEM_PROMPT** | ❌ 可选 | 自定义人设提示词 | 管理面板设置 / 环境变量 |
-| **TURNSTILE_SECRET_KEY** | ❌ 可选 | Turnstile 人机验证私钥 | `wrangler secret put TURNSTILE_SECRET_KEY` |
-| **TURNSTILE_SITE_KEY** | ❌ 可选 | Turnstile 公钥 | 管理面板设置 / 环境变量 |
+| `AI_MODEL` | Worker AI 模型名称 | `@cf/meta/llama-3-8b-instruct` | 管理面板 / `wrangler secret put AI_MODEL` |
+| `AI_SYSTEM_PROMPT` | AI 人设提示词 | `你是爪爪，一个友好的 AI 助手...` | 管理面板 / `wrangler secret put AI_SYSTEM_PROMPT` |
+| `TURNSTILE_SITE_KEY` | Turnstile 人机验证公钥 | 空（不启用） | 管理面板 / `wrangler.toml` 的 `[vars]` |
+| `TURNSTILE_SECRET_KEY` | Turnstile 人机验证私钥 | 空（不启用） | `wrangler secret put TURNSTILE_SECRET_KEY` |
 
 ### 配置优先级
 
-1. **环境变量**（优先级最高）：适合需要通过 CI/CD 部署的场景
-2. **管理面板设置**（保存在 KV）：适合运行时动态修改
+1. **环境变量 / Secret**（优先级最高）
+   - 通过 `wrangler secret put` 设置的 Secret 会覆盖管理面板的配置
+   - 适合需要通过 CI/CD 部署或版本控制管理的场景
 
-> **注意**：`ADMIN_PASSWORD` 必须通过环境变量设置，其他配置均可在管理面板中设置。
+2. **管理面板设置**（保存在 KV）
+   - 在管理面板修改后即时生效，无需重新部署
+   - 适合运行时动态调整配置
+   - 若环境变量未设置，则使用管理面板的值
+
+### 常用 AI 模型
+
+| 模型名称 | 说明 |
+| --- | --- |
+| `@cf/meta/llama-3-8b-instruct` | Llama 3 8B（默认，平衡性能与效果） |
+| `@cf/meta/llama-3-70b-instruct` | Llama 3 70B（更强大，但延迟更高） |
+| `@cf/mistral/mistral-7b-instruct-v0.1` | Mistral 7B（轻量级，响应快） |
+| `@cf/baichuan-inc/Baichuan2-7B-Chat` | 百川 7B（中文优化） |
+
+> **提示**：`ADMIN_PASSWORD` 必须通过 `wrangler secret put` 设置，无法在管理面板中修改。其他配置推荐在管理面板中设置，方便随时调整。
 
 ---
 
