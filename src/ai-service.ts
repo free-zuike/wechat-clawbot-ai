@@ -54,7 +54,7 @@ export interface ChatContext {
   updatedAt: number;
 }
 
-// ---------------- 配置（v1.2 优化版） ----------------
+// ---------------- 配置（v1.5 优化版） ----------------
 const DEFAULT_MODEL = "@cf/meta/llama-3-8b-instruct";
 const MAX_TURNS = 6;               // 每用户保留最近 3 轮 user + 3 轮 assistant
 const MAX_TURN_CHARS = 240;        // 单轮内容字符上限，超过就截断（省 Prompt Token）
@@ -399,9 +399,12 @@ export async function aiReply(
   userMessage: string,
   ctx: ChatContext,
   systemPrompt: string = DEFAULT_SYSTEM_PROMPT,
-  userId?: string
+  userId?: string,
+  aiModel?: string
 ): Promise<string> {
   const cleanMsg = (userMessage || "").trim();
+  // 优先用注入的模型，否则用环境变量，最后用默认模型
+  const model = aiModel || DEFAULT_MODEL;
 
   // 1) 敏感词拦截 —— 零 AI 调用
   const blocked = checkSensitive(cleanMsg);
@@ -443,9 +446,9 @@ export async function aiReply(
       { role: "user", content: compressTurnContent(cleanMsg) },
     ];
 
-    // 3b) 调用 + 超时控制
+    // 3b) 调用 + 超时控制（aiModel 可能是环境变量传入的自定义模型）
     const response = await runWithTimeout(
-      ai.run(DEFAULT_MODEL, { messages, max_tokens: MAX_TOKENS }),
+      ai.run(model as any, { messages, max_tokens: MAX_TOKENS }),
       AI_TIMEOUT_MS,
       "ai timeout"
     );
@@ -506,10 +509,11 @@ export async function turnAndSave(
   aiBinding: any,
   userId: string,
   userMessage: string,
-  systemPrompt?: string
+  systemPrompt?: string,
+  aiModel?: string
 ): Promise<string> {
   const ctx = await loadContext(userId);
-  const reply = await aiReply(aiBinding, userMessage, ctx, systemPrompt, userId);
+  const reply = await aiReply(aiBinding, userMessage, ctx, systemPrompt, userId, aiModel);
   ctx.turns.push({ role: "user", content: userMessage, ts: Date.now() });
   ctx.turns.push({ role: "assistant", content: reply, ts: Date.now() });
   // 上下文异步写 Cache，不阻塞返回

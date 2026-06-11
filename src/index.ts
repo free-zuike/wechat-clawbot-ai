@@ -45,7 +45,8 @@ export interface Env {
   ADMIN_PASSWORD?: string;                        // 可选：管理页密码
   TURNSTILE_SITE_KEY?: string;                    // 可选：Turnstile 公钥
   TURNSTILE_SECRET_KEY?: string;                  // 可选：Turnstile 私钥
-  AI_SYSTEM_PROMPT?: string;
+  AI_SYSTEM_PROMPT?: string;                      // 可选：自定义 AI 提示词
+  AI_MODEL?: string;                              // 可选：AI 模型
 }
 
 export interface LoginCredentials {
@@ -421,7 +422,7 @@ async function pollAndReply(env: Env): Promise<{
       }
 
       ilink.sendTyping(creds.token, from, true, creds.baseUrl).catch(() => {});
-      const reply = await turnAndSave(env.AI, from, text, env.AI_SYSTEM_PROMPT);
+      const reply = await turnAndSave(env.AI, from, text, env.AI_SYSTEM_PROMPT, env.AI_MODEL);
       await ilink.replyText(creds.token, from, ctxToken, reply, creds.baseUrl);
       stats.aiCalls++;
       stats.handled++;
@@ -644,7 +645,7 @@ export default {
         }
 
         const uid = body.userId || "web_user";
-        const reply = await turnAndSave(env.AI, uid, message, env.AI_SYSTEM_PROMPT);
+        const reply = await turnAndSave(env.AI, uid, message, env.AI_SYSTEM_PROMPT, env.AI_MODEL);
         return json({ reply, source: "ai" });
       } catch (e) {
         return json({ error: String(e) }, 500);
@@ -710,7 +711,7 @@ export default {
         }
 
         ilink.sendTyping(body.token, from, true, body.baseUrl).catch(() => {});
-        const reply = await turnAndSave(env.AI, from, text, env.AI_SYSTEM_PROMPT);
+        const reply = await turnAndSave(env.AI, from, text, env.AI_SYSTEM_PROMPT, env.AI_MODEL);
         await ilink.replyText(body.token, from, body.context_token, reply, body.baseUrl);
         stats.aiCalls++;
         stats.handled++;

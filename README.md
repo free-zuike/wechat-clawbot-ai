@@ -15,9 +15,8 @@
 | 📝 内置指令 | `帮助 / 重置 / 关于`，零 Token 消耗 | 本地逻辑 |
 | 🧠 上下文 | 每用户独立，3 小时自动过期 | Cache API |
 | 📜 长期历史 | 对话记录永久保留（可选） | R2 |
-| 📈 统计分析 | 小时级聚合统计 | D1 |
-| 🚀 异步处理 | 消息入队，防止 cron 超时 | Queues |
-| 🔒 安全保护 | 管理接口密码 + Turnstile | Env/Secret |
+| 📈 统计分析 | 小时级聚合统计（可选） | D1 |
+| 🚀 异步处理 | 消息入队，防止 cron 超时（可选） | Queues |
 
 ---
 
@@ -127,31 +126,40 @@ max_batch_size = 10
 
 ---
 
-## 🔒 安全配置
+## ⚙️ 后台配置（可选）
 
-### 管理员密码
-
-设置后，敏感接口需要验证：
+以下功能通过环境变量配置，按需启用：
 
 ```bash
+# 管理密码（保护管理接口，需要时设置）
 wrangler secret put ADMIN_PASSWORD
+
+# Turnstile 人机验证（保护管理接口，需要时设置）
+wrangler secret put TURNSTILE_SECRET_KEY
+
+# AI 模型（默认 @cf/meta/llama-3-8b-instruct，可自定义）
+wrangler secret put AI_MODEL
+# 可选模型: @cf/meta/llama-3-8b-instruct, @cf/meta/llama-3-16k, @cf/mistral/mistral-7b-instruct-v0.1 等
+
+# 自定义 AI 人设提示词
+wrangler secret put AI_SYSTEM_PROMPT
 ```
+
+### 密码保护说明
+
+设置 `ADMIN_PASSWORD` 后，以下接口需要验证：
+- `/login` - 扫码登录页
+- `/api/qrcode` - 获取二维码
+- `/api/trigger-poll` - 手动触发消息拉取
+- `/api/r2-history` - 查询对话历史
 
 访问方式：
 - URL 参数：`https://xxx.workers.dev/login?pwd=你的密码`
 - Basic Auth：`Authorization: Basic base64(admin:密码)`
 
-### Turnstile 防机器人（可选）
-
-防止管理接口被自动化调用：
-
-```bash
-wrangler secret put TURNSTILE_SECRET_KEY
-```
-
 ---
 
-## 🏗️ 架构
+## 📁 文件结构
 
 ```
 微信用户 → 微信服务器 (ilinkai.weixin.qq.com)
@@ -202,14 +210,15 @@ wrangler secret put TURNSTILE_SECRET_KEY
 
 ---
 
-## ⚙️ 配置项
+## ⚙️ 后台配置项
 
-| 环境变量 | 说明 | 默认值 |
+| 环境变量 | 说明 | 设置方式 |
 | --- | --- | --- |
-| `ADMIN_PASSWORD` | 管理密码 | 无（为空则不启用） |
-| `TURNSTILE_SITE_KEY` | Turnstile 公钥 | 无 |
-| `TURNSTILE_SECRET_KEY` | Turnstile 私钥 | 无 |
-| `AI_SYSTEM_PROMPT` | 自定义系统提示词 | 爪爪默认人设 |
+| `ADMIN_PASSWORD` | 管理密码（可选） | `wrangler secret put ADMIN_PASSWORD` |
+| `TURNSTILE_SECRET_KEY` | Turnstile 人机验证（可选） | `wrangler secret put TURNSTILE_SECRET_KEY` |
+| `TURNSTILE_SITE_KEY` | Turnstile 公钥（可选） | `wrangler.toml` 的 `[vars]` |
+| `AI_MODEL` | AI 模型（可选，默认 llama-3-8b） | `wrangler secret put AI_MODEL` |
+| `AI_SYSTEM_PROMPT` | 自定义 AI 人设（可选） | `wrangler secret put AI_SYSTEM_PROMPT` |
 
 ---
 
