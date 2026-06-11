@@ -768,7 +768,7 @@ ${turnstileScript}
       ${statusBadge(!!env.CLAWBOT_R2, "R2 历史")}
       ${statusBadge(!!env.TURNSTILE_SECRET_KEY, "Turnstile")}
     </div>
-    ${needAdmin ? `<div class="notice" style="margin-top:12px">🔐 管理功能受密码保护，请把 <code>?pwd=你的密码</code> 加到 URL 后，或在下方输入密码后使用管理功能。</div>` : ""}
+    ${hasAdmin ? `<div class="notice" style="margin-top:12px">🔐 管理功能受密码保护，请把 <code>?pwd=你的密码</code> 加到 URL 后，或在下方输入密码后使用管理功能。</div>` : ""}
   </div>
 
   <div class="card">
@@ -795,7 +795,7 @@ ${turnstileScript}
     <h2>📱 1. 扫码登录微信</h2>
     <div class="sub">在微信 → 设置 → 插件 → ClawBot 里扫描二维码。</div>
     <div class="row">
-      ${needAdmin ? `<input id="login-pwd" class="input" placeholder="管理员密码（可选）" style="max-width:220px"/>` : ""}
+      ${hasAdmin ? `<input id="login-pwd" class="input" placeholder="管理员密码（可选）" style="max-width:220px"/>` : ""}
       <button class="btn" onclick="goLogin()">去扫码登录</button>
       ${loggedIn ? `<button class="btn danger" onclick="logout()">退出登录</button>` : ""}
     </div>
@@ -811,7 +811,7 @@ ${turnstileScript}
     </div>
     ${turnstileWidget ? `<div style="margin-top:12px">${turnstileWidget}</div>` : ""}
     <div class="row" style="align-items:center">
-      ${needAdmin ? `<input id="poll-pwd" class="input" placeholder="管理员密码" style="max-width:220px"/>` : ""}
+      ${hasAdmin ? `<input id="poll-pwd" class="input" placeholder="管理员密码" style="max-width:220px"/>` : ""}
       <button class="btn" onclick="triggerPoll()">手动触发一次拉取</button>
     </div>
     <div id="poll-result" class="sub" style="margin-top:12px"></div>
@@ -821,7 +821,7 @@ ${turnstileScript}
     <h2>📜 3. R2 长期对话历史 ${env.CLAWBOT_R2 ? "" : "(未配置)"}</h2>
     <div class="sub">查询用户对话历史（仅管理员可用，按用户/时间倒序列出）。</div>
     <div class="row" style="align-items:center">
-      ${needAdmin ? `<input id="r2-pwd" class="input" placeholder="管理员密码" style="max-width:180px"/>` : ""}
+      ${hasAdmin ? `<input id="r2-pwd" class="input" placeholder="管理员密码" style="max-width:180px"/>` : ""}
       <input id="r2-user" class="input" placeholder="用户 ID（留空=全部）" style="max-width:220px"/>
       <button class="btn" onclick="queryR2()">查询</button>
     </div>
