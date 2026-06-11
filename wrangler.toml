@@ -35,8 +35,8 @@ binding = "AI"
 # 对话上下文已迁移到 Cache API, 消息去重已迁移到 Cache API
 [[kv_namespaces]]
 binding = "CLAWBOT_KV"
-id = "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
-preview_id = "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
+id = "2fac06f019ce476084f5066e432a1183"
+preview_id = "2fac06f019ce476084f5066e432a1183"
 
 # ===== D1 统计数据库 (可选, 没有也不崩) =====
 [[d1_databases]]
