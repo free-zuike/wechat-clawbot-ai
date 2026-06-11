@@ -93,7 +93,11 @@ async function startLogin() {
       return;
     }
     qrCode.value = data.qrcode;
-    qrImage.value = data.qrcode_img_content.trim().replace(/^`+|`+$/g, "").trim();
+    const rawUrl = data.qrcode_img_content;
+    console.log('Raw QR image URL:', rawUrl);
+    const cleanedUrl = rawUrl.trim().replace(/^`+|`+$/g, "").trim();
+    console.log('Cleaned URL:', cleanedUrl);
+    qrImage.value = cleanedUrl;
     qrStatus.value = "等待扫码...";
     pollStatus();
   } catch (e: any) {
