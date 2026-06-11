@@ -35,13 +35,18 @@ export async function handleQRCodeImage(request: Request, env: Env): Promise<Res
     if (!imgRes.ok) {
       return new Response("图片获取失败", { status: imgRes.status });
     }
+    // 获取原始 Content-Type，默认为 image/png
+    const contentType = imgRes.headers.get("Content-Type") || "image/png";
     return new Response(imgRes.body, {
       headers: {
-        "Content-Type": "image/png",
-        "Cache-Control": "no-store",
+        "Content-Type": contentType,
+        "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+        "Expires": "0",
+        "Pragma": "no-cache",
       },
     });
   } catch (e: any) {
+    console.error("[qrcode-image] error:", e);
     return new Response(String(e), { status: 500 });
   }
 }
