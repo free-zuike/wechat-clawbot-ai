@@ -54,6 +54,9 @@ export async function callAI(
   const model = aiModel || "@cf/meta/llama-3-8b-instruct";
   const system = systemPrompt || DEFAULT_SYSTEM_PROMPT;
 
+  console.log("[ai] calling AI with model:", model);
+  console.log("[ai] user message:", cleanMsg.slice(0, 50));
+
   try {
     const response = await aiBinding.run(model, {
       messages: [
@@ -62,9 +65,16 @@ export async function callAI(
       ],
       max_tokens: 320,
     });
+    console.log("[ai] response type:", typeof response);
+    console.log("[ai] response:", JSON.stringify(response).slice(0, 200));
     const text = typeof response === "string" ? response : response?.response || "";
+    if (!text) {
+      console.warn("[ai] empty response from AI");
+    }
     return (text || "").slice(0, 700) || "（AI 没有返回内容）";
-  } catch (e) {
+  } catch (e: any) {
+    console.error("[ai] AI call failed:", e?.message || e?.reason || String(e));
+    console.error("[ai] error details:", JSON.stringify(e));
     return "抱歉，我刚刚脑子卡了一下 😅 能换个说法再问一遍吗？";
   }
 }
