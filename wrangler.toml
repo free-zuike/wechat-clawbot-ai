@@ -13,10 +13,10 @@ compatibility_flags = ["nodejs_compat"]
 # 静态资源目录（Vite 构建产物）
 assets = { directory = "./dist", binding = "ASSETS" }
 
-# ===== Cron 触发器 (可选) =====
-# 取消注释后，每 2 分钟自动拉取一次消息
-# [triggers]
-# crons = ["*/2 * * * *"]
+# ===== Cron 触发器 =====
+# 每 2 分钟自动拉取一次微信消息并回复
+[triggers]
+crons = ["*/2 * * * *"]
 
 # ===== AI 绑定 =====
 [ai]
