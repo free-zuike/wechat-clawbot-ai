@@ -53,14 +53,15 @@ preview_bucket_name = "clawbot-history"
 # ===== Queues 异步消息处理 (可选, 没有也不崩) =====
 # 配置 Queue 后, cron 拉取消息会入队, 由 queue 消费者异步处理
 # 避免 cron 超时, 消息多时更可靠
-[[queues.producers]]
-binding = "CLAWBOT_QUEUE"
-queue = "clawbot-messages"
-
-[[queues.consumers]]
-queue = "clawbot-messages"
-max_batch_size = 10
-max_batch_timeout = 5
+# 如需启用, 先运行: wrangler queues create clawbot-messages
+# [[queues.producers]]
+# binding = "CLAWBOT_QUEUE"
+# queue = "clawbot-messages"
+# 
+# [[queues.consumers]]
+# queue = "clawbot-messages"
+# max_batch_size = 10
+# max_batch_timeout = 5
 
 # ===== AI Gateway (可选, 可在 Cloudflare Dashboard 创建后填下面) =====
 # 开启后, AI 调用会走 AI Gateway, 可以观察调用次数、错误率
