@@ -122,7 +122,11 @@ export async function getUpdates(
     console.log("[ilink] getUpdates response:", text.slice(0, 500));
     if (r.status === 200) {
       try {
-        return JSON.parse(text) as ILinkUpdatesResponse;
+        const parsed = JSON.parse(text);
+        // 微信可能返回 ret 或 errcode 字段
+        const ret = parsed.ret !== undefined ? parsed.ret : parsed.errcode;
+        const msgs = parsed.msgs || [];
+        return { ret, msgs } as ILinkUpdatesResponse;
       } catch (e) {
         console.error("[ilink] getUpdates JSON parse error:", e);
         return { ret: r.status, msgs: [] };
