@@ -12,7 +12,18 @@ export async function handleQRCode(request: Request, env: Env): Promise<Response
     await env.CLAWBOT_KV.put("clawbot:qrcode_key", data.key, {
       expirationTtl: 5 * 60,
     });
-    return json({ qrcode: data.key, qrcode_img_content: data.imgUrl });
+    
+    // 如果 imgUrl 是 HTTP URL，代理获取并转换为 base64（避免 CORS）
+    let imgContent = data.imgUrl;
+    if (data.imgUrl.startsWith("http")) {
+      const imgRes = await fetch(data.imgUrl);
+      if (imgRes.ok) {
+        const buffer = await imgRes.arrayBuffer();
+        imgContent = Buffer.from(buffer).toString("base64");
+      }
+    }
+    
+    return json({ qrcode: data.key, qrcode_img_content: imgContent });
   } catch (e: any) {
     return json({ error: String(e) }, 500);
   }
