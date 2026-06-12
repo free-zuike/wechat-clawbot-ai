@@ -102,8 +102,21 @@ export async function clearContext(kv: KVNamespace, userId: string): Promise<voi
 
 // ========== DO SQLite 版本（零 KV 读写）==========
 
-// 从 DO SQLite 获取上下文
+// 从 DO SQLite 获取上下文（表不存在时自动建表）
 export async function getContextFromSQLite(sql: SqlStorage, userId: string): Promise<UserContext> {
+  // 确保 contexts 表存在（DO 新建实例时表可能尚未创建）
+  try {
+    await sql.exec(`
+      CREATE TABLE IF NOT EXISTS contexts (
+        user_id TEXT PRIMARY KEY,
+        messages TEXT NOT NULL DEFAULT '[]',
+        last_updated INTEGER NOT NULL
+      )
+    `);
+  } catch (e) {
+    Logger.warn(`[Context] Failed to ensure contexts table`, { error: (e as Error).message });
+  }
+
   try {
     const result = await sql.exec(
       `SELECT messages, last_updated FROM contexts WHERE user_id = ?`,
@@ -112,19 +125,24 @@ export async function getContextFromSQLite(sql: SqlStorage, userId: string): Pro
     const row = result.next().value;
 
     if (row) {
-      const messages = JSON.parse(row.messages as string);
-      const lastUpdated = row.last_updated as number;
+      try {
+        const messages = JSON.parse(row.messages as string);
+        const lastUpdated = row.last_updated as number;
 
-      // 检查是否过期（24 小时）
-      const expireMs = CONTEXT_EXPIRE_HOURS * 60 * 60 * 1000;
-      if (Date.now() - lastUpdated > expireMs) {
-        Logger.info(`[Context] SQLite context expired for user ${userId}, resetting`);
-        // 删除过期记录
+        // 检查是否过期（24 小时）
+        const expireMs = CONTEXT_EXPIRE_HOURS * 60 * 60 * 1000;
+        if (Date.now() - lastUpdated > expireMs) {
+          Logger.info(`[Context] SQLite context expired for user ${userId}, resetting`);
+          await sql.exec(`DELETE FROM contexts WHERE user_id = ?`, [userId]);
+          return { userId, messages: [], lastUpdated: Date.now() };
+        }
+
+        return { userId, messages, lastUpdated };
+      } catch (parseError) {
+        // JSON 解析失败，说明数据损坏，清除并重建
+        Logger.warn(`[Context] Corrupt context data for ${userId}, resetting`, { error: (parseError as Error).message });
         await sql.exec(`DELETE FROM contexts WHERE user_id = ?`, [userId]);
-        return { userId, messages: [], lastUpdated: Date.now() };
       }
-
-      return { userId, messages, lastUpdated };
     }
   } catch (error) {
     Logger.warn(`[Context] Error loading SQLite context for ${userId}`, { error: (error as Error).message });
@@ -132,8 +150,21 @@ export async function getContextFromSQLite(sql: SqlStorage, userId: string): Pro
   return { userId, messages: [], lastUpdated: Date.now() };
 }
 
-// 保存上下文到 DO SQLite
+// 保存上下文到 DO SQLite（表不存在时自动建表）
 export async function saveContextToSQLite(sql: SqlStorage, userId: string, context: UserContext): Promise<void> {
+  // 确保 contexts 表存在
+  try {
+    await sql.exec(`
+      CREATE TABLE IF NOT EXISTS contexts (
+        user_id TEXT PRIMARY KEY,
+        messages TEXT NOT NULL DEFAULT '[]',
+        last_updated INTEGER NOT NULL
+      )
+    `);
+  } catch (e) {
+    Logger.warn(`[Context] Failed to ensure contexts table on save`, { error: (e as Error).message });
+  }
+
   context.lastUpdated = Date.now();
 
   // 只保留最近 N 条消息

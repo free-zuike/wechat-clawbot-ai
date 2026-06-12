@@ -111,12 +111,34 @@ export class ILinkConnectionDO implements DurableObject {
     Logger.info("[DO] SQLite tables initialized");
   }
 
+  // ========== D1 初始化（独立方法，确保每次 fetch 都能建表）==========
+
+  private async initD1(): Promise<void> {
+    if (!this.env.CLAWBOT_DB) {
+      Logger.warn("[DO] CLAWBOT_DB binding not found, D1 disabled");
+      return;
+    }
+    if (this.d1) return; // 已初始化
+
+    try {
+      this.d1 = new D1Service(this.env.CLAWBOT_DB);
+      await this.d1.init(); // 执行 CREATE TABLE IF NOT EXISTS
+      Logger.info("[DO] D1 initialized successfully");
+    } catch (e: any) {
+      Logger.error("[DO] D1 init failed — messages will NOT be persisted", { error: e.message });
+      this.d1 = null;
+    }
+  }
+
   // ========== HTTP 处理（长轮询入口）==========
 
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
 
-    // 初始化 SQLite（credentials / contexts / do_config 建表）
+    // 优先初始化 D1（确保 messages/sessions/stats 表在第一条请求时就创建）
+    await this.initD1();
+
+    // 初始化 DO SQLite（credentials / contexts / do_config 建表）
     await this.initSQLite();
 
     // 初始化凭证（从 SQLite → KV fallback 迁移）
@@ -595,17 +617,7 @@ export class ILinkConnectionDO implements DurableObject {
       this.cache.credentials = null;
       this.cache.credentialsLoadedAt = now;
     }
-
-    // 初始化 D1
-    if (this.env.CLAWBOT_DB && !this.d1) {
-      try {
-        this.d1 = new D1Service(this.env.CLAWBOT_DB);
-        await this.d1.init();
-      } catch (e: any) {
-        Logger.warn("[DO] D1 init failed", { error: e.message });
-        this.d1 = null;
-      }
-    }
+    // D1 初始化已移到 fetch() 开头独立调用（initD1()），这里不再重复
   }
 
   // 保存 credentials 到 DO SQLite（替代 KV 写）
