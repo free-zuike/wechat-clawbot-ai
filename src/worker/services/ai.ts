@@ -2,12 +2,16 @@
 // 默认模型: @cf/meta/llama-3.2-3b-instruct
 // 可通过配置 KV 中的 AI_MODEL 覆盖
 // 支持: 对话上下文（按 user_id 存储最近 N 条消息）
+// 优化：支持 DO SQLite 作为上下文存储，彻底消除 KV 读写
 
 import { Logger } from "../utils/error";
 import {
   getContext,
+  getContextFromSQLite,
   addMessageToContext,
+  saveContextToSQLite,
   clearContext,
+  clearContextSQLite,
   buildMessagesWithContext,
   shouldClearContext,
 } from "./context";
@@ -51,10 +55,15 @@ export function tryQuickReply(text: string): string | null {
   return null;
 }
 
+// 判断存储类型：KVNamespace 还是 DO SQLite (SqlStorage)
+function isSQLiteStorage(storage: any): boolean {
+  return storage && typeof storage.exec === "function";
+}
+
 // 带上下文的 AI 调用（用于微信消息处理）
-// 优化：合并多次 KV 读/写 → 每轮对话只做 1 次读 + 1 次写
+// 优化：支持 DO SQLite 存储上下文，彻底消除 KV 读写
 export async function callAIWithContext(
-  kv: KVNamespace,
+  storage: KVNamespace | SqlStorage,
   aiBinding: any,
   userId: string,
   userMessage: string,
@@ -62,26 +71,36 @@ export async function callAIWithContext(
   aiModel: string
 ): Promise<string> {
   const cleanMsg = (userMessage || "").trim();
+  const useSQLite = isSQLiteStorage(storage);
 
-  // 检查快捷回复（不走 KV）
+  // 检查快捷回复（不走存储）
   const quick = tryQuickReply(cleanMsg);
   if (quick) {
     Logger.info(`[ai] Quick reply for ${userId}`, { message: cleanMsg.slice(0, 30) });
     return quick;
   }
 
-  // 检查是否需要清空上下文（1 次 KV 写）
+  // 检查是否需要清空上下文
   if (shouldClearContext(cleanMsg)) {
-    await clearContext(kv, userId);
+    if (useSQLite) {
+      await clearContextSQLite(storage as SqlStorage, userId);
+    } else {
+      await clearContext(storage as KVNamespace, userId);
+    }
     return "✅ 已清空对话上下文，我们重新开始吧！";
   }
 
   const model = aiModel || "@cf/meta/llama-3.2-3b-instruct";
   const system = systemPrompt || DEFAULT_SYSTEM_PROMPT;
 
-  // —— 只读一次 KV 获取上下文 ——
-  const context = await getContext(kv, userId);
-  Logger.debug(`[ai] Context for ${userId}`, { messageCount: context.messages.length });
+  // —— 读取上下文 ——
+  let context;
+  if (useSQLite) {
+    context = await getContextFromSQLite(storage as SqlStorage, userId);
+  } else {
+    context = await getContext(storage as KVNamespace, userId);
+  }
+  Logger.debug(`[ai] Context for ${userId}`, { messageCount: context.messages.length, storage: useSQLite ? "sqlite" : "kv" });
 
   const messages = buildMessagesWithContext(system, cleanMsg, context);
 
@@ -99,24 +118,27 @@ export async function callAIWithContext(
     return "抱歉，我刚刚脑子卡了一下 😅 能换个说法再问一遍吗？";
   }
 
-  // —— 只写一次 KV：同时把 user 和 assistant 消息追加 ——
+  // —— 保存上下文 ——
   if (reply) {
     const now = Date.now();
     context.messages.push({ role: "user", content: cleanMsg.slice(0, 500), timestamp: now });
     context.messages.push({ role: "assistant", content: reply.slice(0, 500), timestamp: now });
 
-    // 保留最近 10 条（与 context.ts 常量一致）
+    // 保留最近 10 条
     if (context.messages.length > 10) {
       context.messages = context.messages.slice(-10);
     }
     context.lastUpdated = now;
 
     try {
-      // 24 小时过期
-      await kv.put(`clawbot:context:${userId}`, JSON.stringify(context), {
-        expirationTtl: 24 * 60 * 60,
-      });
-      Logger.info(`[ai] Reply & context saved for ${userId}`, { replyLength: reply.length });
+      if (useSQLite) {
+        await saveContextToSQLite(storage as SqlStorage, userId, context);
+      } else {
+        await (storage as KVNamespace).put(`clawbot:context:${userId}`, JSON.stringify(context), {
+          expirationTtl: 24 * 60 * 60,
+        });
+      }
+      Logger.info(`[ai] Reply & context saved for ${userId}`, { replyLength: reply.length, storage: useSQLite ? "sqlite" : "kv" });
     } catch (e) {
       Logger.warn(`[ai] Failed to persist context for ${userId}`, { error: (e as Error).message });
     }

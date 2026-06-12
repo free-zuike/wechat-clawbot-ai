@@ -1,5 +1,6 @@
 // iLink Durable Object - 管理微信机器人的长轮询连接
 // 架构：DO 替代 Cron 轮询，实现消息实时接收
+// 优化：credentials 和 context 从 KV 迁移到 DO SQLite，彻底消除 KV 读写
 
 import { Logger } from "../utils/error";
 import { getUpdates, sendTextMessage, extractMessageText, MessageType } from "./ilink";
@@ -25,15 +26,13 @@ export interface ProcessedMessage {
   processed: boolean;
 }
 
-// 内存缓存（避免每轮都读 KV，降低免费额度消耗）
+// 内存缓存（避免每轮都读 SQLite）
 interface RuntimeCache {
   credentials: { botToken: string; accountId: string; baseUrl: string; userId: string; syncBuf: string } | null;
   credentialsLoadedAt: number;
   config: { aiSystemPrompt: string; aiModel: string } | null;
   configLoadedAt: number;
-  contextCache: Map<string, { data: any; lastRead: number }>;
   processedIds: Set<string>;
-  lastCredWriteAt: number;
 }
 
 export class ILinkConnectionDO implements DurableObject {
@@ -48,10 +47,9 @@ export class ILinkConnectionDO implements DurableObject {
     credentialsLoadedAt: 0,
     config: null,
     configLoadedAt: 0,
-    contextCache: new Map(),
     processedIds: new Set(),
-    lastCredWriteAt: 0,
   };
+  private sqliteInitialized = false;
 
   constructor(state: DurableObjectState, env: any) {
     this.state = state;
@@ -70,10 +68,56 @@ export class ILinkConnectionDO implements DurableObject {
     };
   }
 
+  // ========== SQLite 初始化 ==========
+
+  private async initSQLite(): Promise<void> {
+    if (this.sqliteInitialized) return;
+
+    const sql = this.state.storage.sql;
+
+    // credentials 表：存储微信登录凭证
+    await sql.exec(`
+      CREATE TABLE IF NOT EXISTS credentials (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        bot_token TEXT NOT NULL,
+        account_id TEXT NOT NULL,
+        base_url TEXT NOT NULL DEFAULT 'https://ilinkai.weixin.qq.com',
+        user_id TEXT NOT NULL,
+        sync_buf TEXT DEFAULT '',
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )
+    `);
+
+    // contexts 表：存储用户对话上下文（替代 KV clawbot:context:${userId}）
+    await sql.exec(`
+      CREATE TABLE IF NOT EXISTS contexts (
+        user_id TEXT PRIMARY KEY,
+        messages TEXT NOT NULL DEFAULT '[]',
+        last_updated INTEGER NOT NULL
+      )
+    `);
+
+    // config 表：存储运行时配置（替代 KV clawbot:config）
+    await sql.exec(`
+      CREATE TABLE IF NOT EXISTS do_config (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+      )
+    `);
+
+    this.sqliteInitialized = true;
+    Logger.info("[DO] SQLite tables initialized");
+  }
+
   // ========== HTTP 处理（长轮询入口）==========
 
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
+
+    // 初始化 SQLite
+    await this.initSQLite();
 
     // 初始化凭证
     await this.initCredentials();
@@ -133,8 +177,8 @@ export class ILinkConnectionDO implements DurableObject {
         });
       }
 
-      // 等待 1 秒后重试
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+      // 等待一小段时间再检查
+      await new Promise((resolve) => setTimeout(resolve, 100));
     }
 
     // 超时，返回空
@@ -238,10 +282,10 @@ export class ILinkConnectionDO implements DurableObject {
       try {
         const result = await getUpdates(this.ilinkCreds, this.state.syncBuf);
 
-        // 更新 syncBuf（惰性写，避免每轮都写 KV）
+        // 更新 syncBuf（写 DO SQLite，不再写 KV）
         if (result.get_updates_buf && result.get_updates_buf !== this.state.syncBuf) {
           this.state.syncBuf = result.get_updates_buf;
-          await this.saveCredentials(false);
+          await this.saveCredentials();
         }
 
         // 重置错误计数
@@ -254,11 +298,10 @@ export class ILinkConnectionDO implements DurableObject {
           await this.processMessages(result.msgs);
         }
 
-        // saveState 写 DO storage（不是 KV），轻量，保留
+        // saveState 写 DO storage，轻量，保留
         await this.saveState();
 
-        // 长轮询正常间隔（降低 KV 使用率：30 秒一次而非 1 秒）
-        // getUpdates 自身会阻塞到有消息或超时，这里再加 30 秒避免过于频繁
+        // 长轮询正常间隔（30 秒）
         await new Promise((resolve) => setTimeout(resolve, 30000));
 
       } catch (e: any) {
@@ -270,7 +313,7 @@ export class ILinkConnectionDO implements DurableObject {
         if (this.state.consecutiveErrors > 10) {
           Logger.error("[DO] Too many consecutive errors, stopping poll loop");
           this.pollLoopRunning = false;
-          // 等待 5 分钟后重试（减少失败时的重试开销）
+          // 等待 5 分钟后重试
           await new Promise((resolve) => setTimeout(resolve, 300000));
           this.pollLoopRunning = true;
         } else {
@@ -290,13 +333,42 @@ export class ILinkConnectionDO implements DurableObject {
     if (this.cache.config && now - this.cache.configLoadedAt < 10 * 60 * 1000) {
       return this.cache.config;
     }
-    const configRaw = await this.kv?.get("clawbot:config");
-    let kvConfig: any = {};
-    try { if (configRaw) kvConfig = JSON.parse(configRaw); } catch {}
-    const cfg = {
-      aiSystemPrompt: this.env.AI_SYSTEM_PROMPT || kvConfig.aiSystemPrompt || "",
-      aiModel: this.env.AI_MODEL || kvConfig.aiModel || "",
-    };
+
+    // 优先从 DO SQLite 读配置
+    let aiSystemPrompt = this.env.AI_SYSTEM_PROMPT || "";
+    let aiModel = this.env.AI_MODEL || "";
+
+    if (!aiSystemPrompt || !aiModel) {
+      try {
+        const result = await this.state.storage.sql.exec(
+          `SELECT value FROM do_config WHERE key = 'ai_system_prompt'`
+        );
+        const row = result.next().value;
+        if (row) aiSystemPrompt = row.value as string;
+      } catch { /* ignore */ }
+
+      try {
+        const result = await this.state.storage.sql.exec(
+          `SELECT value FROM do_config WHERE key = 'ai_model'`
+        );
+        const row = result.next().value;
+        if (row) aiModel = row.value as string;
+      } catch { /* ignore */ }
+    }
+
+    // 兜底：从 KV 读（兼容旧数据）
+    if (!aiSystemPrompt || !aiModel) {
+      const configRaw = await this.kv?.get("clawbot:config");
+      try {
+        if (configRaw) {
+          const kvConfig = JSON.parse(configRaw);
+          aiSystemPrompt = aiSystemPrompt || kvConfig.aiSystemPrompt || "";
+          aiModel = aiModel || kvConfig.aiModel || "";
+        }
+      } catch { /* ignore */ }
+    }
+
+    const cfg = { aiSystemPrompt, aiModel };
     this.cache.config = cfg;
     this.cache.configLoadedAt = now;
     return cfg;
@@ -323,7 +395,7 @@ export class ILinkConnectionDO implements DurableObject {
 
       const messageId = this.generateMessageId(msg);
 
-      // 内存 Set 去重，不读 KV（省下 N 次 KV 读）
+      // 内存 Set 去重
       if (this.cache.processedIds.has(messageId)) continue;
 
       const createdAt = msg.create_time_ms
@@ -334,9 +406,9 @@ export class ILinkConnectionDO implements DurableObject {
       let replyAt = "";
 
       try {
-        // 调用 AI 生成回复（callAIWithContext 内部会读/写 context 到 KV —— 我们无法直接改）
+        // 调用 AI 生成回复（使用 DO SQLite 存储上下文，不再走 KV）
         const reply = await callAIWithContext(
-          this.kv!,
+          this.state.storage.sql,
           this.env.AI,
           from,
           text,
@@ -398,18 +470,18 @@ export class ILinkConnectionDO implements DurableObject {
       });
     }
 
-    // 批量更新一次统计（不是每条消息都写）
+    // 批量更新一次统计
     if (msgs.length > 0 || processedCount > 0) {
       await this.updateStats(msgs.length, processedCount, aiSuccessCount, aiFailCount);
     }
   }
 
-  // ========== 凭证管理 ==========
+  // ========== 凭证管理（DO SQLite 版）==========
 
   private async initCredentials(): Promise<void> {
     const now = Date.now();
 
-    // 1) credentials：5 分钟内复用内存值，避免每轮都读 KV
+    // 1) 内存缓存：5 分钟内复用
     if (this.cache.credentials && now - this.cache.credentialsLoadedAt < 5 * 60 * 1000) {
       if (!this.ilinkCreds) {
         this.ilinkCreds = {
@@ -420,37 +492,72 @@ export class ILinkConnectionDO implements DurableObject {
         };
         this.state.syncBuf = this.cache.credentials.syncBuf || "";
       }
-    } else {
-      const credsRaw = await this.kv?.get("clawbot:credentials");
-      if (!credsRaw) {
-        this.ilinkCreds = null;
-        this.cache.credentials = null;
+      return;
+    }
+
+    // 2) 从 DO SQLite 读取凭证
+    try {
+      const result = await this.state.storage.sql.exec(
+        `SELECT bot_token, account_id, base_url, user_id, sync_buf FROM credentials WHERE id = 1`
+      );
+      const row = result.next().value;
+
+      if (row) {
+        this.cache.credentials = {
+          botToken: row.bot_token as string,
+          accountId: row.account_id as string,
+          baseUrl: (row.base_url as string) || "https://ilinkai.weixin.qq.com",
+          userId: row.user_id as string,
+          syncBuf: (row.sync_buf as string) || "",
+        };
         this.cache.credentialsLoadedAt = now;
-      } else {
-        try {
-          const creds = JSON.parse(credsRaw);
-          this.cache.credentials = {
-            botToken: creds.botToken,
-            accountId: creds.accountId,
-            baseUrl: creds.baseUrl || "https://ilinkai.weixin.qq.com",
-            userId: creds.userId,
-            syncBuf: creds.syncBuf || "",
-          };
-          this.cache.credentialsLoadedAt = now;
-          this.ilinkCreds = {
-            botToken: creds.botToken,
-            accountId: creds.accountId,
-            baseUrl: creds.baseUrl || "https://ilinkai.weixin.qq.com",
-            userId: creds.userId,
-          };
-          this.state.syncBuf = creds.syncBuf || "";
-        } catch (e) {
-          Logger.error("[DO] Invalid credentials", { error: (e as Error).message });
-          this.ilinkCreds = null;
-          this.cache.credentials = null;
-          this.cache.credentialsLoadedAt = now;
-        }
+        this.ilinkCreds = {
+          botToken: row.bot_token as string,
+          accountId: row.account_id as string,
+          baseUrl: (row.base_url as string) || "https://ilinkai.weixin.qq.com",
+          userId: row.user_id as string,
+        };
+        this.state.syncBuf = (row.sync_buf as string) || "";
+        return;
       }
+    } catch (e) {
+      Logger.warn("[DO] Failed to read credentials from SQLite", { error: (e as Error).message });
+    }
+
+    // 3) 兜底：从 KV 读取（兼容旧数据，扫码登录后会被写入 SQLite）
+    const credsRaw = await this.kv?.get("clawbot:credentials");
+    if (!credsRaw) {
+      this.ilinkCreds = null;
+      this.cache.credentials = null;
+      this.cache.credentialsLoadedAt = now;
+      return;
+    }
+
+    try {
+      const creds = JSON.parse(credsRaw);
+      this.cache.credentials = {
+        botToken: creds.botToken,
+        accountId: creds.accountId,
+        baseUrl: creds.baseUrl || "https://ilinkai.weixin.qq.com",
+        userId: creds.userId,
+        syncBuf: creds.syncBuf || "",
+      };
+      this.cache.credentialsLoadedAt = now;
+      this.ilinkCreds = {
+        botToken: creds.botToken,
+        accountId: creds.accountId,
+        baseUrl: creds.baseUrl || "https://ilinkai.weixin.qq.com",
+        userId: creds.userId,
+      };
+      this.state.syncBuf = creds.syncBuf || "";
+
+      // 同步到 SQLite（下次就从 SQLite 读了）
+      await this.saveCredentialsToSQLite();
+    } catch (e) {
+      Logger.error("[DO] Invalid credentials", { error: (e as Error).message });
+      this.ilinkCreds = null;
+      this.cache.credentials = null;
+      this.cache.credentialsLoadedAt = now;
     }
 
     // 初始化 D1
@@ -465,26 +572,70 @@ export class ILinkConnectionDO implements DurableObject {
     }
   }
 
-  // 只在 syncBuf 真正变化 + 距离上次写满 30 秒时才写 KV
-  private async saveCredentials(force: boolean = false): Promise<void> {
+  // 保存 credentials 到 DO SQLite（替代 KV 写）
+  private async saveCredentials(): Promise<void> {
+    if (!this.ilinkCreds) return;
+
+    const now = Date.now();
+    const syncBufChanged = !this.cache.credentials || this.state.syncBuf !== this.cache.credentials.syncBuf;
+    if (!syncBufChanged) return;
+
+    try {
+      await this.state.storage.sql.exec(
+        `INSERT INTO credentials (id, bot_token, account_id, base_url, user_id, sync_buf, created_at, updated_at)
+         VALUES (1, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           sync_buf = excluded.sync_buf,
+           updated_at = excluded.updated_at`,
+        [
+          this.ilinkCreds.botToken,
+          this.ilinkCreds.accountId,
+          this.ilinkCreds.baseUrl,
+          this.ilinkCreds.userId,
+          this.state.syncBuf,
+          now,
+          now,
+        ]
+      );
+
+      if (this.cache.credentials) {
+        this.cache.credentials.syncBuf = this.state.syncBuf;
+      }
+      Logger.debug("[DO] Credentials saved to SQLite");
+    } catch (e) {
+      Logger.error("[DO] Failed to save credentials to SQLite", { error: (e as Error).message });
+    }
+  }
+
+  // 从 KV 同步到 SQLite（一次性迁移）
+  private async saveCredentialsToSQLite(): Promise<void> {
     if (!this.ilinkCreds || !this.cache.credentials) return;
 
     const now = Date.now();
-    const syncBufChanged = this.state.syncBuf !== this.cache.credentials.syncBuf;
-    if (!syncBufChanged && !force) return;
-    if (!force && now - this.cache.lastCredWriteAt < 30 * 1000) return;
-
-    const credsRaw = await this.kv?.get("clawbot:credentials");
-    if (!credsRaw) return;
-
     try {
-      const creds = JSON.parse(credsRaw);
-      creds.syncBuf = this.state.syncBuf;
-      await this.kv?.put("clawbot:credentials", JSON.stringify(creds));
-      this.cache.credentials.syncBuf = this.state.syncBuf;
-      this.cache.lastCredWriteAt = now;
+      await this.state.storage.sql.exec(
+        `INSERT INTO credentials (id, bot_token, account_id, base_url, user_id, sync_buf, created_at, updated_at)
+         VALUES (1, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           bot_token = excluded.bot_token,
+           account_id = excluded.account_id,
+           base_url = excluded.base_url,
+           user_id = excluded.user_id,
+           sync_buf = excluded.sync_buf,
+           updated_at = excluded.updated_at`,
+        [
+          this.ilinkCreds.botToken,
+          this.ilinkCreds.accountId,
+          this.ilinkCreds.baseUrl,
+          this.ilinkCreds.userId,
+          this.state.syncBuf,
+          now,
+          now,
+        ]
+      );
+      Logger.info("[DO] Credentials migrated from KV to SQLite");
     } catch (e) {
-      Logger.error("[DO] Failed to save credentials", { error: (e as Error).message });
+      Logger.error("[DO] Failed to migrate credentials to SQLite", { error: (e as Error).message });
     }
   }
 
