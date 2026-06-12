@@ -459,11 +459,18 @@ export class ILinkConnectionDO implements DurableObject {
       const ctxToken = msg.context_token;
       if (!from || !ctxToken) continue;
 
+      const createdAt = msg.create_time_ms
+        ? new Date(msg.create_time_ms).toISOString()
+        : new Date().toISOString();
+
       // 先生成稳定 messageId，再做多层去重
       const messageId = this.generateMessageId(msg, text);
 
       // 第一层：DO 本地 SQLite 去重
       if (await this.hasProcessedMessage(messageId)) {
+        if (this.d1) {
+          await this.persistMessageToD1(msg, messageId, text, createdAt);
+        }
         Logger.info("[DO] Message already processed (local dedup)", { messageId });
         continue;
       }
@@ -477,10 +484,6 @@ export class ILinkConnectionDO implements DurableObject {
           continue;
         }
       }
-
-      const createdAt = msg.create_time_ms
-        ? new Date(msg.create_time_ms).toISOString()
-        : new Date().toISOString();
 
       let replyContent = "";
       let replyAt = "";
@@ -514,19 +517,7 @@ export class ILinkConnectionDO implements DurableObject {
       // 存储到 D1
       if (this.d1) {
         try {
-          await this.d1.insertMessage({
-            message_id: messageId,
-            from_user_id: from,
-            to_user_id: msg.to_user_id,
-            content: text,
-            message_type: msg.message_type,
-            context_token: ctxToken,
-            created_at: createdAt,
-            processed: true,
-            reply_content: replyContent,
-            reply_at: replyAt,
-          });
-          await this.d1.upsertSession(from);
+          await this.persistMessageToD1(msg, messageId, text, createdAt, replyContent, replyAt);
         } catch (e: any) {
           Logger.error("[DO] D1 insert failed", { error: e.message });
         }
@@ -548,6 +539,40 @@ export class ILinkConnectionDO implements DurableObject {
     if (msgs.length > 0 || processedCount > 0) {
       await this.updateStats(msgs.length, processedCount, aiSuccessCount, aiFailCount);
     }
+  }
+
+  private async persistMessageToD1(
+    msg: WeixinMessage,
+    messageId: string,
+    text: string,
+    createdAt: string,
+    replyContent: string = "",
+    replyAt: string = "",
+  ): Promise<void> {
+    if (!this.d1 || !msg.from_user_id) return;
+
+    const existingMessage = await this.d1.getMessageById(messageId);
+    if (existingMessage) {
+      const existingSession = await this.d1.getSession(msg.from_user_id);
+      if (!existingSession) {
+        await this.d1.upsertSession(msg.from_user_id, existingMessage.created_at || createdAt);
+      }
+      return;
+    }
+
+    await this.d1.insertMessage({
+      message_id: messageId,
+      from_user_id: msg.from_user_id,
+      to_user_id: msg.to_user_id,
+      content: text,
+      message_type: msg.message_type,
+      context_token: msg.context_token,
+      created_at: createdAt,
+      processed: true,
+      reply_content: replyContent,
+      reply_at: replyAt,
+    });
+    await this.d1.upsertSession(msg.from_user_id, createdAt);
   }
 
   // ========== 凭证管理（DO SQLite 版）==========

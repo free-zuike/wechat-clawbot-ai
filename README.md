@@ -46,8 +46,8 @@ npm run deploy
 
 ```bash
 # 统计数据库（D1）
-npx wrangler d1 create clawbot-stats
-npx wrangler d1 execute clawbot-stats --file=./schema.sql
+npx wrangler d1 create clawbot-db
+npx wrangler d1 execute clawbot-db --file=./schema.sql
 
 # 异步消息队列（Queues）—— 防止 cron 超时
 npx wrangler queues create clawbot-messages
@@ -74,7 +74,7 @@ id = "你的 KV ID"
 
 [[d1_databases]]
 binding = "CLAWBOT_DB"
-database_name = "clawbot-stats"
+database_name = "clawbot-db"
 database_id = "你的 D1 ID"
 
 [[r2_buckets]]

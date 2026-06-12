@@ -231,16 +231,21 @@ export class D1Service {
 
   // ========== 会话操作 ==========
 
-  async upsertSession(userId: string): Promise<void> {
+  async upsertSession(userId: string, lastMessageAt?: string): Promise<void> {
     const now = new Date().toISOString();
+    const messageAt = lastMessageAt || now;
     await this.run(
       `INSERT INTO sessions (user_id, last_message_at, message_count, created_at, updated_at)
        VALUES (?, ?, 1, ?, ?)
        ON CONFLICT(user_id) DO UPDATE SET
-         last_message_at = excluded.last_message_at,
+         last_message_at = CASE
+           WHEN sessions.last_message_at IS NULL OR excluded.last_message_at > sessions.last_message_at
+             THEN excluded.last_message_at
+           ELSE sessions.last_message_at
+         END,
          message_count = sessions.message_count + 1,
          updated_at = excluded.updated_at`,
-      [userId, now, now, now]
+      [userId, messageAt, now, now]
     );
     Logger.debug("[D1] Session updated", { userId });
   }

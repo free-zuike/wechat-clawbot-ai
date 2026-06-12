@@ -171,12 +171,7 @@ export async function handleSessions(request: Request, env: Env): Promise<Respon
         const d1 = new D1Service(env.CLAWBOT_DB);
         await d1.init();
         const rows = await d1.getSessions(limit, offset, search);
-        const total = await d1.getSessionCount();
-        const filteredTotal = search
-          ? rows.length < limit
-            ? offset + rows.length
-            : total
-          : total;
+        const filteredTotal = await d1.countSessions(search);
 
         return json({
           success: true,
@@ -379,6 +374,7 @@ export async function handleStats(request: Request, env: Env): Promise<Response>
     if (env.CLAWBOT_DB) {
       try {
         const d1 = new D1Service(env.CLAWBOT_DB);
+        await d1.init();
         const stats = await d1.getTotalStats();
         polls = stats.polls;
         handled = stats.handled;
@@ -466,6 +462,7 @@ export async function handleHealth(request: Request, env: Env): Promise<Response
     if (env.CLAWBOT_DB) {
       try {
         const d1 = new D1Service(env.CLAWBOT_DB);
+        await d1.init();
         const stats = await d1.getTotalStats();
         totalPolls = stats.polls;
         totalHandled = stats.handled;
@@ -479,12 +476,22 @@ export async function handleHealth(request: Request, env: Env): Promise<Response
     // 报警（内存）
     const alertSummary = alertService.getSummary();
 
-    // 登录状态
-    const loginCheck = await env.CLAWBOT_KV.get("clawbot:credentials");
+    // 登录状态优先看 DO SQLite，兼容 KV
+    let loggedIn = false;
+    try {
+      const doId = env.ILINK_CONNECTION.idFromName("main");
+      const doStub = env.ILINK_CONNECTION.get(doId);
+      const doResp = await doStub.fetch(new Request("http://localhost/status"));
+      const doData = await doResp.json() as { hasCredentials?: boolean };
+      loggedIn = !!doData?.hasCredentials;
+    } catch {
+      const loginCheck = await env.CLAWBOT_KV.get("clawbot:credentials");
+      loggedIn = !!loginCheck;
+    }
 
     const healthStatus = {
       kv: kvCheck,
-      loggedIn: !!loginCheck,
+      loggedIn,
       totalPolls,
       totalHandled,
       totalAICalls,

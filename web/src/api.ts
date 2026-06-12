@@ -268,10 +268,15 @@ export interface SessionsResponse {
   success: boolean;
   total: number;
   sessions: SessionRecord[];
+  totalPages?: number;
 }
 
-export async function fetchSessions(limit = 50): Promise<SessionsResponse> {
-  return apiFetch(`/api/admin/sessions?limit=${limit}`, { cancelable: "sessions" });
+export async function fetchSessions(limit = 50, page = 1, search = ""): Promise<SessionsResponse> {
+  const params = new URLSearchParams();
+  params.set("limit", String(limit));
+  params.set("page", String(page));
+  if (search.trim()) params.set("search", search.trim());
+  return apiFetch(`/api/admin/sessions?${params.toString()}`, { cancelable: "sessions" });
 }
 
 export interface HealthStatus {

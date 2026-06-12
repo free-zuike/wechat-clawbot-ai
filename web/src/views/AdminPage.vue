@@ -348,7 +348,7 @@
                 v-model="sessionsSearch"
                 class="input small"
                 placeholder="🔍 搜索用户ID..."
-                @input="handleRefreshSessions"
+                @input="sessionsPage = 1; handleRefreshSessions()"
               />
               <button class="btn secondary small" @click="handleRefreshSessions">🔄 刷新</button>
             </div>
@@ -743,13 +743,16 @@ async function handleResolveAllAlerts() {
 async function handleRefreshSessions() {
   sessionsLoading.value = true;
   try {
-    const data = await fetchSessions();
+    const data = await fetchSessions(50, sessionsPage.value, sessionsSearch.value);
     if (data === null) return;
 
     if (data && data.sessions) {
       sessions.value = data.sessions;
       sessionsTotal.value = data.total || 0;
       sessionsTotalPages.value = data.totalPages || 1;
+      if (sessionsPage.value > sessionsTotalPages.value) {
+        sessionsPage.value = sessionsTotalPages.value || 1;
+      }
     }
   } catch (e: any) {
     if (e instanceof ApiError && e.isCancelled) return;

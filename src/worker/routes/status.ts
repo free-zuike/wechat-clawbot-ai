@@ -1,5 +1,6 @@
 import { json, verifyAdmin } from "../utils";
 import { getUpdates } from "../services/ilink";
+import { D1Service } from "../services/d1";
 import { Logger } from "../utils/error";
 import type { Env } from "../index";
 
@@ -31,31 +32,75 @@ export async function handleStatus(request: Request, env: Env): Promise<Response
   if (!v.ok) return json({ error: v.error }, 401);
 
   const credsRaw = await env.CLAWBOT_KV.get("clawbot:credentials");
-  if (!credsRaw) return json({ status: "not_logged_in" });
+  let doStatus: any = null;
+  try {
+    const doId = env.ILINK_CONNECTION.idFromName("main");
+    const doStub = env.ILINK_CONNECTION.get(doId);
+    const doResp = await doStub.fetch(new Request("http://localhost/status"));
+    doStatus = await doResp.json();
+  } catch (e) {
+    Logger.warn("[status] Failed to query DO status", { error: (e as Error).message });
+  }
 
-  let creds: any;
-  try { creds = JSON.parse(credsRaw); } catch { return json({ status: "error", message: "凭证格式错误" }); }
+  if (!credsRaw && !doStatus?.hasCredentials) {
+    return json({
+      loggedIn: false,
+      status: "not_logged_in",
+      stats: {
+        polls: 0,
+        handled: 0,
+        aiCalls: 0,
+        aiFails: 0,
+        lastPollAt: doStatus?.lastPollAt || "",
+        lastLatencyMs: 0,
+      },
+    });
+  }
 
-  const loginAgeMs = creds.createdAt ? Date.now() - creds.createdAt : null;
+  let creds: any = null;
+  if (credsRaw) {
+    try {
+      creds = JSON.parse(credsRaw);
+    } catch {
+      return json({ status: "error", message: "凭证格式错误" });
+    }
+  }
+
+  const loginAgeMs = creds?.createdAt ? Date.now() - creds.createdAt : null;
   
-  // 从 KV 读取持久化的统计数据
+  // 统计以 D1 + DO 为准，不再读旧 KV stats
   let stats: Stats = { polls: 0, handled: 0, aiCalls: 0, aiFails: 0, lastPollAt: "", lastLatencyMs: 0 };
   try {
-    const statsRaw = await env.CLAWBOT_KV.get("clawbot:stats");
-    if (statsRaw) stats = JSON.parse(statsRaw);
+    if (env.CLAWBOT_DB) {
+      const d1 = new D1Service(env.CLAWBOT_DB);
+      await d1.init();
+      const totalStats = await d1.getTotalStats();
+      stats = {
+        polls: totalStats.polls,
+        handled: totalStats.handled,
+        aiCalls: totalStats.aiCalls,
+        aiFails: totalStats.aiFails,
+        lastPollAt: doStatus?.lastPollAt || "",
+        lastLatencyMs: 0,
+      };
+    } else if (doStatus?.lastPollAt) {
+      stats.lastPollAt = doStatus.lastPollAt;
+    }
   } catch (e) {
-    Logger.warn("[status] Error loading stats", { error: (e as Error).message });
+    Logger.warn("[status] Error loading D1 stats", { error: (e as Error).message });
   }
   
   const result: any = {
-    loggedIn: true,
+    loggedIn: !!(credsRaw || doStatus?.hasCredentials),
     status: "logged_in",
-    accountId: creds.accountId,
-    baseUrl: creds.baseUrl,
-    userId: creds.userId,
+    accountId: creds?.accountId,
+    baseUrl: creds?.baseUrl,
+    userId: creds?.userId,
     loginAgeMs,
     loginAgeText: loginAgeMs ? formatAge(loginAgeMs) : null,
-    hasSyncBuf: !!creds.syncBuf,
+    hasSyncBuf: !!(creds?.syncBuf || doStatus?.syncBuf),
+    doRunning: !!doStatus?.isRunning,
+    consecutiveErrors: doStatus?.consecutiveErrors || 0,
     stats: {
       polls: stats.polls,
       handled: stats.handled,
@@ -69,7 +114,7 @@ export async function handleStatus(request: Request, env: Env): Promise<Response
   // 可选：检查 token 健康状态
   const url = new URL(request.url);
   const shouldCheck = url.searchParams.get("check") === "1" || url.searchParams.get("checkToken") === "true";
-  if (shouldCheck && creds.botToken) {
+  if (shouldCheck && creds?.botToken) {
     Logger.info("[status] Checking token health");
     try {
       const ilinkCreds = {
