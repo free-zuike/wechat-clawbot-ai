@@ -2,6 +2,7 @@
 
 import type { Env } from "../index";
 import { handleQRCode, handleQRCodeStatus } from "../routes/qrcode";
+import { handleCheckLogin } from "../routes/checklogin";
 import { handleStatus } from "../routes/status";
 import { handleChat } from "../routes/chat";
 import { handleTriggerPoll } from "../routes/trigger";
@@ -70,6 +71,7 @@ export class Router {
 
   private registerRoutes(): void {
     this.routes = [
+      { path: "/api/check-login", method: "GET", handler: handleCheckLogin, rateLimit: true, rateLimitMax: 60, rateLimitWindowMs: 60000 },
       { path: "/api/qrcode", method: "GET", handler: handleQRCode, rateLimit: true, rateLimitMax: 5, rateLimitWindowMs: 60000 },
       { path: "/api/qrcode-status", method: "GET", handler: handleQRCodeStatus, rateLimit: true, rateLimitMax: 20, rateLimitWindowMs: 60000 },
       { path: "/api/status", handler: handleStatus, requireAuth: true, rateLimit: true, rateLimitMax: 30, rateLimitWindowMs: 60000 },
