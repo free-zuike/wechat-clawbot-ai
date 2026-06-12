@@ -22,6 +22,9 @@ export async function handleQRCodeStatus(request: Request, env: Env): Promise<Re
     const key = (await env.CLAWBOT_KV.get("clawbot:qrcode_key")) || url.searchParams.get("qrcode") || "";
     if (!key) return json({ status: "unknown" });
     const status = await getQRCodeStatus(key);
+    
+    // 调试日志
+    console.log("[qrcode-status] key:", key, "status:", JSON.stringify(status));
 
     if (status.status === "confirmed" && status.bot_token && status.ilink_bot_id) {
       const baseUrl = status.baseurl || "https://ilinkai.weixin.qq.com";
