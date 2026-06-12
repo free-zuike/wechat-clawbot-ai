@@ -5,13 +5,7 @@
 //    - web/          Vue 前端源码（通过 vite build 构建到 dist/）
 // ======================================================================
 
-import { handleQRCode, handleQRCodeStatus } from "./routes/qrcode";
-import { handleStatus } from "./routes/status";
-import { handleChat } from "./routes/chat";
-import { handleTriggerPoll } from "./routes/trigger";
-import { handleLogout } from "./routes/logout";
-import { handleConfig } from "./routes/config";
-import { handleDebugLogin } from "./routes/debug";
+import { router, metrics, errorTracker } from "./utils";
 
 export interface Env {
   AI: any;
@@ -24,60 +18,17 @@ export interface Env {
   AI_MODEL?: string;
 }
 
-// 简单路由匹配
-function matchRoute(path: string, pattern: string): boolean {
-  if (pattern === "/") return path === "/" || path === "/index.html";
-  return path === pattern || path === pattern + "/";
-}
-
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
-    const url = new URL(request.url);
-    const path = url.pathname;
-    const method = request.method;
-
-    // API 路由
-    if (path.startsWith("/api/")) {
-      // 登录检查（用于 check-login 接口）
-      const creds = await env.CLAWBOT_KV.get("clawbot:credentials");
-      const isLoggedIn = !!creds;
-
-      if (path === "/api/qrcode" && method === "GET") return handleQRCode(request, env);
-      if (path === "/api/qrcode-status" && method === "GET") return handleQRCodeStatus(request, env);
-      if (path === "/api/status") return handleStatus(request, env);
-      if (path === "/api/chat" && method === "POST") return handleChat(request, env);
-      if (path === "/api/trigger-poll" && method === "POST") return handleTriggerPoll(request, env);
-      if (path === "/api/logout" && method === "POST") return handleLogout(request, env);
-      if (path === "/api/config") return handleConfig(request, env);
-      if (path === "/api/check-login" && method === "GET") return json({ loggedIn: isLoggedIn });
-      if (path === "/api/debug-login" && method === "GET") return handleDebugLogin(request, env);
-      return json({ error: "Not Found" }, 404);
+    // 初始化（延迟初始化）
+    if (!metrics.getCounters()['init']) {
+      metrics.init(env.CLAWBOT_KV);
+      errorTracker.init(env.CLAWBOT_KV);
+      router.init(env);
+      metrics.incr('init');
     }
 
-    // 健康检查
-    if (path === "/healthz") {
-      return json({ ok: true, time: new Date().toISOString() });
-    }
-
-    // 静态资源 - 使用 Workers Assets
-    // SPA 路由（如 /login）不存在文件，ASSETS 会返回 404，需要回退到 index.html
-    if (env.ASSETS) {
-      const res = await env.ASSETS.fetch(request);
-      if (res.status === 404) {
-        return env.ASSETS.fetch(new Request(new URL("/index.html", request.url)));
-      }
-      return res;
-    }
-
-    // 如果没有 ASSETS 绑定，尝试自己获取
-    try {
-      const staticRes = await fetch(request.url, { cf: { cacheEverything: false } as any });
-      if (staticRes.ok) {
-        return staticRes;
-      }
-    } catch {}
-
-    return html(NOT_LOGGED_HTML);
+    return router.route(request, env);
   },
 
   async scheduled(_event: ScheduledEvent, env: Env): Promise<void> {
@@ -88,44 +39,7 @@ export default {
       console.log("[cron] result:", JSON.stringify(result));
     } catch (e: any) {
       console.error("[cron] error:", e);
+      errorTracker.trackError('CRON_ERROR', e.message, 'scheduled');
     }
   },
 };
-
-function json(data: any, status = 200): Response {
-  return new Response(JSON.stringify(data, null, 2), {
-    status,
-    headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" },
-  });
-}
-
-function html(body: string): Response {
-  return new Response(body, {
-    status: 200,
-    headers: { "Content-Type": "text/html; charset=utf-8" },
-  });
-}
-
-// 未登录提示页
-const NOT_LOGGED_HTML = `<!doctype html>
-<html lang="zh-CN">
-<head>
-<meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>请登录 · ClawBot AI</title>
-<style>
-body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"PingFang SC",Arial,sans-serif;background:linear-gradient(135deg,#fff0f5,#f0f7ff);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
-.card{background:#fff;border-radius:22px;padding:40px 32px;box-shadow:0 8px 28px rgba(0,0,0,.08);text-align:center;max-width:420px;width:100%}
-h1{color:#ff4d8d;margin:0 0 12px;font-size:26px}
-.desc{color:#666;font-size:14px;line-height:1.7;margin-bottom:24px}
-.btn{background:linear-gradient(135deg,#ff6b9d,#ff8c5a);color:#fff;border:0;padding:14px 32px;border-radius:999px;font-size:15px;font-weight:600;cursor:pointer;text-decoration:none;display:inline-block}
-</style>
-</head>
-<body>
-<div class="card">
-  <h1>🦞 ClawBot AI</h1>
-  <p class="desc">您还未登录微信账号<br/>请点击下方按钮进行扫码登录</p>
-  <a href="/login" class="btn">去登录</a>
-</div>
-</body>
-</html>`;
