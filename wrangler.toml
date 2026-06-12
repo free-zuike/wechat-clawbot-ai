@@ -41,6 +41,17 @@ binding = "CLAWBOT_DB"
 database_name = "clawbot-db"
 database_id = "f430014e-6323-4318-b7b3-ea6f83f17541"
 
+# ===== Durable Objects =====
+# iLink 长轮询连接管理，实现实时消息接收
+[[durable_objects.bindings]]
+name = "ILINK_CONNECTION"
+class_name = "ILinkConnectionDO"
+
+# Durable Objects 迁移配置
+[[migrations]]
+tag = "v1"
+new_classes = [ "ILinkConnectionDO" ]
+
 # ===== 开启日志 =====
 [observability.logs]
 enabled = true

@@ -24,6 +24,12 @@ import {
   handleD1Stats,
   handleD1Summary,
 } from "../routes/d1";
+import {
+  handleDOPoll,
+  handleDOSend,
+  handleDOStatus,
+  handleDOFlush,
+} from "../routes/do";
 import { json, html } from "../utils";
 import { metrics, runHealthChecks, errorTracker } from "../utils/metrics";
 import { createIPRateLimiter } from "../utils/security";
@@ -99,6 +105,11 @@ export class Router {
       { path: "/api/admin/d1/sessions", method: "GET", handler: handleD1Sessions, requireAuth: true, rateLimit: true, rateLimitMax: 30, rateLimitWindowMs: 60000 },
       { path: "/api/admin/d1/stats", method: "GET", handler: handleD1Stats, requireAuth: true, rateLimit: true, rateLimitMax: 30, rateLimitWindowMs: 60000 },
       { path: "/api/admin/d1/summary", method: "GET", handler: handleD1Summary, requireAuth: true, rateLimit: true, rateLimitMax: 60, rateLimitWindowMs: 60000 },
+      // Durable Objects 实时消息路由
+      { path: "/api/do/poll", method: "GET", handler: handleDOPoll, requireAuth: true, rateLimit: true, rateLimitMax: 60, rateLimitWindowMs: 60000 },
+      { path: "/api/do/send", method: "POST", handler: handleDOSend, requireAuth: true, rateLimit: true, rateLimitMax: 30, rateLimitWindowMs: 60000 },
+      { path: "/api/do/status", method: "GET", handler: handleDOStatus, requireAuth: true, rateLimit: true, rateLimitMax: 60, rateLimitWindowMs: 60000 },
+      { path: "/api/do/flush", method: "POST", handler: handleDOFlush, requireAuth: true, rateLimit: true, rateLimitMax: 10, rateLimitWindowMs: 60000 },
     ];
   }
 

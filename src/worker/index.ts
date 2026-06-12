@@ -8,6 +8,10 @@
 import { router } from "./utils/router";
 import { metrics } from "./utils/metrics";
 import { errorTracker } from "./utils/metrics";
+import { ILinkConnectionDO } from "./services/ilink-do";
+
+// 导出 Durable Objects 类
+export { ILinkConnectionDO };
 
 export interface Env {
   AI: any;
@@ -18,6 +22,7 @@ export interface Env {
   ADMIN_PASSWORD?: string;
   AI_SYSTEM_PROMPT?: string;
   AI_MODEL?: string;
+  ILINK_CONNECTION: DurableObjectNamespace<ILinkConnectionDO>;
 }
 
 export default {
@@ -36,9 +41,16 @@ export default {
   async scheduled(_event: ScheduledEvent, env: Env): Promise<void> {
     console.log("[cron] scheduled event triggered at", new Date().toISOString());
     try {
-      const { processIncomingMessages } = await import("./services/messaging");
-      const result = await processIncomingMessages(env);
-      console.log("[cron] result:", JSON.stringify(result));
+      // 通过 Durable Object 实现实时消息接收
+      // 使用固定 ID "main" 确保只有一个 DO 实例处理 iLink 连接
+      const doId = env.ILINK_CONNECTION.idFromName("main");
+      const doStub = env.ILINK_CONNECTION.get(doId);
+
+      // 调用 DO 的状态接口，触发轮询循环启动（如果尚未启动）
+      const response = await doStub.fetch(new Request("http://localhost/status"));
+      const status = await response.json();
+      console.log("[cron] DO status:", JSON.stringify(status));
+
     } catch (e: any) {
       console.error("[cron] error:", e);
       errorTracker.trackError('CRON_ERROR', e.message, 'scheduled');
