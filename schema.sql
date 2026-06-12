@@ -1,31 +1,56 @@
 -- ============================================================
---  爪爪 ClawBot AI — D1 统计数据库 schema
+--  爪爪 ClawBot AI — D1 数据库 schema
 --  ------------------------------------------------------------
---  初始化:
---    wrangler d1 create clawbot-stats
---    wrangler d1 execute clawbot-stats --file=./schema.sql
+--  说明:
+--    此文件定义的表结构与 src/worker/services/d1.ts 保持一致。
+--    运行时 D1Service.init() 也会执行相同的 CREATE TABLE IF NOT EXISTS，
+--    但为避免首次使用时查询接口报"表不存在"，部署后建议手动执行一次：
+--      wrangler d1 execute clawbot-db --remote --file=./schema.sql
 -- ============================================================
 
--- 每小时一条聚合统计（不做更细粒度, 省 D1 写入额度）
-CREATE TABLE IF NOT EXISTS stats_hourly (
-    hour_unix INTEGER NOT NULL PRIMARY KEY,       -- 小时整点时间戳 (UTC)
-    polls INTEGER NOT NULL DEFAULT 0,
-    handled INTEGER NOT NULL DEFAULT 0,
-    shortcuts INTEGER NOT NULL DEFAULT 0,
-    ai_calls INTEGER NOT NULL DEFAULT 0,
-    ai_fails INTEGER NOT NULL DEFAULT 0,
-    max_consecutive_fails INTEGER NOT NULL DEFAULT 0,
-    created_at INTEGER NOT NULL
+-- 消息表（收到的微信消息 + AI 回复内容）
+CREATE TABLE IF NOT EXISTS messages (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  message_id TEXT NOT NULL,
+  from_user_id TEXT NOT NULL,
+  to_user_id TEXT,
+  content TEXT NOT NULL,
+  message_type INTEGER DEFAULT 1,
+  context_token TEXT,
+  created_at TEXT NOT NULL,
+  processed BOOLEAN DEFAULT FALSE,
+  reply_content TEXT,
+  reply_at TEXT,
+  UNIQUE(message_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_stats_hourly_time ON stats_hourly (hour_unix DESC);
+CREATE INDEX IF NOT EXISTS idx_messages_from_user_id ON messages(from_user_id);
+CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_messages_processed ON messages(processed);
 
--- 最近错误（最多保留 200 条, 超出自动删最早的）
-CREATE TABLE IF NOT EXISTS errors (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    ts INTEGER NOT NULL,
-    kind TEXT NOT NULL,          -- 'ai' / 'ilink' / 'network'
-    message TEXT NOT NULL
+-- 会话表（按用户聚合，记录每个用户最后一次消息时间与消息数）
+CREATE TABLE IF NOT EXISTS sessions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id TEXT NOT NULL UNIQUE,
+  last_message_at TEXT,
+  message_count INTEGER DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_errors_ts ON errors (ts DESC);
+CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
+
+-- 统计表（按日聚合的轮询/处理/AI 调用统计）
+CREATE TABLE IF NOT EXISTS stats (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  date TEXT NOT NULL UNIQUE,
+  polls INTEGER DEFAULT 0,
+  handled INTEGER DEFAULT 0,
+  ai_calls INTEGER DEFAULT 0,
+  ai_fails INTEGER DEFAULT 0,
+  total_latency_ms INTEGER DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_stats_date ON stats(date);
