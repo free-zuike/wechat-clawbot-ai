@@ -25,6 +25,21 @@ export interface ProcessedMessage {
   processed: boolean;
 }
 
+// 内存缓存（避免每轮都读 KV，降低免费额度消耗）
+interface RuntimeCache {
+  credentials: { botToken: string; accountId: string; baseUrl: string; userId: string; syncBuf: string } | null;
+  credentialsLoadedAt: number;
+  config: { aiSystemPrompt: string; aiModel: string } | null;
+  configLoadedAt: number;
+  stats: { polls: number; handled: number; aiCalls: number; aiFails: number; lastPollAt: string };
+  statsLoadedAt: number;
+  statsDirty: boolean;
+  lastStatsWriteAt: number;
+  contextCache: Map<string, { data: any; lastRead: number }>;
+  processedIds: Set<string>;
+  lastCredWriteAt: number;
+}
+
 export class ILinkConnectionDO implements DurableObject {
   private state: ILINKSessionState;
   private env: any;
@@ -32,6 +47,19 @@ export class ILinkConnectionDO implements DurableObject {
   private d1: D1Service | null = null;
   private pollLoopRunning = false;
   private kv: KVNamespace | null = null;
+  private cache: RuntimeCache = {
+    credentials: null,
+    credentialsLoadedAt: 0,
+    config: null,
+    configLoadedAt: 0,
+    stats: { polls: 0, handled: 0, aiCalls: 0, aiFails: 0, lastPollAt: "" },
+    statsLoadedAt: 0,
+    statsDirty: false,
+    lastStatsWriteAt: 0,
+    contextCache: new Map(),
+    processedIds: new Set(),
+    lastCredWriteAt: 0,
+  };
 
   constructor(state: DurableObjectState, env: any) {
     this.state = state;
@@ -218,10 +246,10 @@ export class ILinkConnectionDO implements DurableObject {
       try {
         const result = await getUpdates(this.ilinkCreds, this.state.syncBuf);
 
-        // 更新 syncBuf
+        // 更新 syncBuf（惰性写，避免每轮都写 KV）
         if (result.get_updates_buf && result.get_updates_buf !== this.state.syncBuf) {
           this.state.syncBuf = result.get_updates_buf;
-          await this.saveCredentials();
+          await this.saveCredentials(false);
         }
 
         // 重置错误计数
@@ -232,13 +260,19 @@ export class ILinkConnectionDO implements DurableObject {
         if (result.msgs && result.msgs.length > 0) {
           Logger.info("[DO] Received messages", { count: result.msgs.length });
           await this.processMessages(result.msgs);
+        } else {
+          // 没消息也要更新内存中的 polls 计数，但不立刻写 KV
+          this.cache.stats.polls++;
+          this.cache.stats.lastPollAt = this.state.lastPollAt;
+          this.cache.statsDirty = true;
         }
 
-        // 保存状态
+        // saveState 写 DO storage（不是 KV），轻量，保留
         await this.saveState();
 
-        // 正常间隔后继续（长轮询会自动等待消息）
-        await new Promise((resolve) => setTimeout(resolve, 1000));
+        // 长轮询正常间隔（降低 KV 使用率：30 秒一次而非 1 秒）
+        // getUpdates 自身会阻塞到有消息或超时，这里再加 30 秒避免过于频繁
+        await new Promise((resolve) => setTimeout(resolve, 30000));
 
       } catch (e: any) {
         Logger.error("[DO] Poll error", { error: e.message });
@@ -249,12 +283,12 @@ export class ILinkConnectionDO implements DurableObject {
         if (this.state.consecutiveErrors > 10) {
           Logger.error("[DO] Too many consecutive errors, stopping poll loop");
           this.pollLoopRunning = false;
-          // 等待 30 秒后重试
-          await new Promise((resolve) => setTimeout(resolve, 30000));
+          // 等待 5 分钟后重试（减少失败时的重试开销）
+          await new Promise((resolve) => setTimeout(resolve, 300000));
           this.pollLoopRunning = true;
         } else {
-          // 等待 5 秒后重试
-          await new Promise((resolve) => setTimeout(resolve, 5000));
+          // 等待 30 秒后重试
+          await new Promise((resolve) => setTimeout(resolve, 30000));
         }
       }
     }
@@ -264,12 +298,29 @@ export class ILinkConnectionDO implements DurableObject {
 
   // ========== 处理消息 ==========
 
-  private async processMessages(msgs: WeixinMessage[]): Promise<void> {
+  private async getConfigCached(): Promise<{ aiSystemPrompt: string; aiModel: string }> {
+    const now = Date.now();
+    if (this.cache.config && now - this.cache.configLoadedAt < 10 * 60 * 1000) {
+      return this.cache.config;
+    }
     const configRaw = await this.kv?.get("clawbot:config");
     let kvConfig: any = {};
     try { if (configRaw) kvConfig = JSON.parse(configRaw); } catch {}
-    const systemPrompt = this.env.AI_SYSTEM_PROMPT || kvConfig.aiSystemPrompt || "";
-    const aiModel = this.env.AI_MODEL || kvConfig.aiModel || "";
+    const cfg = {
+      aiSystemPrompt: this.env.AI_SYSTEM_PROMPT || kvConfig.aiSystemPrompt || "",
+      aiModel: this.env.AI_MODEL || kvConfig.aiModel || "",
+    };
+    this.cache.config = cfg;
+    this.cache.configLoadedAt = now;
+    return cfg;
+  }
+
+  private async processMessages(msgs: WeixinMessage[]): Promise<void> {
+    const cfg = await this.getConfigCached();
+    const { aiSystemPrompt: systemPrompt, aiModel } = cfg;
+    let processedCount = 0;
+    let aiSuccessCount = 0;
+    let aiFailCount = 0;
 
     for (const msg of msgs) {
       // 只处理用户消息
@@ -284,6 +335,10 @@ export class ILinkConnectionDO implements DurableObject {
       if (!from || !ctxToken) continue;
 
       const messageId = this.generateMessageId(msg);
+
+      // 内存 Set 去重，不读 KV（省下 N 次 KV 读）
+      if (this.cache.processedIds.has(messageId)) continue;
+
       const createdAt = msg.create_time_ms
         ? new Date(msg.create_time_ms).toISOString()
         : new Date().toISOString();
@@ -292,7 +347,7 @@ export class ILinkConnectionDO implements DurableObject {
       let replyAt = "";
 
       try {
-        // 调用 AI 生成回复
+        // 调用 AI 生成回复（callAIWithContext 内部会读/写 context 到 KV —— 我们无法直接改）
         const reply = await callAIWithContext(
           this.kv!,
           this.env.AI,
@@ -306,11 +361,22 @@ export class ILinkConnectionDO implements DurableObject {
         await sendTextMessage(this.ilinkCreds!, from, ctxToken, reply);
         replyContent = reply;
         replyAt = new Date().toISOString();
+        aiSuccessCount++;
 
         Logger.info("[DO] Message processed", { from, replyLength: reply.length });
       } catch (e: any) {
+        aiFailCount++;
         Logger.error("[DO] AI processing failed", { error: e.message, from });
       }
+
+      this.cache.processedIds.add(messageId);
+      // 防止内存 Set 无限增长（超过 1000 条就剪到最新 500）
+      if (this.cache.processedIds.size > 1000) {
+        const arr = Array.from(this.cache.processedIds).slice(-500);
+        this.cache.processedIds = new Set(arr);
+      }
+
+      processedCount++;
 
       // 存储到 D1
       if (this.d1) {
@@ -343,39 +409,65 @@ export class ILinkConnectionDO implements DurableObject {
         replyAt,
         processed: true,
       });
+    }
 
-      // 更新统计
-      await this.updateStats(msgs.length, 1, replyContent ? 1 : 0, replyContent ? 0 : 1);
+    // 批量更新一次统计（不是每条消息都写）
+    if (msgs.length > 0 || processedCount > 0) {
+      await this.updateStats(msgs.length, processedCount, aiSuccessCount, aiFailCount);
     }
   }
 
   // ========== 凭证管理 ==========
 
   private async initCredentials(): Promise<void> {
-    if (this.ilinkCreds) return;
+    const now = Date.now();
 
-    const credsRaw = await this.kv?.get("clawbot:credentials");
-    if (!credsRaw) {
-      this.ilinkCreds = null;
-      return;
-    }
-
-    try {
-      const creds = JSON.parse(credsRaw);
-      this.ilinkCreds = {
-        botToken: creds.botToken,
-        accountId: creds.accountId,
-        baseUrl: creds.baseUrl || "https://ilinkai.weixin.qq.com",
-        userId: creds.userId,
-      };
-      this.state.syncBuf = creds.syncBuf || "";
-    } catch (e) {
-      Logger.error("[DO] Invalid credentials", { error: (e as Error).message });
-      this.ilinkCreds = null;
+    // 1) credentials：5 分钟内复用内存值，避免每轮都读 KV
+    if (this.cache.credentials && now - this.cache.credentialsLoadedAt < 5 * 60 * 1000) {
+      if (!this.ilinkCreds) {
+        this.ilinkCreds = {
+          botToken: this.cache.credentials.botToken,
+          accountId: this.cache.credentials.accountId,
+          baseUrl: this.cache.credentials.baseUrl,
+          userId: this.cache.credentials.userId,
+        };
+        this.state.syncBuf = this.cache.credentials.syncBuf || "";
+      }
+    } else {
+      const credsRaw = await this.kv?.get("clawbot:credentials");
+      if (!credsRaw) {
+        this.ilinkCreds = null;
+        this.cache.credentials = null;
+        this.cache.credentialsLoadedAt = now;
+      } else {
+        try {
+          const creds = JSON.parse(credsRaw);
+          this.cache.credentials = {
+            botToken: creds.botToken,
+            accountId: creds.accountId,
+            baseUrl: creds.baseUrl || "https://ilinkai.weixin.qq.com",
+            userId: creds.userId,
+            syncBuf: creds.syncBuf || "",
+          };
+          this.cache.credentialsLoadedAt = now;
+          this.ilinkCreds = {
+            botToken: creds.botToken,
+            accountId: creds.accountId,
+            baseUrl: creds.baseUrl || "https://ilinkai.weixin.qq.com",
+            userId: creds.userId,
+          };
+          this.state.syncBuf = creds.syncBuf || "";
+        } catch (e) {
+          Logger.error("[DO] Invalid credentials", { error: (e as Error).message });
+          this.ilinkCreds = null;
+          this.cache.credentials = null;
+          this.cache.credentialsLoadedAt = now;
+        }
+      }
     }
 
     // 初始化 D1
-    if (this.env.CLAWBOT_DB) {
+    if (this.env.CLAWBOT_DB && !this.d1) {
       try {
         this.d1 = new D1Service(this.env.CLAWBOT_DB);
         await this.d1.init();
@@ -386,8 +478,14 @@ export class ILinkConnectionDO implements DurableObject {
     }
   }
 
-  private async saveCredentials(): Promise<void> {
-    if (!this.ilinkCreds) return;
+  // 只在 syncBuf 真正变化 + 距离上次写满 30 秒时才写 KV
+  private async saveCredentials(force: boolean = false): Promise<void> {
+    if (!this.ilinkCreds || !this.cache.credentials) return;
+
+    const now = Date.now();
+    const syncBufChanged = this.state.syncBuf !== this.cache.credentials.syncBuf;
+    if (!syncBufChanged && !force) return;
+    if (!force && now - this.cache.lastCredWriteAt < 30 * 1000) return;
 
     const credsRaw = await this.kv?.get("clawbot:credentials");
     if (!credsRaw) return;
@@ -396,6 +494,8 @@ export class ILinkConnectionDO implements DurableObject {
       const creds = JSON.parse(credsRaw);
       creds.syncBuf = this.state.syncBuf;
       await this.kv?.put("clawbot:credentials", JSON.stringify(creds));
+      this.cache.credentials.syncBuf = this.state.syncBuf;
+      this.cache.lastCredWriteAt = now;
     } catch (e) {
       Logger.error("[DO] Failed to save credentials", { error: (e as Error).message });
     }
@@ -415,22 +515,58 @@ export class ILinkConnectionDO implements DurableObject {
   }
 
   private async updateStats(polls: number, handled: number, aiCalls: number, aiFails: number): Promise<void> {
+    const now = Date.now();
     const today = new Date().toISOString().split("T")[0];
 
-    // 更新 KV 统计
-    const statsRaw = await this.kv?.get("clawbot:stats");
-    const stats = statsRaw ? JSON.parse(statsRaw) : { polls: 0, handled: 0, aiCalls: 0, aiFails: 0, lastPollAt: "", lastLatencyMs: 0 };
-    stats.polls += polls;
-    stats.handled += handled;
-    stats.aiCalls += aiCalls;
-    stats.aiFails += aiFails;
-    stats.lastPollAt = new Date().toISOString();
-    await this.kv?.put("clawbot:stats", JSON.stringify(stats));
+    // 累加内存计数（不每次读+写 KV）
+    this.cache.stats.polls += polls;
+    this.cache.stats.handled += handled;
+    this.cache.stats.aiCalls += aiCalls;
+    this.cache.stats.aiFails += aiFails;
+    this.cache.stats.lastPollAt = new Date().toISOString();
+    this.cache.statsDirty = true;
 
-    // 更新 D1 统计
+    // 至少 5 分钟或 polls 累积 50 次才真正写 KV
+    const shouldWrite =
+      now - this.cache.lastStatsWriteAt > 5 * 60 * 1000 ||
+      this.cache.stats.polls % 50 === 0;
+
+    if (shouldWrite) {
+      try {
+        // 懒加载：如果内存计数从没从 KV 加载过，读一次
+        if (this.cache.statsLoadedAt === 0) {
+          const statsRaw = await this.kv?.get("clawbot:stats");
+          if (statsRaw) {
+            const kvs = JSON.parse(statsRaw);
+            // 合并 KV 值和内存增量，取较大值以保证单调递增
+            this.cache.stats.polls = Math.max(this.cache.stats.polls, kvs.polls || 0);
+            this.cache.stats.handled = Math.max(this.cache.stats.handled, kvs.handled || 0);
+            this.cache.stats.aiCalls = Math.max(this.cache.stats.aiCalls, kvs.aiCalls || 0);
+            this.cache.stats.aiFails = Math.max(this.cache.stats.aiFails, kvs.aiFails || 0);
+          }
+          this.cache.statsLoadedAt = now;
+        }
+
+        await this.kv?.put("clawbot:stats", JSON.stringify(this.cache.stats));
+        this.cache.lastStatsWriteAt = now;
+        this.cache.statsDirty = false;
+      } catch (e) {
+        Logger.error("[DO] Failed to write stats", { error: (e as Error).message });
+      }
+    }
+
+    // D1 统计（轻量但也限制频率：每 5 分钟最多一次）
     if (this.d1) {
       try {
-        await this.d1.incrementStats(today, polls, handled, aiCalls, aiFails, 0);
+        // 用一个简单的时间标记来节流 D1 写入
+        const anyD1ThrottleKey = `_d1_throttle_${today}`;
+        // @ts-ignore
+        const lastD1Write = this.cache[anyD1ThrottleKey] || 0;
+        if (now - lastD1Write > 5 * 60 * 1000) {
+          await this.d1.incrementStats(today, polls, handled, aiCalls, aiFails, 0);
+          // @ts-ignore
+          this.cache[anyD1ThrottleKey] = now;
+        }
       } catch (e) {
         // 忽略 D1 错误
       }

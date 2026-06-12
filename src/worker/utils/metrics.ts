@@ -29,7 +29,8 @@ export class Metrics {
   private lastFlush: number = 0;
   private flushInterval: number = 60000;
 
-  init(kv: KVNamespace, flushInterval: number = 60000): void {
+  // flushInterval 默认 10 分钟（避免每 60 秒写一次 KV 导致额度迅速耗尽）
+  init(kv: KVNamespace, flushInterval: number = 10 * 60 * 1000): void {
     this.kv = kv;
     this.flushInterval = flushInterval;
     this.loadFromKV();

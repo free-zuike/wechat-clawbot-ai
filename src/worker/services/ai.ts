@@ -52,6 +52,7 @@ export function tryQuickReply(text: string): string | null {
 }
 
 // 带上下文的 AI 调用（用于微信消息处理）
+// 优化：合并多次 KV 读/写 → 每轮对话只做 1 次读 + 1 次写
 export async function callAIWithContext(
   kv: KVNamespace,
   aiBinding: any,
@@ -61,54 +62,69 @@ export async function callAIWithContext(
   aiModel: string
 ): Promise<string> {
   const cleanMsg = (userMessage || "").trim();
-  
-  // 检查快捷回复
+
+  // 检查快捷回复（不走 KV）
   const quick = tryQuickReply(cleanMsg);
   if (quick) {
     Logger.info(`[ai] Quick reply for ${userId}`, { message: cleanMsg.slice(0, 30) });
     return quick;
   }
-  
-  // 检查是否需要清空上下文
+
+  // 检查是否需要清空上下文（1 次 KV 写）
   if (shouldClearContext(cleanMsg)) {
     await clearContext(kv, userId);
     return "✅ 已清空对话上下文，我们重新开始吧！";
   }
-  
+
   const model = aiModel || "@cf/meta/llama-3.2-3b-instruct";
   const system = systemPrompt || DEFAULT_SYSTEM_PROMPT;
-  
-  // 获取用户上下文
+
+  // —— 只读一次 KV 获取上下文 ——
   const context = await getContext(kv, userId);
   Logger.debug(`[ai] Context for ${userId}`, { messageCount: context.messages.length });
-  
-  // 构建带上下文的消息数组
+
   const messages = buildMessagesWithContext(system, cleanMsg, context);
-  
+
   Logger.info(`[ai] Calling AI for ${userId}`, { model, contextSize: context.messages.length });
-  
+
+  let reply = "";
   try {
     const response = await aiBinding.run(model, {
       messages,
       max_tokens: 320,
     });
-    
-    const text = typeof response === "string" ? response : response?.response || "";
-    
-    if (text) {
-      // 保存用户消息和 AI 回复到上下文
-      await addMessageToContext(kv, userId, "user", cleanMsg);
-      await addMessageToContext(kv, userId, "assistant", text);
-      Logger.info(`[ai] Reply saved for ${userId}`, { replyLength: text.length });
-    } else {
-      Logger.warn(`[ai] Empty response for ${userId}`);
-    }
-    
-    return (text || "").slice(0, 700) || "（AI 没有返回内容）";
+    reply = typeof response === "string" ? response : response?.response || "";
   } catch (e: any) {
     Logger.error(`[ai] AI call failed for ${userId}`, { error: e?.message || String(e) });
     return "抱歉，我刚刚脑子卡了一下 😅 能换个说法再问一遍吗？";
   }
+
+  // —— 只写一次 KV：同时把 user 和 assistant 消息追加 ——
+  if (reply) {
+    const now = Date.now();
+    context.messages.push({ role: "user", content: cleanMsg.slice(0, 500), timestamp: now });
+    context.messages.push({ role: "assistant", content: reply.slice(0, 500), timestamp: now });
+
+    // 保留最近 10 条（与 context.ts 常量一致）
+    if (context.messages.length > 10) {
+      context.messages = context.messages.slice(-10);
+    }
+    context.lastUpdated = now;
+
+    try {
+      // 24 小时过期
+      await kv.put(`clawbot:context:${userId}`, JSON.stringify(context), {
+        expirationTtl: 24 * 60 * 60,
+      });
+      Logger.info(`[ai] Reply & context saved for ${userId}`, { replyLength: reply.length });
+    } catch (e) {
+      Logger.warn(`[ai] Failed to persist context for ${userId}`, { error: (e as Error).message });
+    }
+  } else {
+    Logger.warn(`[ai] Empty response for ${userId}`);
+  }
+
+  return (reply || "").slice(0, 700) || "（AI 没有返回内容）";
 }
 
 // 无上下文的 AI 调用（用于管理后台测试）
