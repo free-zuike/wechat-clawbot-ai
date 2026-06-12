@@ -8,6 +8,15 @@ import { handleTriggerPoll } from "../routes/trigger";
 import { handleLogout } from "../routes/logout";
 import { handleConfig } from "../routes/config";
 import { handleDebugLogin } from "../routes/debug";
+import {
+  handleRecentMessages,
+  handleSessions,
+  handleAlerts,
+  handleResolveAlert,
+  handleResolveAllAlerts,
+  handleStats,
+  handleHealth,
+} from "../routes/admin";
 import { json, html } from "../utils";
 import { metrics, runHealthChecks, errorTracker } from "../utils/metrics";
 import { createIPRateLimiter } from "../utils/security";
@@ -69,6 +78,14 @@ export class Router {
       { path: "/api/logout", method: "POST", handler: handleLogout, requireAuth: true },
       { path: "/api/config", handler: handleConfig, requireAuth: true, rateLimit: true, rateLimitMax: 10, rateLimitWindowMs: 60000 },
       { path: "/api/debug-login", method: "GET", handler: handleDebugLogin, requireAuth: true },
+      // 管理后台路由
+      { path: "/api/admin/messages", method: "GET", handler: handleRecentMessages, requireAuth: true, rateLimit: true, rateLimitMax: 30, rateLimitWindowMs: 60000 },
+      { path: "/api/admin/sessions", method: "GET", handler: handleSessions, requireAuth: true, rateLimit: true, rateLimitMax: 30, rateLimitWindowMs: 60000 },
+      { path: "/api/admin/alerts", method: "GET", handler: handleAlerts, requireAuth: true, rateLimit: true, rateLimitMax: 30, rateLimitWindowMs: 60000 },
+      { path: "/api/admin/alerts/resolve", method: "POST", handler: handleResolveAlert, requireAuth: true, rateLimit: true, rateLimitMax: 20, rateLimitWindowMs: 60000 },
+      { path: "/api/admin/alerts/resolve-all", method: "POST", handler: handleResolveAllAlerts, requireAuth: true, rateLimit: true, rateLimitMax: 5, rateLimitWindowMs: 60000 },
+      { path: "/api/admin/stats", method: "GET", handler: handleStats, requireAuth: true, rateLimit: true, rateLimitMax: 30, rateLimitWindowMs: 60000 },
+      { path: "/api/admin/health", method: "GET", handler: handleHealth, requireAuth: true, rateLimit: true, rateLimitMax: 60, rateLimitWindowMs: 60000 },
     ];
   }
 
