@@ -47,10 +47,10 @@ database_id = "f430014e-6323-4318-b7b3-ea6f83f17541"
 name = "ILINK_CONNECTION"
 class_name = "ILinkConnectionDO"
 
-# Durable Objects 迁移配置
+# Durable Objects 迁移配置（免费计划必须使用 new_sqlite_classes）
 [[migrations]]
-tag = "v1"
-new_classes = [ "ILinkConnectionDO" ]
+tag = "v2"
+new_sqlite_classes = [ "ILinkConnectionDO" ]
 
 # ===== 开启日志 =====
 [observability.logs]
