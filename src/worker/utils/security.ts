@@ -148,7 +148,7 @@ export async function applyRateLimit(
   env: Env,
   type: keyof typeof DEFAULT_LIMITS = "ip"
 ): Promise<Response | null> {
-  const limiter = rateLimitors[type];
+  const limiter = rateLimiters[type];
   const identifier = getClientIdentifier(request);
   const result = await limiter.check(env, identifier);
 
@@ -176,7 +176,7 @@ export async function getRateLimitInfo(
   env: Env,
   type: keyof typeof DEFAULT_LIMITS = "ip"
 ): Promise<RateLimitResult> {
-  const limiter = rateLimitors[type];
+  const limiter = rateLimiters[type];
   const identifier = getClientIdentifier(request);
   return limiter.check(env, identifier);
 }
