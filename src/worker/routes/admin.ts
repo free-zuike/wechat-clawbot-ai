@@ -49,6 +49,34 @@ export async function handleRecentMessages(request: Request, env: Env): Promise<
     const search = url.searchParams.get("search")?.toLowerCase() || "";
     const offset = (page - 1) * limit;
 
+    // 优先从 D1 读取，和当前 DO 主链路保持一致
+    if (env.CLAWBOT_DB) {
+      try {
+        const d1 = new D1Service(env.CLAWBOT_DB);
+        await d1.init();
+        const rows = await d1.getRecentMessages(limit, offset, search);
+        const total = await d1.countMessages(search);
+
+        return json({
+          success: true,
+          total,
+          page,
+          limit,
+          totalPages: Math.ceil(total / limit) || 1,
+          messages: rows.map((row) => ({
+            from_user_id: row.from_user_id,
+            content_preview: String(row.content || "").slice(0, 200) || "（无文本内容）",
+            timestamp: row.created_at,
+            message_type: row.message_type || 1,
+            context_token: row.context_token || "",
+          })),
+          source: "d1",
+        });
+      } catch (e) {
+        Logger.warn("[Admin] D1 messages query failed, fallback to KV", { error: (e as Error).message });
+      }
+    }
+
     // 从 KV 读取消息记录
     const messages: Array<{
       from_user_id: string;
@@ -136,6 +164,38 @@ export async function handleSessions(request: Request, env: Env): Promise<Respon
     const page = parsePage(url);
     const search = url.searchParams.get("search")?.toLowerCase() || "";
     const offset = (page - 1) * limit;
+
+    // 优先从 D1 sessions 表读取，KV context 已不是当前主存储
+    if (env.CLAWBOT_DB) {
+      try {
+        const d1 = new D1Service(env.CLAWBOT_DB);
+        await d1.init();
+        const rows = await d1.getSessions(limit, offset, search);
+        const total = await d1.getSessionCount();
+        const filteredTotal = search
+          ? rows.length < limit
+            ? offset + rows.length
+            : total
+          : total;
+
+        return json({
+          success: true,
+          total: filteredTotal,
+          page,
+          limit,
+          totalPages: Math.ceil(filteredTotal / limit) || 1,
+          sessions: rows.map((row) => ({
+            from_user_id: row.user_id,
+            message_count: row.message_count || 0,
+            last_message_at: row.last_message_at || row.updated_at,
+            first_message_at: row.created_at,
+          })),
+          source: "d1",
+        });
+      } catch (e) {
+        Logger.warn("[Admin] D1 sessions query failed, fallback to KV", { error: (e as Error).message });
+      }
+    }
 
     const sessions: Array<{
       from_user_id: string;
@@ -332,8 +392,21 @@ export async function handleStats(request: Request, env: Env): Promise<Response>
     // 报警摘要（内存）
     const alertSummary = alertService.getSummary();
 
-    // 会话数（从 KV list，这个是低频操作）
-    const { keys: contextKeys } = await env.CLAWBOT_KV.list({ prefix: "clawbot:context:" });
+    // 优先使用 D1 的真实会话数，KV 仅作兼容兜底
+    let totalSessions = 0;
+    if (env.CLAWBOT_DB) {
+      try {
+        const d1 = new D1Service(env.CLAWBOT_DB);
+        await d1.init();
+        totalSessions = await d1.getSessionCount();
+      } catch (e) {
+        Logger.warn("[Admin] D1 session count read failed", { error: (e as Error).message });
+      }
+    }
+    if (!totalSessions) {
+      const { keys: contextKeys } = await env.CLAWBOT_KV.list({ prefix: "clawbot:context:" });
+      totalSessions = contextKeys.length;
+    }
 
     Logger.info("[Admin] stats queried");
 
@@ -349,7 +422,7 @@ export async function handleStats(request: Request, env: Env): Promise<Response>
           average_latency_ms: 0,
         },
       ],
-      totalSessions: contextKeys.length,
+      totalSessions,
       totalPolls: polls,
       totalHandled: handled,
       totalAICalls: aiCalls,

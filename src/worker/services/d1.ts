@@ -99,6 +99,31 @@ export class D1Service {
     this.db = db;
   }
 
+  private prepare(sql: string, params: any[] = []) {
+    return this.db.prepare(sql).bind(...params);
+  }
+
+  private async run(sql: string, params: any[] = []) {
+    return this.prepare(sql, params).run();
+  }
+
+  private async first<T = Record<string, unknown>>(sql: string, params: any[] = []): Promise<T | null> {
+    return await this.prepare(sql, params).first<T>() || null;
+  }
+
+  private async firstValue<T = unknown>(sql: string, params: any[] = [], columnName?: string): Promise<T | null> {
+    const row = await this.prepare(sql, params).first<Record<string, T>>(columnName);
+    if (columnName) return (row as T) ?? null;
+    if (!row) return null;
+    const firstKey = Object.keys(row)[0];
+    return firstKey ? row[firstKey] : null;
+  }
+
+  private async all<T = Record<string, unknown>>(sql: string, params: any[] = []): Promise<T[]> {
+    const result = await this.prepare(sql, params).all<T>();
+    return result.results || [];
+  }
+
   // 初始化数据库（创建表和索引）
   async init(): Promise<void> {
     if (this.initialized) return;
@@ -119,13 +144,35 @@ export class D1Service {
   // ========== 消息操作 ==========
 
   async insertMessage(message: DBMessage): Promise<number> {
-    const { message_id, from_user_id, to_user_id, content, message_type, context_token, created_at } = message;
-    
-    const result = await this.db.run(
-      `INSERT OR IGNORE INTO messages 
-       (message_id, from_user_id, to_user_id, content, message_type, context_token, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [message_id, from_user_id, to_user_id || null, content, message_type || 1, context_token || null, created_at]
+    const {
+      message_id,
+      from_user_id,
+      to_user_id,
+      content,
+      message_type,
+      context_token,
+      created_at,
+      processed,
+      reply_content,
+      reply_at,
+    } = message;
+
+    const result = await this.run(
+      `INSERT OR IGNORE INTO messages
+       (message_id, from_user_id, to_user_id, content, message_type, context_token, created_at, processed, reply_content, reply_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        message_id,
+        from_user_id,
+        to_user_id || null,
+        content,
+        message_type || 1,
+        context_token || null,
+        created_at,
+        processed ? 1 : 0,
+        reply_content || null,
+        reply_at || null,
+      ]
     );
     
     Logger.debug("[D1] Message inserted", { message_id, changes: result.changes });
@@ -133,7 +180,7 @@ export class D1Service {
   }
 
   async updateMessageReply(messageId: string, replyContent: string): Promise<void> {
-    await this.db.run(
+    await this.run(
       `UPDATE messages SET processed = TRUE, reply_content = ?, reply_at = ? WHERE message_id = ?`,
       [replyContent, new Date().toISOString(), messageId]
     );
@@ -141,63 +188,92 @@ export class D1Service {
   }
 
   async getMessageById(messageId: string): Promise<DBMessage | null> {
-    const result = await this.db.get(`SELECT * FROM messages WHERE message_id = ?`, [messageId]);
-    return result as DBMessage || null;
+    return await this.first<DBMessage>(`SELECT * FROM messages WHERE message_id = ?`, [messageId]);
   }
 
   async getMessagesByUser(userId: string, limit: number = 50): Promise<DBMessage[]> {
-    const results = await this.db.all(
+    return await this.all<DBMessage>(
       `SELECT * FROM messages WHERE from_user_id = ? ORDER BY created_at DESC LIMIT ?`,
       [userId, limit]
     );
-    return results as DBMessage[];
   }
 
   async deleteMessage(messageId: string): Promise<void> {
-    await this.db.run(`DELETE FROM messages WHERE message_id = ?`, [messageId]);
+    await this.run(`DELETE FROM messages WHERE message_id = ?`, [messageId]);
     Logger.debug("[D1] Message deleted", { messageId });
   }
 
   async getUnprocessedMessages(limit: number = 100): Promise<DBMessage[]> {
-    const results = await this.db.all(
+    return await this.all<DBMessage>(
       `SELECT * FROM messages WHERE processed = FALSE ORDER BY created_at ASC LIMIT ?`,
       [limit]
     );
-    return results as DBMessage[];
+  }
+
+  async getRecentMessages(limit: number = 50, offset: number = 0, search: string = ""): Promise<DBMessage[]> {
+    const where = search ? `WHERE LOWER(from_user_id) LIKE ? OR LOWER(content) LIKE ?` : "";
+    const params = search ? [`%${search}%`, `%${search}%`, limit, offset] : [limit, offset];
+    return await this.all<DBMessage>(
+      `SELECT * FROM messages ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+      params
+    );
+  }
+
+  async countMessages(search: string = ""): Promise<number> {
+    const where = search ? `WHERE LOWER(from_user_id) LIKE ? OR LOWER(content) LIKE ?` : "";
+    const params = search ? [`%${search}%`, `%${search}%`] : [];
+    return await this.firstValue<number>(
+      `SELECT COUNT(*) as count FROM messages ${where}`,
+      params,
+      "count"
+    ) || 0;
   }
 
   // ========== 会话操作 ==========
 
   async upsertSession(userId: string): Promise<void> {
     const now = new Date().toISOString();
-    const existing = await this.db.get(`SELECT * FROM sessions WHERE user_id = ?`, [userId]);
-    
-    if (existing) {
-      await this.db.run(
-        `UPDATE sessions SET last_message_at = ?, message_count = message_count + 1, updated_at = ? WHERE user_id = ?`,
-        [now, now, userId]
-      );
-    } else {
-      await this.db.run(
-        `INSERT INTO sessions (user_id, last_message_at, message_count, created_at, updated_at) VALUES (?, ?, 1, ?, ?)`,
-        [userId, now, now, now]
-      );
-    }
+    await this.run(
+      `INSERT INTO sessions (user_id, last_message_at, message_count, created_at, updated_at)
+       VALUES (?, ?, 1, ?, ?)
+       ON CONFLICT(user_id) DO UPDATE SET
+         last_message_at = excluded.last_message_at,
+         message_count = sessions.message_count + 1,
+         updated_at = excluded.updated_at`,
+      [userId, now, now, now]
+    );
     Logger.debug("[D1] Session updated", { userId });
   }
 
   async getSession(userId: string): Promise<DBSession | null> {
-    const result = await this.db.get(`SELECT * FROM sessions WHERE user_id = ?`, [userId]);
-    return result as DBSession || null;
+    return await this.first<DBSession>(`SELECT * FROM sessions WHERE user_id = ?`, [userId]);
   }
 
   async getAllSessions(limit: number = 100): Promise<DBSession[]> {
-    const results = await this.db.all(`SELECT * FROM sessions ORDER BY updated_at DESC LIMIT ?`, [limit]);
-    return results as DBSession[];
+    return await this.all<DBSession>(`SELECT * FROM sessions ORDER BY updated_at DESC LIMIT ?`, [limit]);
+  }
+
+  async getSessions(limit: number = 100, offset: number = 0, search: string = ""): Promise<DBSession[]> {
+    const where = search ? `WHERE LOWER(user_id) LIKE ?` : "";
+    const params = search ? [`%${search}%`, limit, offset] : [limit, offset];
+    return await this.all<DBSession>(
+      `SELECT * FROM sessions ${where} ORDER BY updated_at DESC LIMIT ? OFFSET ?`,
+      params
+    );
+  }
+
+  async countSessions(search: string = ""): Promise<number> {
+    const where = search ? `WHERE LOWER(user_id) LIKE ?` : "";
+    const params = search ? [`%${search}%`] : [];
+    return await this.firstValue<number>(
+      `SELECT COUNT(*) as count FROM sessions ${where}`,
+      params,
+      "count"
+    ) || 0;
   }
 
   async deleteSession(userId: string): Promise<void> {
-    await this.db.run(`DELETE FROM sessions WHERE user_id = ?`, [userId]);
+    await this.run(`DELETE FROM sessions WHERE user_id = ?`, [userId]);
     Logger.debug("[D1] Session deleted", { userId });
   }
 
@@ -205,41 +281,39 @@ export class D1Service {
 
   async incrementStats(date: string, polls: number = 0, handled: number = 0, aiCalls: number = 0, aiFails: number = 0, latencyMs: number = 0): Promise<void> {
     const now = new Date().toISOString();
-    const existing = await this.db.get(`SELECT * FROM stats WHERE date = ?`, [date]);
-    
-    if (existing) {
-      await this.db.run(
-        `UPDATE stats 
-         SET polls = polls + ?, handled = handled + ?, ai_calls = ai_calls + ?, ai_fails = ai_fails + ?, 
-             total_latency_ms = total_latency_ms + ?, updated_at = ? 
-         WHERE date = ?`,
-        [polls, handled, aiCalls, aiFails, latencyMs, now, date]
-      );
-    } else {
-      await this.db.run(
-        `INSERT INTO stats (date, polls, handled, ai_calls, ai_fails, total_latency_ms, created_at, updated_at) 
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [date, polls, handled, aiCalls, aiFails, latencyMs, now, now]
-      );
-    }
+    await this.run(
+      `INSERT INTO stats (date, polls, handled, ai_calls, ai_fails, total_latency_ms, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(date) DO UPDATE SET
+         polls = stats.polls + excluded.polls,
+         handled = stats.handled + excluded.handled,
+         ai_calls = stats.ai_calls + excluded.ai_calls,
+         ai_fails = stats.ai_fails + excluded.ai_fails,
+         total_latency_ms = stats.total_latency_ms + excluded.total_latency_ms,
+         updated_at = excluded.updated_at`,
+      [date, polls, handled, aiCalls, aiFails, latencyMs, now, now]
+    );
     Logger.debug("[D1] Stats updated", { date, polls, handled, aiCalls });
   }
 
   async getStatsByDate(date: string): Promise<DBStats | null> {
-    const result = await this.db.get(`SELECT * FROM stats WHERE date = ?`, [date]);
-    return result as DBStats || null;
+    return await this.first<DBStats>(`SELECT * FROM stats WHERE date = ?`, [date]);
   }
 
   async getStatsRange(startDate: string, endDate: string): Promise<DBStats[]> {
-    const results = await this.db.all(
+    return await this.all<DBStats>(
       `SELECT * FROM stats WHERE date >= ? AND date <= ? ORDER BY date ASC`,
       [startDate, endDate]
     );
-    return results as DBStats[];
   }
 
   async getTotalStats(): Promise<{ polls: number; handled: number; aiCalls: number; aiFails: number }> {
-    const result = await this.db.get(
+    const result = await this.first<{
+      total_polls: number;
+      total_handled: number;
+      total_ai_calls: number;
+      total_ai_fails: number;
+    }>(
       `SELECT SUM(polls) as total_polls, SUM(handled) as total_handled, 
               SUM(ai_calls) as total_ai_calls, SUM(ai_fails) as total_ai_fails 
        FROM stats`
@@ -264,17 +338,15 @@ export class D1Service {
     cutoffDate.setDate(cutoffDate.getDate() - daysToKeep);
     const cutoffStr = cutoffDate.toISOString();
     
-    const result = await this.db.run(`DELETE FROM messages WHERE created_at < ?`, [cutoffStr]);
+    const result = await this.run(`DELETE FROM messages WHERE created_at < ?`, [cutoffStr]);
     Logger.info("[D1] Old messages cleaned up", { deleted: result.changes });
   }
 
   async getMessageCount(): Promise<number> {
-    const result = await this.db.get(`SELECT COUNT(*) as count FROM messages`);
-    return result?.count || 0;
+    return await this.firstValue<number>(`SELECT COUNT(*) as count FROM messages`, [], "count") || 0;
   }
 
   async getSessionCount(): Promise<number> {
-    const result = await this.db.get(`SELECT COUNT(*) as count FROM sessions`);
-    return result?.count || 0;
+    return await this.firstValue<number>(`SELECT COUNT(*) as count FROM sessions`, [], "count") || 0;
   }
 }
