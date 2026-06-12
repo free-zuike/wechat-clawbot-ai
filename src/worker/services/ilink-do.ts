@@ -31,10 +31,6 @@ interface RuntimeCache {
   credentialsLoadedAt: number;
   config: { aiSystemPrompt: string; aiModel: string } | null;
   configLoadedAt: number;
-  stats: { polls: number; handled: number; aiCalls: number; aiFails: number; lastPollAt: string };
-  statsLoadedAt: number;
-  statsDirty: boolean;
-  lastStatsWriteAt: number;
   contextCache: Map<string, { data: any; lastRead: number }>;
   processedIds: Set<string>;
   lastCredWriteAt: number;
@@ -52,10 +48,6 @@ export class ILinkConnectionDO implements DurableObject {
     credentialsLoadedAt: 0,
     config: null,
     configLoadedAt: 0,
-    stats: { polls: 0, handled: 0, aiCalls: 0, aiFails: 0, lastPollAt: "" },
-    statsLoadedAt: 0,
-    statsDirty: false,
-    lastStatsWriteAt: 0,
     contextCache: new Map(),
     processedIds: new Set(),
     lastCredWriteAt: 0,
@@ -260,11 +252,6 @@ export class ILinkConnectionDO implements DurableObject {
         if (result.msgs && result.msgs.length > 0) {
           Logger.info("[DO] Received messages", { count: result.msgs.length });
           await this.processMessages(result.msgs);
-        } else {
-          // 没消息也要更新内存中的 polls 计数，但不立刻写 KV
-          this.cache.stats.polls++;
-          this.cache.stats.lastPollAt = this.state.lastPollAt;
-          this.cache.statsDirty = true;
         }
 
         // saveState 写 DO storage（不是 KV），轻量，保留
@@ -515,60 +502,14 @@ export class ILinkConnectionDO implements DurableObject {
   }
 
   private async updateStats(polls: number, handled: number, aiCalls: number, aiFails: number): Promise<void> {
-    const now = Date.now();
     const today = new Date().toISOString().split("T")[0];
 
-    // 累加内存计数（不每次读+写 KV）
-    this.cache.stats.polls += polls;
-    this.cache.stats.handled += handled;
-    this.cache.stats.aiCalls += aiCalls;
-    this.cache.stats.aiFails += aiFails;
-    this.cache.stats.lastPollAt = new Date().toISOString();
-    this.cache.statsDirty = true;
-
-    // 至少 5 分钟或 polls 累积 50 次才真正写 KV
-    const shouldWrite =
-      now - this.cache.lastStatsWriteAt > 5 * 60 * 1000 ||
-      this.cache.stats.polls % 50 === 0;
-
-    if (shouldWrite) {
-      try {
-        // 懒加载：如果内存计数从没从 KV 加载过，读一次
-        if (this.cache.statsLoadedAt === 0) {
-          const statsRaw = await this.kv?.get("clawbot:stats");
-          if (statsRaw) {
-            const kvs = JSON.parse(statsRaw);
-            // 合并 KV 值和内存增量，取较大值以保证单调递增
-            this.cache.stats.polls = Math.max(this.cache.stats.polls, kvs.polls || 0);
-            this.cache.stats.handled = Math.max(this.cache.stats.handled, kvs.handled || 0);
-            this.cache.stats.aiCalls = Math.max(this.cache.stats.aiCalls, kvs.aiCalls || 0);
-            this.cache.stats.aiFails = Math.max(this.cache.stats.aiFails, kvs.aiFails || 0);
-          }
-          this.cache.statsLoadedAt = now;
-        }
-
-        await this.kv?.put("clawbot:stats", JSON.stringify(this.cache.stats));
-        this.cache.lastStatsWriteAt = now;
-        this.cache.statsDirty = false;
-      } catch (e) {
-        Logger.error("[DO] Failed to write stats", { error: (e as Error).message });
-      }
-    }
-
-    // D1 统计（轻量但也限制频率：每 5 分钟最多一次）
+    // 只更新 D1，不再写 KV stats
     if (this.d1) {
       try {
-        // 用一个简单的时间标记来节流 D1 写入
-        const anyD1ThrottleKey = `_d1_throttle_${today}`;
-        // @ts-ignore
-        const lastD1Write = this.cache[anyD1ThrottleKey] || 0;
-        if (now - lastD1Write > 5 * 60 * 1000) {
-          await this.d1.incrementStats(today, polls, handled, aiCalls, aiFails, 0);
-          // @ts-ignore
-          this.cache[anyD1ThrottleKey] = now;
-        }
+        await this.d1.incrementStats(today, polls, handled, aiCalls, aiFails, 0);
       } catch (e) {
-        // 忽略 D1 错误
+        Logger.error("[DO] Failed to write D1 stats", { error: (e as Error).message });
       }
     }
   }

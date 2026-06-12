@@ -25,56 +25,22 @@ export class Metrics {
   private gauges: Record<string, number> = {};
   private histograms: Record<string, number[]> = {};
   private timers: Record<string, TimingData> = {};
-  private kv: KVNamespace | null = null;
-  private lastFlush: number = 0;
-  private flushInterval: number = 60000;
 
-  // flushInterval 默认 10 分钟（避免每 60 秒写一次 KV 导致额度迅速耗尽）
-  init(kv: KVNamespace, flushInterval: number = 10 * 60 * 1000): void {
-    this.kv = kv;
-    this.flushInterval = flushInterval;
-    this.loadFromKV();
-  }
-
-  private async loadFromKV(): Promise<void> {
-    if (!this.kv) return;
-    try {
-      const stored = await this.kv.get('metrics:state');
-      if (stored) {
-        const state = JSON.parse(stored);
-        this.counters = state.counters || {};
-        this.gauges = state.gauges || {};
-        Logger.info('[Metrics] Loaded metrics from KV');
-      }
-    } catch (error) {
-      Logger.warn('[Metrics] Error loading metrics from KV', { error: (error as Error).message });
-    }
-  }
-
-  private async flushToKV(): Promise<void> {
-    if (!this.kv) return;
-    try {
-      const state = { counters: this.counters, gauges: this.gauges };
-      await this.kv.put('metrics:state', JSON.stringify(state));
-      this.lastFlush = Date.now();
-    } catch (error) {
-      Logger.warn('[Metrics] Error flushing metrics to KV', { error: (error as Error).message });
-    }
+  // 不再需要 KV 持久化 —— metrics 是临时运行时状态，重启重置即可
+  init(): void {
+    // 空实现，保留接口兼容
   }
 
   incr(name: string, value: number = 1): void {
     this.counters[name] = (this.counters[name] || 0) + value;
-    this.maybeFlush();
   }
 
   decr(name: string, value: number = 1): void {
     this.counters[name] = (this.counters[name] || 0) - value;
-    this.maybeFlush();
   }
 
   setGauge(name: string, value: number): void {
     this.gauges[name] = value;
-    this.maybeFlush();
   }
 
   addHistogram(name: string, value: number): void {
@@ -105,13 +71,6 @@ export class Metrics {
     return timer.duration;
   }
 
-  private maybeFlush(): void {
-    const now = Date.now();
-    if (now - this.lastFlush >= this.flushInterval) {
-      this.flushToKV();
-    }
-  }
-
   getMetric(name: string): MetricData | null {
     const values = this.histograms[name];
     if (!values || values.length === 0) return null;
@@ -140,7 +99,6 @@ export class Metrics {
     this.counters = {};
     this.gauges = {};
     this.histograms = {};
-    this.flushToKV();
     Logger.info('[Metrics] Reset all metrics');
   }
 
@@ -269,7 +227,7 @@ export async function runHealthChecks(env: Env): Promise<HealthCheckResult> {
   };
 }
 
-// ========== 错误统计 ==========
+// ========== 错误统计（纯内存，不持久化） ==========
 export interface ErrorStats {
   totalErrors: number;
   errorByType: Record<string, number>;
@@ -284,80 +242,51 @@ export interface ErrorStats {
 }
 
 export class ErrorTracker {
-  private kv: KVNamespace | null = null;
+  private stats: ErrorStats = {
+    totalErrors: 0,
+    errorByType: {},
+    errorByEndpoint: {},
+    lastErrors: []
+  };
   private maxLastErrors = 50;
 
-  init(kv: KVNamespace): void {
-    this.kv = kv;
+  init(): void {
+    // 纯内存，无需 KV
   }
 
   async trackError(type: string, message: string, endpoint?: string, stack?: string): Promise<void> {
-    if (!this.kv) return;
-
-    try {
-      const stats = await this.getStats();
-      
-      stats.totalErrors++;
-      stats.errorByType[type] = (stats.errorByType[type] || 0) + 1;
-      if (endpoint) {
-        stats.errorByEndpoint[endpoint] = (stats.errorByEndpoint[endpoint] || 0) + 1;
-      }
-      
-      stats.lastErrors.unshift({
-        timestamp: new Date().toISOString(),
-        type,
-        message,
-        endpoint,
-        stack
-      });
-      
-      if (stats.lastErrors.length > this.maxLastErrors) {
-        stats.lastErrors = stats.lastErrors.slice(0, this.maxLastErrors);
-      }
-      
-      await this.kv.put('errors:stats', JSON.stringify(stats));
-      Logger.error(`[ErrorTracker] Tracked error`, { type, message, endpoint });
-    } catch (error) {
-      Logger.error('[ErrorTracker] Error tracking error', { error: (error as Error).message });
+    this.stats.totalErrors++;
+    this.stats.errorByType[type] = (this.stats.errorByType[type] || 0) + 1;
+    if (endpoint) {
+      this.stats.errorByEndpoint[endpoint] = (this.stats.errorByEndpoint[endpoint] || 0) + 1;
     }
+
+    this.stats.lastErrors.unshift({
+      timestamp: new Date().toISOString(),
+      type,
+      message,
+      endpoint,
+      stack
+    });
+
+    if (this.stats.lastErrors.length > this.maxLastErrors) {
+      this.stats.lastErrors = this.stats.lastErrors.slice(0, this.maxLastErrors);
+    }
+
+    Logger.error(`[ErrorTracker] Tracked error`, { type, message, endpoint });
   }
 
   async getStats(): Promise<ErrorStats> {
-    if (!this.kv) {
-      return {
-        totalErrors: 0,
-        errorByType: {},
-        errorByEndpoint: {},
-        lastErrors: []
-      };
-    }
-
-    try {
-      const stored = await this.kv.get('errors:stats');
-      if (stored) {
-        return JSON.parse(stored);
-      }
-    } catch (error) {
-      Logger.warn('[ErrorTracker] Error getting stats', { error: (error as Error).message });
-    }
-
-    return {
-      totalErrors: 0,
-      errorByType: {},
-      errorByEndpoint: {},
-      lastErrors: []
-    };
+    return { ...this.stats };
   }
 
   async reset(): Promise<void> {
-    if (!this.kv) return;
-    const emptyStats: ErrorStats = {
+    this.stats = {
       totalErrors: 0,
       errorByType: {},
       errorByEndpoint: {},
       lastErrors: []
     };
-    await this.kv.put('errors:stats', JSON.stringify(emptyStats));
     Logger.info('[ErrorTracker] Reset error stats');
   }
 }

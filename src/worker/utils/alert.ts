@@ -44,41 +44,10 @@ const defaultConfig: AlertConfig = {
   pollFailureThreshold: 3,
 };
 
-// 内存存储（无 D1 时使用）
+// 内存存储（不需要持久化，重启清空即可）
 class AlertStore {
   private alerts: Alert[] = [];
   private counters: Record<string, { count: number; firstTime: number }> = {};
-  private kv: KVNamespace | null = null;
-
-  init(kv: KVNamespace): void {
-    this.kv = kv;
-  }
-
-  async loadFromKV(): Promise<void> {
-    if (!this.kv) return;
-    try {
-      const stored = await this.kv.get('clawbot:alerts');
-      if (stored) {
-        const data = JSON.parse(stored);
-        this.alerts = data.alerts || [];
-        this.counters = data.counters || {};
-      }
-    } catch (error) {
-      Logger.warn('[AlertStore] Failed to load from KV', { error: (error as Error).message });
-    }
-  }
-
-  async saveToKV(): Promise<void> {
-    if (!this.kv) return;
-    try {
-      await this.kv.put('clawbot:alerts', JSON.stringify({
-        alerts: this.alerts.slice(-100), // 只保留最近100条
-        counters: this.counters,
-      }));
-    } catch (error) {
-      Logger.error('[AlertStore] Failed to save to KV', { error: (error as Error).message });
-    }
-  }
 
   getAlerts(): Alert[] {
     return this.alerts.slice().reverse();
@@ -145,17 +114,12 @@ export class AlertService {
     this.config = { ...defaultConfig, ...config };
   }
 
-  init(kv: KVNamespace): void {
-    store.init(kv);
-    store.loadFromKV();
-  }
-
   // 记录错误并判断是否触发报警
-  async recordError(message: string, endpoint?: string, error?: Error): Promise<Alert | null> {
+  recordError(message: string, endpoint?: string, error?: Error): Alert | null {
     const now = new Date().toISOString();
     const errorKey = `${endpoint || 'general'}:${message.slice(0, 50)}`;
     const count = store.incrementCounter(errorKey);
-    
+
     Logger.info('[AlertService] Error recorded', {
       message: message.slice(0, 100),
       endpoint,
@@ -175,20 +139,18 @@ export class AlertService {
         count,
       };
       store.addAlert(alert);
-      await store.saveToKV();
       Logger.warn('[AlertService] Alert triggered', { level, message: message.slice(0, 100) });
       return alert;
     }
 
-    await store.saveToKV();
     return null;
   }
 
   // 记录轮询失败
-  async recordPollFailure(error: string): Promise<Alert | null> {
+  recordPollFailure(error: string): Alert | null {
     this.lastPollFailures++;
     Logger.warn('[AlertService] Poll failure', { consecutive: this.lastPollFailures });
-    
+
     if (this.lastPollFailures >= this.config.pollFailureThreshold) {
       const alert: Alert = {
         id: `alert_poll_${Date.now()}`,
@@ -200,7 +162,6 @@ export class AlertService {
         count: this.lastPollFailures,
       };
       store.addAlert(alert);
-      await store.saveToKV();
       return alert;
     }
     return null;
@@ -215,10 +176,10 @@ export class AlertService {
   }
 
   // 记录AI失败
-  async recordAIFailure(error: string): Promise<Alert | null> {
+  recordAIFailure(error: string): Alert | null {
     this.lastAIFailures++;
     Logger.warn('[AlertService] AI failure', { consecutive: this.lastAIFailures });
-    
+
     if (this.lastAIFailures >= this.config.aiFailureThreshold) {
       const alert: Alert = {
         id: `alert_ai_${Date.now()}`,
@@ -230,7 +191,6 @@ export class AlertService {
         count: this.lastAIFailures,
       };
       store.addAlert(alert);
-      await store.saveToKV();
       return alert;
     }
     return null;
@@ -250,11 +210,11 @@ export class AlertService {
     const byLevel: Record<AlertLevel, number> = {
       info: 0, warning: 0, error: 0, critical: 0,
     };
-    
+
     for (const alert of alerts) {
       byLevel[alert.level]++;
     }
-    
+
     return {
       total: alerts.length,
       byLevel,
@@ -276,19 +236,17 @@ export class AlertService {
   }
 
   // 解决特定报警
-  async resolveAlert(id: string): Promise<boolean> {
+  resolveAlert(id: string): boolean {
     const success = store.resolveAlert(id);
     if (success) {
-      await store.saveToKV();
       Logger.info('[AlertService] Alert resolved', { id });
     }
     return success;
   }
 
   // 解决所有报警
-  async resolveAllAlerts(): Promise<number> {
+  resolveAllAlerts(): number {
     const resolved = store.resolveAll();
-    await store.saveToKV();
     Logger.info('[AlertService] All alerts resolved', { count: resolved });
     return resolved;
   }
@@ -298,6 +256,6 @@ export class AlertService {
 export const alertService = new AlertService();
 
 // 辅助函数：快速记录错误
-export async function recordAlertError(message: string, endpoint?: string, error?: Error): Promise<Alert | null> {
+export function recordAlertError(message: string, endpoint?: string, error?: Error): Alert | null {
   return alertService.recordError(message, endpoint, error);
 }

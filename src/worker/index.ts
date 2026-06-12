@@ -29,8 +29,8 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     // 初始化（延迟初始化）
     if (!metrics.getCounters()['init']) {
-      metrics.init(env.CLAWBOT_KV);
-      errorTracker.init(env.CLAWBOT_KV);
+      metrics.init();
+      errorTracker.init();
       router.init(env);
       metrics.incr('init');
     }

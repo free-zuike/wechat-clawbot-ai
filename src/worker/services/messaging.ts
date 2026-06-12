@@ -26,7 +26,6 @@ function generateMessageId(msg: any): string {
 }
 
 // 模块级节流标记（在 Worker 运行时会保留，冷启动会重置但没关系）
-let _lastStatsWriteAt = 0;
 let _lastCredsWriteAt = 0;
 
 export async function processIncomingMessages(env: Env): Promise<ProcessResult> {
@@ -83,19 +82,8 @@ export async function processIncomingMessages(env: Env): Promise<ProcessResult> 
     } catch {}
   }
 
-  // stats：懒加载——只有在有消息时才读一次；否则不写
-  let statsLoaded = false;
-  let stats: { polls: number; handled: number; aiCalls: number; aiFails: number; lastPollAt: string; lastLatencyMs: number } = {
-    polls: 0, handled: 0, aiCalls: 0, aiFails: 0, lastPollAt: "", lastLatencyMs: 0
-  };
-  const ensureStats = async () => {
-    if (statsLoaded) return;
-    try {
-      const stored = await env.CLAWBOT_KV.get("clawbot:stats");
-      if (stored) stats = JSON.parse(stored);
-    } catch {}
-    statsLoaded = true;
-  };
+  // stats：直接用 D1，不再读写 KV
+  const today = new Date().toISOString().split("T")[0];
 
   const buf = creds.syncBuf || "";
   let updates: any;
@@ -135,7 +123,6 @@ export async function processIncomingMessages(env: Env): Promise<ProcessResult> 
   }
 
   Logger.info("[messaging] Received messages", { count: msgs.length });
-  await ensureStats();
 
   let handled = 0;
   let aiCallsThisRun = 0;
@@ -154,7 +141,6 @@ export async function processIncomingMessages(env: Env): Promise<ProcessResult> 
     const ctxToken = msg.context_token;
     if (!from || !ctxToken) continue;
 
-    // 不读 KV 做重复判断——依赖微信 API 的 syncBuf 推进自然去重
     const messageId = generateMessageId(msg);
 
     let replyContent = "";
@@ -203,24 +189,12 @@ export async function processIncomingMessages(env: Env): Promise<ProcessResult> 
     }
   }
 
-  // 更新 stats（节流：至少 5 分钟写一次）
-  stats.polls++;
-  stats.handled += handled;
-  stats.aiCalls += aiCallsThisRun;
-  stats.aiFails += aiFailsThisRun;
-  stats.lastPollAt = new Date().toISOString();
-  stats.lastLatencyMs = Date.now() - start;
-
-  if (now - _lastStatsWriteAt > 5 * 60 * 1000) {
+  // D1 统计更新（不再写 KV stats）
+  if (d1) {
     try {
-      await env.CLAWBOT_KV.put("clawbot:stats", JSON.stringify(stats));
-      _lastStatsWriteAt = now;
-    } catch (e) {
-      Logger.error("[messaging] Failed to write stats", { error: (e as Error).message });
-    }
+      await d1.incrementStats(today, 1, handled, aiCallsThisRun, aiFailsThisRun, Date.now() - start);
+    } catch (e) { /* ignore */ }
   }
-
-  // D1 统计（同样每 5 分钟最多一次）——这里简化，不写（统计精度不是关键）
 
   const latencyMs = Date.now() - start;
   Logger.info("[messaging] Processing complete", { pulled: msgs.length, handled, latencyMs });

@@ -5,6 +5,7 @@ import { json, verifyAdmin } from "../utils";
 import { Logger } from "../utils/error";
 import { alertService } from "../utils/alert";
 import { statusCache } from "../utils/cache";
+import { D1Service } from "../services/d1";
 import type { Env } from "../index";
 
 interface AlertRecord {
@@ -205,26 +206,9 @@ export async function handleAlerts(request: Request, env: Env): Promise<Response
     const level = url.searchParams.get("level")?.toLowerCase();
     const search = url.searchParams.get("search")?.toLowerCase() || "";
 
-    alertService.init(env.CLAWBOT_KV);
-
-    // 从 alertService 获取原始列表（底层没有直接分页 API，这里在内存中处理）
-    // 注意：alertService 是内存存储，这里直接访问 getActiveAlerts/getRecentAlerts
-    // 为获取所有报警需要走内部存储，这里直接调用 getSummary 和 getRecentAlerts
+    // 从内存 alertService 获取报警
     const summary = alertService.getSummary();
-
-    // 获取原始数据 - 通过刷新获取存储中的报警
-    let alerts: AlertRecord[] = [];
-
-    // 从 KV 直接读取以获取完整列表
-    try {
-      const raw = await env.CLAWBOT_KV.get("clawbot:alerts");
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        alerts = Array.isArray(parsed.alerts) ? parsed.alerts : [];
-      }
-    } catch {
-      // 忽略 - 使用内存中的摘要信息
-    }
+    let alerts: AlertRecord[] = summary.activeAlerts;
 
     // 过滤未解决
     if (onlyActive) {
@@ -330,15 +314,25 @@ export async function handleStats(request: Request, env: Env): Promise<Response>
   if (!v.ok) return json({ error: v.error }, 401);
 
   try {
-    // 从 KV 读取当前统计
-    const statsData = await env.CLAWBOT_KV.get("clawbot:stats");
-    const parsed = statsData ? JSON.parse(statsData) : {};
+    // 从 D1 读取统计（不再从 KV 读）
+    let polls = 0, handled = 0, aiCalls = 0, aiFails = 0;
+    if (env.CLAWBOT_DB) {
+      try {
+        const d1 = new D1Service(env.CLAWBOT_DB);
+        const stats = await d1.getTotalStats();
+        polls = stats.polls;
+        handled = stats.handled;
+        aiCalls = stats.aiCalls;
+        aiFails = stats.aiFails;
+      } catch (e) {
+        Logger.warn("[Admin] D1 stats read failed", { error: (e as Error).message });
+      }
+    }
 
-    // 报警摘要
-    alertService.init(env.CLAWBOT_KV);
+    // 报警摘要（内存）
     const alertSummary = alertService.getSummary();
 
-    // 会话数
+    // 会话数（从 KV list，这个是低频操作）
     const { keys: contextKeys } = await env.CLAWBOT_KV.list({ prefix: "clawbot:context:" });
 
     Logger.info("[Admin] stats queried");
@@ -348,18 +342,18 @@ export async function handleStats(request: Request, env: Env): Promise<Response>
       dailyStats: [
         {
           date: new Date().toISOString().split("T")[0],
-          polls: parsed.polls || 0,
-          handled: parsed.handled || 0,
-          ai_calls: parsed.aiCalls || 0,
-          ai_fails: parsed.aiFails || 0,
-          average_latency_ms: parsed.lastLatencyMs || 0,
+          polls,
+          handled,
+          ai_calls: aiCalls,
+          ai_fails: aiFails,
+          average_latency_ms: 0,
         },
       ],
       totalSessions: contextKeys.length,
-      totalPolls: parsed.polls || 0,
-      totalHandled: parsed.handled || 0,
-      totalAICalls: parsed.aiCalls || 0,
-      totalAIFails: parsed.aiFails || 0,
+      totalPolls: polls,
+      totalHandled: handled,
+      totalAICalls: aiCalls,
+      totalAIFails: aiFails,
       alertSummary,
     });
   } catch (e: any) {
@@ -394,13 +388,22 @@ export async function handleHealth(request: Request, env: Env): Promise<Response
       .then(() => "OK")
       .catch(() => "FAIL");
 
-    // 统计
-    const stats = await env.CLAWBOT_KV.get("clawbot:stats")
-      .then((s) => (s ? JSON.parse(s) : null))
-      .catch(() => null);
+    // 统计（从 D1 读取，不再从 KV）
+    let totalPolls = 0, totalHandled = 0, totalAICalls = 0, totalAIFails = 0;
+    if (env.CLAWBOT_DB) {
+      try {
+        const d1 = new D1Service(env.CLAWBOT_DB);
+        const stats = await d1.getTotalStats();
+        totalPolls = stats.polls;
+        totalHandled = stats.handled;
+        totalAICalls = stats.aiCalls;
+        totalAIFails = stats.aiFails;
+      } catch (e) {
+        Logger.warn("[Admin] D1 stats read failed", { error: (e as Error).message });
+      }
+    }
 
-    // 报警
-    alertService.init(env.CLAWBOT_KV);
+    // 报警（内存）
     const alertSummary = alertService.getSummary();
 
     // 登录状态
@@ -409,10 +412,10 @@ export async function handleHealth(request: Request, env: Env): Promise<Response
     const healthStatus = {
       kv: kvCheck,
       loggedIn: !!loginCheck,
-      totalPolls: stats?.polls || 0,
-      totalHandled: stats?.handled || 0,
-      totalAICalls: stats?.aiCalls || 0,
-      totalAIFails: stats?.aiFails || 0,
+      totalPolls,
+      totalHandled,
+      totalAICalls,
+      totalAIFails,
       unresolvedAlerts: alertSummary.unresolved,
       criticalAlerts: alertSummary.byLevel.critical,
       errorAlerts: alertSummary.byLevel.error,
