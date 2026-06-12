@@ -107,6 +107,14 @@ export class ILinkConnectionDO implements DurableObject {
       )
     `);
 
+    // processed_messages 表：本地持久化去重，避免 syncBuf 回退时重复回复历史消息
+    await sql.exec(`
+      CREATE TABLE IF NOT EXISTS processed_messages (
+        message_id TEXT PRIMARY KEY,
+        created_at INTEGER NOT NULL
+      )
+    `);
+
     this.sqliteInitialized = true;
     Logger.info("[DO] SQLite tables initialized");
   }
@@ -451,12 +459,20 @@ export class ILinkConnectionDO implements DurableObject {
       const ctxToken = msg.context_token;
       if (!from || !ctxToken) continue;
 
-      // 去重：依赖 syncBuf 服务端去重（iLink API 根据 syncBuf 位置只返回新消息）
-      // 兜底：如果 D1 里已处理过这条消息，跳过
-      const messageId = this.generateMessageId(msg);
+      // 先生成稳定 messageId，再做多层去重
+      const messageId = this.generateMessageId(msg, text);
+
+      // 第一层：DO 本地 SQLite 去重
+      if (await this.hasProcessedMessage(messageId)) {
+        Logger.info("[DO] Message already processed (local dedup)", { messageId });
+        continue;
+      }
+
+      // 第二层：D1 去重，兼容历史已入库消息
       if (this.d1) {
         const existing = await this.d1.getMessageById(messageId);
         if (existing) {
+          await this.markMessageProcessed(messageId);
           Logger.info("[DO] Message already processed (D1 dedup)", { messageId });
           continue;
         }
@@ -485,6 +501,7 @@ export class ILinkConnectionDO implements DurableObject {
         replyContent = reply;
         replyAt = new Date().toISOString();
         aiSuccessCount++;
+        await this.markMessageProcessed(messageId);
 
         Logger.info("[DO] Message processed", { from, replyLength: reply.length });
       } catch (e: any) {
@@ -712,13 +729,58 @@ export class ILinkConnectionDO implements DurableObject {
     }
   }
 
-  private generateMessageId(msg: WeixinMessage): string {
+  private async hasProcessedMessage(messageId: string): Promise<boolean> {
+    try {
+      const result = await this.state.storage.sql.exec(
+        `SELECT 1 as found FROM processed_messages WHERE message_id = ? LIMIT 1`,
+        [messageId]
+      );
+      return !!result.next().value;
+    } catch (e) {
+      Logger.warn("[DO] Failed to query processed_messages", { error: (e as Error).message, messageId });
+      return false;
+    }
+  }
+
+  private async markMessageProcessed(messageId: string): Promise<void> {
+    try {
+      await this.state.storage.sql.exec(
+        `INSERT OR IGNORE INTO processed_messages (message_id, created_at) VALUES (?, ?)`,
+        [messageId, Date.now()]
+      );
+    } catch (e) {
+      Logger.warn("[DO] Failed to mark message processed", { error: (e as Error).message, messageId });
+    }
+  }
+
+  private hashText(input: string): string {
+    let hash = 2166136261;
+    for (let i = 0; i < input.length; i++) {
+      hash ^= input.charCodeAt(i);
+      hash = Math.imul(hash, 16777619);
+    }
+    return (hash >>> 0).toString(16);
+  }
+
+  private generateMessageId(msg: WeixinMessage, text: string = ""): string {
     const parts = [
       msg.from_user_id || "",
-      msg.message_id || "",
-      msg.create_time_ms || "",
-      msg.seq || ""
+      msg.context_token || "",
+      msg.message_id ?? "",
+      msg.create_time_ms ?? "",
+      msg.seq ?? ""
     ];
-    return parts.join(":").slice(0, 64);
+    const primary = parts.filter(Boolean).join(":");
+
+    if (primary) {
+      return primary.slice(0, 128);
+    }
+
+    // 兜底：某些历史消息字段不完整时，使用发送者 + 上下文 + 文本哈希生成稳定 ID
+    return [
+      msg.from_user_id || "unknown",
+      msg.context_token || "",
+      this.hashText(text || JSON.stringify(msg.item_list || [])),
+    ].join(":").slice(0, 128);
   }
 }
