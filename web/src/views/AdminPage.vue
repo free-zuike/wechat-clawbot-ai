@@ -511,16 +511,34 @@ function handleApiError(error: unknown, defaultMessage: string): string {
 }
 
 // ===== 状态刷新 =====
-async function handleRefreshStatus() {
-  statusLoading.value = true;
-  try {
-    // 并行拉取状态和健康数据
-    const [statusData, health] = await Promise.all([
-      fetchStatus(isFirstRefresh),
-      fetchHealth(),
-    ]);
+const firstLoadDone = ref(false);
 
-    if (statusData !== null) {
+async function handleRefreshStatus() {
+  // 只有首次加载才显示骨架屏，避免闪烁
+  if (!firstLoadDone.value) statusLoading.value = true;
+
+  try {
+    // 独立 try/catch：一个失败不影响另一个
+    let statusData: any = null;
+    let health: any = null;
+
+    try {
+      statusData = await fetchStatus(isFirstRefresh);
+    } catch (e: any) {
+      if (!(e instanceof ApiError && e.isCancelled)) {
+        console.error("状态API失败:", e);
+      }
+    }
+
+    try {
+      health = await fetchHealth();
+    } catch (e: any) {
+      if (!(e instanceof ApiError && e.isCancelled)) {
+        console.error("健康API失败:", e);
+      }
+    }
+
+    if (statusData && statusData !== null) {
       status.loggedIn = !!statusData.loggedIn;
       status.tokenHealth = statusData.tokenHealth || "";
       status.loginAgeText = statusData.loginAgeText || "";
@@ -533,9 +551,10 @@ async function handleRefreshStatus() {
         : "从未";
       status.lastLatencyMs = statusData.stats?.lastLatencyMs == null ? "—" : statusData.stats.lastLatencyMs + " ms";
       isFirstRefresh = false;
+      firstLoadDone.value = true;
     }
 
-    if (health !== null) {
+    if (health && health !== null) {
       healthData.kv = health.kv || "—";
       healthData.loggedIn = !!health.loggedIn;
       healthData.totalPolls = health.totalPolls || 0;
@@ -549,7 +568,6 @@ async function handleRefreshStatus() {
       healthData.timestamp = health.timestamp || new Date().toISOString();
     }
   } catch (e: any) {
-    if (e instanceof ApiError && e.isCancelled) return;
     console.error("状态刷新失败:", e);
   } finally {
     statusLoading.value = false;

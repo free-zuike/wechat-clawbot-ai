@@ -34,6 +34,16 @@ binding = "CLAWBOT_R2"
 bucket_name = "clawbot-history"
 preview_bucket_name = "clawbot-history"
 
+# ===== D1 数据库 (可选，目前未启用) =====
+# 需要持久化消息历史 / 长期统计数据时启用
+# 1) 创建数据库:  npx wrangler d1 create clawbot-db
+# 2) 把返回的 database_id 填入下面两行，并取消 [[d1_databases]] 注释
+#
+# [[d1_databases]]
+# binding = "CLAWBOT_DB"
+# database_name = "clawbot-db"
+# database_id = "把-database_id-替换成-你的实际-id"
+
 # ===== 开启日志 =====
 [observability.logs]
 enabled = true
