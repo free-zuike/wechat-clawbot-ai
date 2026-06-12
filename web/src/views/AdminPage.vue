@@ -457,7 +457,6 @@ const navItems = [
   { key: "chat", label: "AI 测试", icon: "🤖" },
   { key: "alerts", label: "报警中心", icon: "🚨" },
   { key: "sessions", label: "用户会话", icon: "💬" },
-  { key: "health", label: "系统健康", icon: "💚" },
 ];
 
 const activeSection = ref("status");
