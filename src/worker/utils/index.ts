@@ -14,7 +14,7 @@ export {
 } from "../utils.js";
 
 export { Logger, withRetry, ClawBotError, ErrorCodes, handleError } from "./error";
-export { Validator, RateLimiter, createIPRateLimiter, SensitiveData, generateCSRFToken, validateCSRFToken } from "./security";
+export { Validator, RateLimiter, createRateLimiter, rateLimiters, applyRateLimit, getRateLimitInfo, SensitiveData, generateCSRFToken, validateCSRFToken } from "./security";
 export { KVCache, MessageQueue, BatchProcessor, debounce, throttle } from "./performance";
 export { Metrics, metrics, runHealthChecks, HealthCheckResult, ErrorTracker, errorTracker } from "./metrics";
 export { HttpClient, HttpClientConfig, HttpRequest, HttpResponse } from "./http";

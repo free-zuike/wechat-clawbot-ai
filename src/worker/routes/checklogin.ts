@@ -1,20 +1,21 @@
 // 检查登录状态 - 前端通过此接口判断是否已扫码登录
+// 优化：session 检查优先用 Upstash，兜底用 KV
 
-import { json, verifyAdmin, clearSessionCookie } from "../utils";
+import { json } from "../utils";
 import { Logger } from "../utils/error";
+import { getUpstashService } from "../services/upstash";
 import type { Env } from "../index";
 
 // 检查登录状态
-// 返回 { loggedIn: boolean, accountId?: string, tokenHealth?: string, loginAgeText?: string }
 export async function handleCheckLogin(request: Request, env: Env): Promise<Response> {
   try {
-    // 优先使用 verifyAdmin（支持 cookie session 和 密码），但我们这里不返回 401，而是返回状态
     let loggedIn = false;
     let accountId: string | undefined;
     let tokenHealth: string = "unknown";
     let loginAgeText: string | undefined;
+    let hasSession = false;
 
-    // 检查凭证
+    // 检查凭证（从 KV 读）
     const credsRaw = await env.CLAWBOT_KV.get("clawbot:credentials");
     if (credsRaw) {
       loggedIn = true;
@@ -31,7 +32,7 @@ export async function handleCheckLogin(request: Request, env: Env): Promise<Resp
             loginAgeText = `已登录 ${hours} 小时`;
           }
         }
-        // ILink token 有效期通常较短，简单判断
+        // ILink token 有效期判断
         if (creds.createdAt) {
           const age = Date.now() - creds.createdAt;
           const hours = age / 3600000;
@@ -42,18 +43,23 @@ export async function handleCheckLogin(request: Request, env: Env): Promise<Resp
       }
     }
 
-    // 检查 session cookie（前端面板鉴权）
+    // 检查 session cookie（优先 Upstash，兜底 KV）
     const cookieHeader = request.headers.get("Cookie") || "";
     const sessionMatch = cookieHeader.match(/clawbot_session=([^;]+)/);
     if (sessionMatch) {
       const sessionToken = sessionMatch[1];
-      const sessionValid = await env.CLAWBOT_KV.get(`clawbot:session:${sessionToken}`);
+      const upstash = getUpstashService(env);
+      let sessionValid = await upstash.get(`clawbot:session:${sessionToken}`);
+      if (sessionValid === null) {
+        sessionValid = await env.CLAWBOT_KV?.get(`clawbot:session:${sessionToken}`);
+      }
       if (sessionValid) {
-        loggedIn = loggedIn || true;
+        hasSession = true;
+        loggedIn = true;
       }
     }
 
-    Logger.info('[check-login] status', { loggedIn, hasAccountId: !!accountId, tokenHealth });
+    Logger.info("[check-login] status", { loggedIn, hasAccountId: !!accountId, tokenHealth, hasSession });
 
     return json({
       loggedIn,
@@ -61,11 +67,10 @@ export async function handleCheckLogin(request: Request, env: Env): Promise<Resp
       tokenHealth,
       loginAgeText,
       hasCredentials: !!credsRaw,
-      hasSession: !!sessionMatch,
+      hasSession,
     });
   } catch (e: any) {
-    Logger.error('[check-login] error', { error: e?.message || String(e) });
-    // 出错时不要返回错误，而是返回未登录状态，避免前端卡死
+    Logger.error("[check-login] error", { error: e?.message || String(e) });
     return json({ loggedIn: false, error: String(e) });
   }
 }

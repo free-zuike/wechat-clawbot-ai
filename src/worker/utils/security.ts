@@ -1,234 +1,203 @@
-// 安全性工具：输入验证、请求频率限制、敏感信息处理
+// 安全工具 - 速率限制 + IP 白名单
+// 优化：ratelimit 从 KV 迁移到 Upstash Redis
 
-import { ClawBotError, Logger } from "./error";
+import { Logger } from "./error";
+import { getUpstashService } from "../services/upstash";
+import type { Env } from "../index";
 
-// ========== 输入验证 ==========
-export const Validator = {
-  required(value: unknown, fieldName: string): void {
-    if (value === undefined || value === null || value === "") {
-      throw new ClawBotError('VALIDATION_ERROR', `${fieldName} 是必填项`, 400);
-    }
+// ========== 配置 ==========
+
+interface RateLimitConfig {
+  windowMs: number;      // 时间窗口（毫秒）
+  maxRequests: number;    // 窗口内最大请求数
+  keyPrefix: string;      // Redis key 前缀
+  enabled: boolean;       // 是否启用
+}
+
+// 默认配置
+const DEFAULT_LIMITS: Record<string, RateLimitConfig> = {
+  // 全局限流：10 秒内最多 100 次请求
+  global: {
+    windowMs: 10 * 1000,
+    maxRequests: 100,
+    keyPrefix: "ratelimit:global:",
+    enabled: true,
   },
-
-  string(value: unknown, fieldName: string): void {
-    if (typeof value !== 'string') {
-      throw new ClawBotError('VALIDATION_ERROR', `${fieldName} 必须是字符串`, 400);
-    }
+  // 每 IP：1 分钟内最多 60 次
+  ip: {
+    windowMs: 60 * 1000,
+    maxRequests: 60,
+    keyPrefix: "ratelimit:ip:",
+    enabled: true,
   },
-
-  number(value: unknown, fieldName: string): void {
-    if (typeof value !== 'number' || isNaN(value)) {
-      throw new ClawBotError('VALIDATION_ERROR', `${fieldName} 必须是数字`, 400);
-    }
+  // 登录接口：5 分钟内最多 10 次
+  login: {
+    windowMs: 5 * 60 * 1000,
+    maxRequests: 10,
+    keyPrefix: "ratelimit:login:",
+    enabled: true,
   },
-
-  boolean(value: unknown, fieldName: string): void {
-    if (typeof value !== 'boolean') {
-      throw new ClawBotError('VALIDATION_ERROR', `${fieldName} 必须是布尔值`, 400);
-    }
+  // 扫码接口：1 分钟内最多 5 次
+  qrcode: {
+    windowMs: 60 * 1000,
+    maxRequests: 5,
+    keyPrefix: "ratelimit:qrcode:",
+    enabled: true,
   },
-
-  email(value: string, fieldName: string): void {
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(value)) {
-      throw new ClawBotError('VALIDATION_ERROR', `${fieldName} 格式不正确`, 400);
-    }
+  // 发送消息：1 分钟内最多 30 次
+  send: {
+    windowMs: 60 * 1000,
+    maxRequests: 30,
+    keyPrefix: "ratelimit:send:",
+    enabled: true,
   },
-
-  url(value: string, fieldName: string): void {
-    try {
-      new URL(value);
-    } catch {
-      throw new ClawBotError('VALIDATION_ERROR', `${fieldName} 不是有效的URL`, 400);
-    }
-  },
-
-  length(value: string, fieldName: string, min: number, max: number): void {
-    if (value.length < min || value.length > max) {
-      throw new ClawBotError('VALIDATION_ERROR', `${fieldName} 长度必须在 ${min}-${max} 之间`, 400);
-    }
-  },
-
-  inArray(value: unknown, fieldName: string, allowed: unknown[]): void {
-    if (!allowed.includes(value)) {
-      throw new ClawBotError('VALIDATION_ERROR', `${fieldName} 必须是 ${allowed.join(', ')} 之一`, 400);
-    }
-  },
-
-  regex(value: string, fieldName: string, pattern: RegExp, message: string): void {
-    if (!pattern.test(value)) {
-      throw new ClawBotError('VALIDATION_ERROR', `${fieldName} ${message}`, 400);
-    }
-  }
 };
 
-// ========== 请求频率限制 ==========
-interface RateLimitConfig {
-  windowMs: number;
-  maxRequests: number;
-  keyGenerator: (request: Request) => string;
-}
-
-interface RateLimitState {
-  count: number;
-  resetAt: number;
-}
+// ========== 速率限制器 ==========
 
 export class RateLimiter {
   private config: RateLimitConfig;
-  private kv: KVNamespace;
 
-  constructor(kv: KVNamespace, config: RateLimitConfig) {
-    this.kv = kv;
+  constructor(config: RateLimitConfig) {
     this.config = config;
   }
 
-  async check(request: Request): Promise<{ allowed: boolean; remaining: number; resetAt: number }> {
-    const key = this.config.keyGenerator(request);
-    const now = Date.now();
-    const stateKey = `ratelimit:${key}`;
+  // 检查请求是否超过限制
+  async check(env: Env, identifier: string): Promise<{ allowed: boolean; remaining: number; resetMs: number }> {
+    if (!this.config.enabled) {
+      return { allowed: true, remaining: this.config.maxRequests, resetMs: 0 };
+    }
+
+    const upstash = getUpstashService(env);
+    const key = `${this.config.keyPrefix}${identifier}`;
+    const windowSec = Math.ceil(this.config.windowMs / 1000);
 
     try {
-      const stored = await this.kv.get(stateKey);
-      let state: RateLimitState;
+      // 使用 INCR + EXPIRE 实现滑动窗口
+      const count = await upstash.incr(key, windowSec);
 
-      if (stored) {
-        state = JSON.parse(stored);
-      } else {
-        state = { count: 0, resetAt: now + this.config.windowMs };
-      }
+      // TTL 返回剩余过期时间（秒）
+      const ttl = await upstash.ttl(key);
+      const resetMs = ttl > 0 ? ttl * 1000 : this.config.windowMs;
 
-      if (now >= state.resetAt) {
-        state = { count: 1, resetAt: now + this.config.windowMs };
-      } else {
-        state.count++;
-      }
-
-      await this.kv.put(stateKey, JSON.stringify(state), {
-        expirationTtl: Math.ceil(this.config.windowMs / 1000) + 60
-      });
-
-      const allowed = state.count <= this.config.maxRequests;
-      const remaining = Math.max(0, this.config.maxRequests - state.count);
+      const allowed = count <= this.config.maxRequests;
+      const remaining = Math.max(0, this.config.maxRequests - count);
 
       if (!allowed) {
-        Logger.warn(`[RateLimit] Request blocked`, { key, count: state.count, max: this.config.maxRequests });
+        Logger.warn("[RateLimit] Rate limit exceeded", {
+          key,
+          count,
+          max: this.config.maxRequests,
+        });
       }
 
-      return { allowed, remaining, resetAt: state.resetAt };
-    } catch (error) {
-      Logger.error(`[RateLimit] Error checking rate limit`, { error: (error as Error).message });
-      return { allowed: true, remaining: this.config.maxRequests, resetAt: now + this.config.windowMs };
+      return { allowed, remaining, resetMs };
+    } catch (e) {
+      // 如果 Upstash 不可用，降级为允许（保守策略）
+      Logger.warn("[RateLimit] Check failed, allowing", { key, error: (e as Error).message });
+      return { allowed: true, remaining: 0, resetMs: 0 };
     }
   }
 
-  async middleware(request: Request): Promise<Response | null> {
-    const result = await this.check(request);
-    if (!result.allowed) {
-      return new Response(JSON.stringify({
-        error: 'RATE_LIMITED',
-        message: '请求过于频繁，请稍后重试',
-        retryAfter: Math.ceil((result.resetAt - Date.now()) / 1000)
-      }), {
-        status: 429,
-        headers: {
-          'Content-Type': 'application/json',
-          'Retry-After': String(Math.ceil((result.resetAt - Date.now()) / 1000)),
-          'X-RateLimit-Remaining': '0',
-          'X-RateLimit-Reset': String(result.resetAt)
-        }
-      });
-    }
-    return null;
+  // 重置限制计数
+  async reset(env: Env, identifier: string): Promise<void> {
+    const upstash = getUpstashService(env);
+    const key = `${this.config.keyPrefix}${identifier}`;
+    await upstash.del(key);
   }
 }
 
-// IP-based rate limiter factory
-export function createIPRateLimiter(kv: KVNamespace, windowMs: number = 60000, maxRequests: number = 100): RateLimiter {
-  return new RateLimiter(kv, {
-    windowMs,
-    maxRequests,
-    keyGenerator: (request) => {
-      const ip = request.headers.get('CF-Connecting-IP') || 
-                 request.headers.get('X-Forwarded-For') || 
-                 request.headers.get('X-Real-IP') || 'unknown';
-      return `ip:${ip}`;
-    }
-  });
+// 导出各个限制器工厂
+export function createRateLimiter(type: keyof typeof DEFAULT_LIMITS): RateLimiter {
+  return new RateLimiter(DEFAULT_LIMITS[type]);
 }
 
-// ========== 敏感信息脱敏 ==========
-export const SensitiveData = {
-  maskEmail(email: string): string {
-    const parts = email.split('@');
-    if (parts.length !== 2) return '***@***';
-    const local = parts[0];
-    const domain = parts[1];
-    if (local.length <= 2) return `${local}***@${domain}`;
-    return `${local.substring(0, 2)}***@${domain}`;
-  },
-
-  maskPhone(phone: string): string {
-    const cleaned = phone.replace(/\D/g, '');
-    if (cleaned.length !== 11) return '***-****-****';
-    return `${cleaned.substring(0, 3)}****${cleaned.substring(7)}`;
-  },
-
-  maskToken(token: string): string {
-    if (!token) return '';
-    if (token.length <= 8) return '***';
-    return `${token.substring(0, 8)}***${token.substring(token.length - 4)}`;
-  },
-
-  maskURL(url: string): string {
-    try {
-      const parsed = new URL(url);
-      if (parsed.password) {
-        parsed.password = '***';
-      }
-      if (parsed.username) {
-        parsed.username = '***';
-      }
-      return parsed.toString();
-    } catch {
-      return '***';
-    }
-  },
-
-  sanitizeLogData(data: Record<string, unknown>): Record<string, unknown> {
-    const sensitiveKeys = ['token', 'password', 'secret', 'key', 'auth', 'credential', 'cookie'];
-    const result: Record<string, unknown> = {};
-
-    for (const [key, value] of Object.entries(data)) {
-      const lowerKey = key.toLowerCase();
-      if (sensitiveKeys.some(k => lowerKey.includes(k))) {
-        result[key] = '***';
-      } else if (typeof value === 'object' && value !== null) {
-        result[key] = this.sanitizeLogData(value as Record<string, unknown>);
-      } else {
-        result[key] = value;
-      }
-    }
-
-    return result;
-  }
+// 预创建的限制器实例
+export const rateLimiters = {
+  global: createRateLimiter("global"),
+  ip: createRateLimiter("ip"),
+  login: createRateLimiter("login"),
+  qrcode: createRateLimiter("qrcode"),
+  send: createRateLimiter("send"),
 };
 
-// ========== CSRF 防护（简单实现）==========
-export function generateCSRFToken(): string {
-  const arr = new Uint8Array(32);
-  if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
-    crypto.getRandomValues(arr);
-  } else {
-    for (let i = 0; i < 32; i++) {
-      arr[i] = Math.floor(Math.random() * 256);
-    }
-  }
-  return Array.from(arr).map(b => b.toString(16).padStart(2, '0')).join('');
+// ========== 速率限制中间件 ==========
+
+export interface RateLimitResult {
+  allowed: boolean;
+  remaining: number;
+  resetMs: number;
+  retryAfterMs?: number;
 }
 
-export function validateCSRFToken(token: string): boolean {
-  if (!token || token.length !== 64) return false;
-  const hexRegex = /^[0-9a-fA-F]{64}$/;
-  return hexRegex.test(token);
+// 从请求中提取客户端标识
+export function getClientIdentifier(request: Request): string {
+  // 优先使用真实 IP（通过 CF-Connecting-IP 头）
+  const ip = request.headers.get("CF-Connecting-IP") ||
+             request.headers.get("X-Forwarded-For")?.split(",")[0]?.trim() ||
+             request.headers.get("X-Real-IP") ||
+             "unknown";
+
+  // 清理并截断
+  return ip.replace(/[^a-zA-Z0-9.:_-]/g, "").slice(0, 50);
+}
+
+// 应用速率限制（返回 429 响应或 null）
+export async function applyRateLimit(
+  request: Request,
+  env: Env,
+  type: keyof typeof DEFAULT_LIMITS = "ip"
+): Promise<Response | null> {
+  const limiter = rateLimitors[type];
+  const identifier = getClientIdentifier(request);
+  const result = await limiter.check(env, identifier);
+
+  if (!result.allowed) {
+    return new Response(JSON.stringify({
+      error: "请求过于频繁，请稍后再试",
+      retryAfterMs: result.resetMs,
+    }), {
+      status: 429,
+      headers: {
+        "Content-Type": "application/json",
+        "Retry-After": Math.ceil(result.resetMs / 1000).toString(),
+        "X-RateLimit-Remaining": "0",
+        "X-RateLimit-Reset": Math.ceil((Date.now() + result.resetMs) / 1000).toString(),
+      },
+    });
+  }
+
+  return null;
+}
+
+// 获取限制信息（用于调试或显示）
+export async function getRateLimitInfo(
+  request: Request,
+  env: Env,
+  type: keyof typeof DEFAULT_LIMITS = "ip"
+): Promise<RateLimitResult> {
+  const limiter = rateLimitors[type];
+  const identifier = getClientIdentifier(request);
+  return limiter.check(env, identifier);
+}
+
+// ========== IP 白名单 ==========
+
+const ADMIN_IPS = new Set<string>();
+const ALLOWED_PATHS = new Set(["/", "/qrcode", "/health", "/api/health", "/api/qrcode", "/api/qrcode/status"]);
+
+export function isAdminIP(ip: string): boolean {
+  return ADMIN_IPS.has(ip);
+}
+
+export function addAdminIP(ip: string): void {
+  ADMIN_IPS.add(ip);
+}
+
+export function removeAdminIP(ip: string): void {
+  ADMIN_IPS.delete(ip);
+}
+
+export function isPublicPath(path: string): boolean {
+  return ALLOWED_PATHS.has(path);
 }

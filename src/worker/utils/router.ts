@@ -32,7 +32,7 @@ import {
 } from "../routes/do";
 import { json, html } from "../utils";
 import { metrics, runHealthChecks, errorTracker } from "../utils/metrics";
-import { createIPRateLimiter } from "../utils/security";
+import { rateLimiters, applyRateLimit } from "../utils/security";
 import { handleError } from "../utils/error";
 
 const NOT_LOGGED_HTML = `<!doctype html>
@@ -74,10 +74,8 @@ interface Route {
 
 export class Router {
   private routes: Route[] = [];
-  private rateLimiter: ReturnType<typeof createIPRateLimiter> | null = null;
 
-  init(env: Env): void {
-    this.rateLimiter = createIPRateLimiter(env.CLAWBOT_KV);
+  init(_env: Env): void {
     this.registerRoutes();
   }
 
@@ -144,12 +142,9 @@ export class Router {
         return json({ error: "Not Found" }, 404);
       }
 
-      // 路由级频率限制（覆盖全局）
+      // 全局 IP 限流（使用 Upstash，支持 60 请求/分钟）
       if (route.rateLimit) {
-        const max = route.rateLimitMax || 100;
-        const windowMs = route.rateLimitWindowMs || 60000;
-        const perRouteLimiter = createIPRateLimiter(env.CLAWBOT_KV, windowMs, max);
-        const limitResult = await perRouteLimiter.middleware(request);
+        const limitResult = await applyRateLimit(request, env, "ip");
         if (limitResult) return limitResult;
       }
 

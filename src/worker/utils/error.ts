@@ -209,12 +209,18 @@ function getClientIP(request: Request): string {
 
 // 统一认证检查
 async function checkAuth(request: Request, env: Env): Promise<{ ok: boolean; error?: string }> {
-  // 优先检查 session cookie
+  // 优先检查 session cookie（优先 Upstash，兜底 KV）
   const cookieHeader = request.headers.get('Cookie') || '';
   const sessionMatch = cookieHeader.match(/clawbot_session=([^;]+)/);
-  if (sessionMatch && env.CLAWBOT_KV) {
+  if (sessionMatch) {
     const sessionToken = sessionMatch[1];
-    const sessionValid = await env.CLAWBOT_KV.get(`clawbot:session:${sessionToken}`);
+    // 动态导入避免循环依赖
+    const { getUpstashService } = await import('../services/upstash');
+    const upstash = getUpstashService(env);
+    let sessionValid = await upstash.get(`clawbot:session:${sessionToken}`);
+    if (sessionValid === null) {
+      sessionValid = await env.CLAWBOT_KV?.get(`clawbot:session:${sessionToken}`);
+    }
     if (sessionValid) {
       return { ok: true };
     }

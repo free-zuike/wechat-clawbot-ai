@@ -37,18 +37,30 @@ export function clearSessionCookie(): string {
 
 // 验证管理员密码或 session
 export async function verifyAdmin(request: Request, env: any): Promise<{ ok: boolean; error?: string }> {
-  // 先检查 session cookie
+  // 动态导入避免循环依赖
+  const { getUpstashService } = await import("./services/upstash");
+
+  // 先检查 session cookie（优先用 Upstash，兜底用 KV）
   const cookieHeader = request.headers.get("Cookie") || "";
   const sessionMatch = cookieHeader.match(/clawbot_session=([^;]+)/);
-  if (sessionMatch && env.CLAWBOT_KV) {
+  if (sessionMatch) {
     const sessionToken = sessionMatch[1];
-    const sessionValid = await env.CLAWBOT_KV.get(`clawbot:session:${sessionToken}`);
+    const upstash = getUpstashService(env);
+
+    // 优先从 Upstash 读 session
+    let sessionValid = await upstash.get(`clawbot:session:${sessionToken}`);
+    if (sessionValid === null) {
+      // 兜底从 KV 读（兼容旧 session）
+      sessionValid = await env.CLAWBOT_KV?.get(`clawbot:session:${sessionToken}`);
+    }
+
     if (sessionValid) {
       return { ok: true };
     }
   }
 
   // 检查是否有登录凭证（已通过微信扫码登录）
+  // 优先从 DO SQLite 读（代码已迁移），兜底从 KV 读
   if (env.CLAWBOT_KV) {
     const credsRaw = await env.CLAWBOT_KV.get("clawbot:credentials");
     if (credsRaw) {
