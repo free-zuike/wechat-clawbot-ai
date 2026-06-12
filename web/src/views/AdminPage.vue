@@ -32,7 +32,10 @@
         <div class="card">
           <h2>📊 实时状态</h2>
           <div class="desc">机器人运行状态、API 调用统计</div>
-          <div class="stat-grid">
+          <div v-if="statusLoading" class="skeleton-grid">
+            <div v-for="i in 8" :key="i" class="skeleton-item"></div>
+          </div>
+          <div v-else class="stat-grid">
             <div class="stat-item">
               <div class="stat-label">登录状态</div>
               <div class="stat-value">{{ status.loggedIn ? "✅ 在线" : "❌ 未登录" }}</div>
@@ -52,19 +55,19 @@
             </div>
             <div class="stat-item">
               <div class="stat-label">累计轮询</div>
-              <div class="stat-value">{{ status.polls }}</div>
+              <div class="stat-value">{{ status.polls.toLocaleString() }}</div>
             </div>
             <div class="stat-item">
               <div class="stat-label">累计处理</div>
-              <div class="stat-value">{{ status.handled }}</div>
+              <div class="stat-value">{{ status.handled.toLocaleString() }}</div>
             </div>
             <div class="stat-item">
               <div class="stat-label">AI 调用</div>
-              <div class="stat-value">{{ status.aiCalls }}</div>
+              <div class="stat-value">{{ status.aiCalls.toLocaleString() }}</div>
             </div>
-            <div class="stat-item">
+            <div class="stat-item" :class="{ warning: status.aiFails > 0 }">
               <div class="stat-label">AI 失败</div>
-              <div class="stat-value">{{ status.aiFails }}</div>
+              <div class="stat-value">{{ status.aiFails.toLocaleString() }}</div>
             </div>
             <div class="stat-item">
               <div class="stat-label">上次耗时</div>
@@ -132,6 +135,7 @@
               v-model="config.aiSystemPrompt"
               class="input"
               placeholder="你是爪爪，一个友好的 AI 助手..."
+              rows="8"
             ></textarea>
             <div style="font-size: 12px; color: #888; margin-top: 6px">
               定义机器人的性格和行为。留空使用默认人设
@@ -140,9 +144,13 @@
 
           <div style="display: flex; gap: 10px; margin-top: 16px">
             <button class="btn secondary" @click="handleLoadConfig">📥 加载当前配置</button>
-            <button class="btn" @click="handleSaveConfig">💾 保存配置</button>
+            <button class="btn" :disabled="configSaving" @click="handleSaveConfig">
+              {{ configSaving ? "保存中..." : "💾 保存配置" }}
+            </button>
           </div>
-          <div v-if="configResult" class="result-box">{{ configResult }}</div>
+          <div v-if="configResult" :class="['result-box', configResult.includes('成功') ? 'success' : '']">
+            {{ configResult }}
+          </div>
         </div>
       </section>
 
@@ -174,9 +182,12 @@
               v-model="chatInput"
               class="input"
               placeholder="输入消息..."
+              :disabled="chatLoading"
               @keyup.enter="handleSendChat"
             />
-            <button class="btn" @click="handleSendChat">发送</button>
+            <button class="btn" :disabled="chatLoading || !chatInput.trim()" @click="handleSendChat">
+              {{ chatLoading ? "发送中..." : "发送" }}
+            </button>
           </div>
 
           <div class="notice" style="margin-top: 16px">
@@ -191,94 +202,169 @@
         <div class="card">
           <h2>🚨 报警中心</h2>
           <div class="desc">系统错误报警和异常监控</div>
-          
-          <div class="stat-grid" style="margin-top:12px">
-            <div class="stat-item">
-              <div class="stat-label">总报警</div>
-              <div class="stat-value">{{ alertSummary.total }}</div>
-            </div>
-            <div class="stat-item" style="color:#dc2626">
-              <div class="stat-label">严重</div>
-              <div class="stat-value">{{ alertSummary.byLevel.critical }}</div>
-            </div>
-            <div class="stat-item" style="color:#d97706">
-              <div class="stat-label">错误</div>
-              <div class="stat-value">{{ alertSummary.byLevel.error }}</div>
-            </div>
-            <div class="stat-item" style="color:#ca8a04">
-              <div class="stat-label">警告</div>
-              <div class="stat-value">{{ alertSummary.byLevel.warning }}</div>
-            </div>
-            <div class="stat-item">
-              <div class="stat-label">未解决</div>
-              <div class="stat-value" :style="{color: alertSummary.unresolved > 0 ? '#dc2626' : '#16a34a'}">
-                {{ alertSummary.unresolved }}
-              </div>
-            </div>
+
+          <div v-if="alertsLoading" class="skeleton-grid">
+            <div v-for="i in 5" :key="i" class="skeleton-item"></div>
           </div>
 
-          <div style="display:flex; gap:10px; margin-top:12px">
-            <button class="btn secondary" @click="handleRefreshAlerts">🔄 刷新</button>
-            <button class="btn secondary" :disabled="alertSummary.unresolved === 0" @click="handleResolveAllAlerts">
-              ✅ 解决全部
-            </button>
-            <label class="checkbox-label">
-              <input type="checkbox" v-model="alertOnlyActive" />
-              只看未解决
-            </label>
-          </div>
-
-          <div v-if="alerts.length === 0" style="text-align:center; padding:40px; color:#aaa">
-            🎉 暂无报警记录
-          </div>
-          <div v-else style="margin-top:12px">
-            <div
-              v-for="alert in alerts.slice(0, 50)"
-              :key="alert.id"
-              class="alert-item"
-              :class="{ resolved: alert.resolved }"
-            >
-              <div class="alert-header">
-                <span class="alert-level" :class="alert.level">
-                  {{ getAlertLevelText(alert.level) }}
-                </span>
-                <span class="alert-time">{{ formatTime(alert.timestamp) }}</span>
-                <span v-if="alert.resolved" class="alert-resolved">✅ 已解决</span>
-                <button v-else class="btn-link" @click="handleResolveAlert(alert.id)">解决</button>
+          <template v-else>
+            <div class="stat-grid" style="margin-top:12px">
+              <div class="stat-item">
+                <div class="stat-label">总报警</div>
+                <div class="stat-value">{{ alertSummary.total }}</div>
               </div>
-              <div class="alert-message">{{ alert.message }}</div>
-              <div v-if="alert.error" class="alert-error">{{ alert.error }}</div>
-              <div class="alert-meta">
-                <span v-if="alert.endpoint">端点: {{ alert.endpoint }}</span>
-                <span v-if="alert.count > 1">重复: {{ alert.count }} 次</span>
+              <div class="stat-item" style="color:#dc2626">
+                <div class="stat-label">严重</div>
+                <div class="stat-value">{{ alertSummary.byLevel?.critical || 0 }}</div>
+              </div>
+              <div class="stat-item" style="color:#d97706">
+                <div class="stat-label">错误</div>
+                <div class="stat-value">{{ alertSummary.byLevel?.error || 0 }}</div>
+              </div>
+              <div class="stat-item" style="color:#ca8a04">
+                <div class="stat-label">警告</div>
+                <div class="stat-value">{{ alertSummary.byLevel?.warning || 0 }}</div>
+              </div>
+              <div class="stat-item">
+                <div class="stat-label">未解决</div>
+                <div class="stat-value" :style="{color: alertSummary.unresolved > 0 ? '#dc2626' : '#16a34a'}">
+                  {{ alertSummary.unresolved }}
+                </div>
               </div>
             </div>
-          </div>
+
+            <!-- 搜索 + 过滤 -->
+            <div class="filter-bar">
+              <input
+                v-model="alertsSearch"
+                class="input small"
+                placeholder="🔍 搜索报警内容..."
+                @input="handleRefreshAlerts"
+              />
+              <select v-model="alertsLevelFilter" class="input small" @change="handleRefreshAlerts">
+                <option value="">所有级别</option>
+                <option value="critical">严重</option>
+                <option value="error">错误</option>
+                <option value="warning">警告</option>
+                <option value="info">信息</option>
+              </select>
+              <label class="checkbox-label">
+                <input type="checkbox" v-model="alertsOnlyActive" @change="handleRefreshAlerts" />
+                只看未解决
+              </label>
+              <button class="btn secondary small" @click="handleRefreshAlerts">🔄 刷新</button>
+              <button
+                class="btn secondary small"
+                :disabled="alertSummary.unresolved === 0"
+                @click="handleResolveAllAlerts"
+              >
+                ✅ 解决全部
+              </button>
+            </div>
+
+            <!-- 报警列表 -->
+            <div v-if="alerts.length === 0" class="empty-state">
+              🎉 暂无报警记录
+            </div>
+            <div v-else>
+              <div
+                v-for="alert in alerts"
+                :key="alert.id"
+                class="alert-item"
+                :class="{ resolved: alert.resolved }"
+              >
+                <div class="alert-header">
+                  <span class="alert-level" :class="alert.level">
+                    {{ getAlertLevelText(alert.level) }}
+                  </span>
+                  <span class="alert-time">{{ formatTime(alert.timestamp) }}</span>
+                  <span v-if="alert.count > 1" class="alert-count">×{{ alert.count }}</span>
+                  <span v-if="alert.resolved" class="alert-resolved">✅ 已解决</span>
+                  <button v-else class="btn-link" @click="handleResolveAlert(alert.id)">解决</button>
+                </div>
+                <div class="alert-message">{{ alert.message }}</div>
+                <div v-if="alert.error" class="alert-error">{{ alert.error }}</div>
+                <div class="alert-meta">
+                  <span v-if="alert.endpoint">端点: {{ alert.endpoint }}</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- 分页 -->
+            <div v-if="alertsTotalPages > 1" class="pagination">
+              <button
+                class="btn secondary small"
+                :disabled="alertsPage <= 1"
+                @click="alertsPage--; handleRefreshAlerts()"
+              >
+                ← 上一页
+              </button>
+              <span>第 {{ alertsPage }} / {{ alertsTotalPages }} 页（共 {{ alertsTotal }} 条）</span>
+              <button
+                class="btn secondary small"
+                :disabled="alertsPage >= alertsTotalPages"
+                @click="alertsPage++; handleRefreshAlerts()"
+              >
+                下一页 →
+              </button>
+            </div>
+          </template>
         </div>
       </section>
 
-      <!-- 会话管理 -->
+      <!-- 用户会话 -->
       <section v-if="activeSection === 'sessions'">
         <div class="card">
           <h2>💬 用户会话</h2>
           <div class="desc">查看所有活跃用户的对话记录</div>
-          
-          <div style="margin-top:12px">
-            <button class="btn secondary" @click="handleRefreshSessions">🔄 刷新</button>
+
+          <div v-if="sessionsLoading" class="skeleton-grid">
+            <div v-for="i in 5" :key="i" class="skeleton-item" style="grid-column: 1 / -1"></div>
           </div>
 
-          <div v-if="sessions.length === 0" style="text-align:center; padding:40px; color:#aaa">
-            暂无会话记录
-          </div>
-          <div v-else style="margin-top:12px">
-            <div class="session-item" v-for="session in sessions.slice(0, 30)" :key="session.from_user_id">
-              <div class="session-user">👤 {{ session.from_user_id }}</div>
-              <div class="session-info">
-                <span>📨 {{ session.message_count }} 条消息</span>
-                <span>🕒 {{ formatTime(session.last_message_at) }}</span>
+          <template v-else>
+            <div class="filter-bar">
+              <input
+                v-model="sessionsSearch"
+                class="input small"
+                placeholder="🔍 搜索用户ID..."
+                @input="handleRefreshSessions"
+              />
+              <button class="btn secondary small" @click="handleRefreshSessions">🔄 刷新</button>
+            </div>
+
+            <div v-if="sessions.length === 0" class="empty-state">
+              暂无会话记录
+            </div>
+            <div v-else>
+              <div class="session-item" v-for="session in sessions" :key="session.from_user_id">
+                <div class="session-user">👤 {{ session.from_user_id }}</div>
+                <div class="session-info">
+                  <span>📨 {{ session.message_count }} 条消息</span>
+                  <span>🕒 {{ formatTime(session.last_message_at) }}</span>
+                </div>
               </div>
             </div>
-          </div>
+
+            <!-- 分页 -->
+            <div v-if="sessionsTotalPages > 1" class="pagination">
+              <button
+                class="btn secondary small"
+                :disabled="sessionsPage <= 1"
+                @click="sessionsPage--; handleRefreshSessions()"
+              >
+                ← 上一页
+              </button>
+              <span>第 {{ sessionsPage }} / {{ sessionsTotalPages }} 页（共 {{ sessionsTotal }} 条）</span>
+              <button
+                class="btn secondary small"
+                :disabled="sessionsPage >= sessionsTotalPages"
+                @click="sessionsPage++; handleRefreshSessions()"
+              >
+                下一页 →
+              </button>
+            </div>
+          </template>
         </div>
       </section>
 
@@ -287,49 +373,55 @@
         <div class="card">
           <h2>💚 系统健康</h2>
           <div class="desc">实时系统健康状态和性能指标</div>
-          
-          <div class="stat-grid" style="margin-top:12px">
-            <div class="stat-item" :class="healthData.kv === 'OK' ? 'success' : 'error'">
-              <div class="stat-label">KV 存储</div>
-              <div class="stat-value">{{ healthData.kv === 'OK' ? '✅ 正常' : '❌ 异常' }}</div>
-            </div>
-            <div class="stat-item" :class="healthData.loggedIn ? 'success' : 'warning'">
-              <div class="stat-label">登录状态</div>
-              <div class="stat-value">{{ healthData.loggedIn ? '✅ 已登录' : '⚠️ 未登录' }}</div>
-            </div>
-            <div class="stat-item">
-              <div class="stat-label">总轮询</div>
-              <div class="stat-value">{{ healthData.totalPolls }}</div>
-            </div>
-            <div class="stat-item">
-              <div class="stat-label">总处理</div>
-              <div class="stat-value">{{ healthData.totalHandled }}</div>
-            </div>
-            <div class="stat-item">
-              <div class="stat-label">AI 调用</div>
-              <div class="stat-value">{{ healthData.totalAICalls }}</div>
-            </div>
-            <div class="stat-item" :class="healthData.totalAIFails > 0 ? 'warning' : ''">
-              <div class="stat-label">AI 失败</div>
-              <div class="stat-value">{{ healthData.totalAIFails }}</div>
-            </div>
-            <div class="stat-item" :class="healthData.unresolvedAlerts > 0 ? 'warning' : ''">
-              <div class="stat-label">未解决报警</div>
-              <div class="stat-value">{{ healthData.unresolvedAlerts }}</div>
-            </div>
-            <div class="stat-item" :class="healthData.criticalAlerts > 0 ? 'error' : ''">
-              <div class="stat-label">严重报警</div>
-              <div class="stat-value">{{ healthData.criticalAlerts }}</div>
-            </div>
+
+          <div v-if="healthLoading" class="skeleton-grid">
+            <div v-for="i in 10" :key="i" class="skeleton-item"></div>
           </div>
-          
-          <div style="margin-top:12px">
-            <button class="btn secondary" @click="handleRefreshHealth">🔄 刷新健康状态</button>
-          </div>
-          
-          <div style="margin-top:16px; font-size:12px; color:#888">
-            最后更新: {{ formatTime(healthData.timestamp) }}
-          </div>
+
+          <template v-else>
+            <div class="stat-grid" style="margin-top:12px">
+              <div class="stat-item" :class="healthData.kv === 'OK' ? 'success' : 'error'">
+                <div class="stat-label">KV 存储</div>
+                <div class="stat-value">{{ healthData.kv === 'OK' ? '✅ 正常' : '❌ 异常' }}</div>
+              </div>
+              <div class="stat-item" :class="healthData.loggedIn ? 'success' : 'warning'">
+                <div class="stat-label">登录状态</div>
+                <div class="stat-value">{{ healthData.loggedIn ? '✅ 已登录' : '⚠️ 未登录' }}</div>
+              </div>
+              <div class="stat-item">
+                <div class="stat-label">总轮询</div>
+                <div class="stat-value">{{ (healthData.totalPolls || 0).toLocaleString() }}</div>
+              </div>
+              <div class="stat-item">
+                <div class="stat-label">总处理</div>
+                <div class="stat-value">{{ (healthData.totalHandled || 0).toLocaleString() }}</div>
+              </div>
+              <div class="stat-item">
+                <div class="stat-label">AI 调用</div>
+                <div class="stat-value">{{ (healthData.totalAICalls || 0).toLocaleString() }}</div>
+              </div>
+              <div class="stat-item" :class="{ warning: (healthData.totalAIFails || 0) > 0 }">
+                <div class="stat-label">AI 失败</div>
+                <div class="stat-value">{{ (healthData.totalAIFails || 0).toLocaleString() }}</div>
+              </div>
+              <div class="stat-item" :class="{ warning: (healthData.unresolvedAlerts || 0) > 0 }">
+                <div class="stat-label">未解决报警</div>
+                <div class="stat-value">{{ healthData.unresolvedAlerts || 0 }}</div>
+              </div>
+              <div class="stat-item" :class="{ error: (healthData.criticalAlerts || 0) > 0 }">
+                <div class="stat-label">严重报警</div>
+                <div class="stat-value">{{ healthData.criticalAlerts || 0 }}</div>
+              </div>
+            </div>
+
+            <div style="margin-top:12px">
+              <button class="btn secondary small" @click="handleRefreshHealth">🔄 刷新健康状态</button>
+            </div>
+
+            <div style="margin-top:16px; font-size:12px; color:#888">
+              最后更新: {{ formatTime(healthData.timestamp) }}
+            </div>
+          </template>
         </div>
       </section>
     </main>
@@ -348,6 +440,12 @@ import {
   chat,
   checkLogin,
   debugLogin,
+  fetchAlerts,
+  resolveAlert,
+  resolveAllAlerts,
+  fetchSessions,
+  fetchHealth,
+  ApiError,
 } from "../api";
 
 const router = useRouter();
@@ -364,7 +462,9 @@ const navItems = [
 
 const activeSection = ref("status");
 let isFirstRefresh = true;
+let refreshTimer: number | null = null;
 
+// ===== 状态数据 =====
 const status = reactive({
   loggedIn: false,
   tokenHealth: "",
@@ -376,33 +476,50 @@ const status = reactive({
   lastPollAt: "从未",
   lastLatencyMs: "—",
 });
+const statusLoading = ref(false);
 
-const config = reactive({
-  aiModel: "",
-  aiSystemPrompt: "",
-});
-
+// ===== 配置数据 =====
+const config = reactive({ aiModel: "", aiSystemPrompt: "" });
 const configResult = ref("");
+const configSaving = ref(false);
+
+// ===== 聊天数据 =====
 const chatMessages = ref<Array<{ role: string; text: string }>>([]);
 const chatInput = ref("");
+const chatLoading = ref(false);
+
+// ===== 消息控制 =====
 const pollResult = ref("");
 const isPolling = ref(false);
+
+// ===== 调试数据 =====
 const debugInfo = ref("");
 const debugLoading = ref(false);
 
-// 报警相关状态
+// ===== 报警数据 =====
 const alerts = ref<any[]>([]);
-const alertOnlyActive = ref(false);
+const alertsLoading = ref(false);
+const alertsOnlyActive = ref(false);
+const alertsLevelFilter = ref("");
+const alertsSearch = ref("");
+const alertsPage = ref(1);
+const alertsTotalPages = ref(1);
+const alertsTotal = ref(0);
 const alertSummary = reactive({
   total: 0,
   byLevel: { info: 0, warning: 0, error: 0, critical: 0 },
   unresolved: 0,
 });
 
-// 会话相关状态
+// ===== 会话数据 =====
 const sessions = ref<any[]>([]);
+const sessionsLoading = ref(false);
+const sessionsSearch = ref("");
+const sessionsPage = ref(1);
+const sessionsTotalPages = ref(1);
+const sessionsTotal = ref(0);
 
-// 健康状态
+// ===== 健康数据 =====
 const healthData = reactive({
   kv: "—",
   loggedIn: false,
@@ -414,12 +531,26 @@ const healthData = reactive({
   criticalAlerts: 0,
   errorAlerts: 0,
   warningAlerts: 0,
-  timestamp: new Date().toISOString(),
+  timestamp: "",
 });
+const healthLoading = ref(false);
 
-let refreshTimer: number | null = null;
+// ===== 通用错误处理 =====
+function handleApiError(error: unknown, defaultMessage: string): string {
+  if (error instanceof ApiError) {
+    if (error.isAuthError) {
+      router.push("/login");
+      return "请先登录";
+    }
+    return error.message;
+  }
+  if (error instanceof Error) return error.message;
+  return defaultMessage;
+}
 
+// ===== 状态刷新 =====
 async function handleRefreshStatus() {
+  statusLoading.value = true;
   try {
     const d = await fetchStatus(isFirstRefresh);
     status.loggedIn = !!d.loggedIn;
@@ -432,12 +563,16 @@ async function handleRefreshStatus() {
     status.lastPollAt = d.stats?.lastPollAt
       ? new Date(d.stats.lastPollAt).toLocaleString()
       : "从未";
-    status.lastLatencyMs =
-      d.stats?.lastLatencyMs == null ? "—" : d.stats.lastLatencyMs + " ms";
+    status.lastLatencyMs = d.stats?.lastLatencyMs == null ? "—" : d.stats.lastLatencyMs + " ms";
     isFirstRefresh = false;
-  } catch {}
+  } catch (e: any) {
+    console.error("状态刷新失败:", e);
+  } finally {
+    statusLoading.value = false;
+  }
 }
 
+// ===== 消息轮询 =====
 async function handleTriggerPoll() {
   isPolling.value = true;
   pollResult.value = "正在轮询...";
@@ -451,43 +586,55 @@ async function handleTriggerPoll() {
       (d.error ? `\n⚠️ ${d.error}` : "");
     handleRefreshStatus();
   } catch (e: any) {
-    pollResult.value = "❌ 失败: " + e.message;
+    pollResult.value = "❌ 失败: " + handleApiError(e, "轮询失败");
   } finally {
     isPolling.value = false;
   }
 }
 
+// ===== 配置操作 =====
 async function handleLoadConfig() {
   configResult.value = "加载中...";
   try {
     const d = await fetchConfig();
     config.aiModel = d.aiModel || "";
     config.aiSystemPrompt = d.aiSystemPrompt || "";
-    configResult.value = "✅ 已加载当前配置";
+    configResult.value = d.hasEnvOverride
+      ? "✅ 已加载当前配置（注意：当前有环境变量覆盖）"
+      : "✅ 已加载当前配置";
   } catch (e: any) {
-    configResult.value = "❌ 加载失败: " + e.message;
+    configResult.value = "❌ 加载失败: " + handleApiError(e, "加载失败");
   }
 }
 
 async function handleSaveConfig() {
+  configSaving.value = true;
   configResult.value = "保存中...";
   try {
     const d = await saveConfig(config);
     if (d.ok) {
-      configResult.value = "✅ 配置已保存！下次消息将使用新配置";
+      configResult.value = "✅ " + (d.message || "配置已保存");
+    } else if (d.error === "VALIDATION_ERROR") {
+      configResult.value = "⚠️ 验证失败: " + (d.errors || []).join("; ");
     } else {
       configResult.value = "❌ " + (d.error || "保存失败");
     }
   } catch (e: any) {
-    configResult.value = "❌ 保存失败: " + e.message;
+    configResult.value = "❌ 保存失败: " + handleApiError(e, "保存失败");
+  } finally {
+    configSaving.value = false;
   }
 }
 
+// ===== 聊天 =====
 async function handleSendChat() {
   const q = chatInput.value.trim();
-  if (!q) return;
+  if (!q || chatLoading.value) return;
+
   chatMessages.value.push({ role: "u", text: q });
   chatInput.value = "";
+  chatLoading.value = true;
+
   try {
     const d = await chat(q);
     chatMessages.value.push({
@@ -495,10 +642,16 @@ async function handleSendChat() {
       text: d.reply + (d.source === "shortcut" ? " [快捷回复]" : ""),
     });
   } catch (e: any) {
-    chatMessages.value.push({ role: "b", text: "错误: " + e.message });
+    chatMessages.value.push({
+      role: "b",
+      text: "错误: " + handleApiError(e, "AI 回复失败"),
+    });
+  } finally {
+    chatLoading.value = false;
   }
 }
 
+// ===== 登出 =====
 async function handleLogout() {
   if (!confirm("确认退出登录？退出后需重新扫码。")) return;
   try {
@@ -507,6 +660,7 @@ async function handleLogout() {
   router.push("/login");
 }
 
+// ===== 调试 =====
 async function handleDebug() {
   debugLoading.value = true;
   debugInfo.value = "诊断中...";
@@ -514,20 +668,31 @@ async function handleDebug() {
     const d = await debugLogin();
     debugInfo.value = JSON.stringify(d, null, 2);
   } catch (e: any) {
-    debugInfo.value = "错误: " + e.message;
+    debugInfo.value = "错误: " + handleApiError(e, "诊断失败");
   } finally {
     debugLoading.value = false;
   }
 }
 
-// 报警相关函数
+// ===== 报警操作 =====
 async function handleRefreshAlerts() {
+  alertsLoading.value = true;
   try {
-    const params = alertOnlyActive.value ? "?active=true" : "";
-    const response = await fetch("/api/admin/alerts" + params, { credentials: "include" });
-    const data = await response.json();
+    const params = new URLSearchParams();
+    if (alertsOnlyActive.value) params.set("active", "true");
+    if (alertsLevelFilter.value) params.set("level", alertsLevelFilter.value);
+    if (alertsSearch.value) params.set("search", alertsSearch.value);
+    params.set("page", String(alertsPage.value));
+    params.set("limit", "30");
+
+    // 兼容：使用内置 fetch 调用管理 API
+    const res = await fetch(`/api/admin/alerts?${params.toString()}`, { credentials: "include" });
+    const data = await res.json();
+
     if (data && data.alerts) {
       alerts.value = data.alerts;
+      alertsTotal.value = data.total || 0;
+      alertsTotalPages.value = data.totalPages || 1;
       if (data.summary) {
         alertSummary.total = data.summary.total || 0;
         alertSummary.unresolved = data.summary.unresolved || 0;
@@ -541,16 +706,14 @@ async function handleRefreshAlerts() {
     }
   } catch (e: any) {
     console.error("刷新报警失败:", e);
+  } finally {
+    alertsLoading.value = false;
   }
 }
 
 async function handleResolveAlert(id: string) {
   try {
-    const response = await fetch("/api/admin/alerts/resolve?id=" + encodeURIComponent(id), {
-      method: "POST",
-      credentials: "include",
-    });
-    const data = await response.json();
+    const data = await resolveAlert(id);
     if (data.success) {
       handleRefreshAlerts();
     }
@@ -562,11 +725,7 @@ async function handleResolveAlert(id: string) {
 async function handleResolveAllAlerts() {
   if (!confirm("确认解决所有报警？")) return;
   try {
-    const response = await fetch("/api/admin/alerts/resolve-all", {
-      method: "POST",
-      credentials: "include",
-    });
-    const data = await response.json();
+    const data = await resolveAllAlerts();
     if (data.success) {
       handleRefreshAlerts();
     }
@@ -575,43 +734,54 @@ async function handleResolveAllAlerts() {
   }
 }
 
-// 会话相关函数
+// ===== 会话操作 =====
 async function handleRefreshSessions() {
+  sessionsLoading.value = true;
   try {
-    const response = await fetch("/api/admin/sessions", { credentials: "include" });
-    const data = await response.json();
+    const params = new URLSearchParams();
+    if (sessionsSearch.value) params.set("search", sessionsSearch.value);
+    params.set("page", String(sessionsPage.value));
+    params.set("limit", "30");
+
+    const res = await fetch(`/api/admin/sessions?${params.toString()}`, { credentials: "include" });
+    const data = await res.json();
+
     if (data && data.sessions) {
       sessions.value = data.sessions;
+      sessionsTotal.value = data.total || 0;
+      sessionsTotalPages.value = data.totalPages || 1;
     }
   } catch (e: any) {
     console.error("刷新会话失败:", e);
+  } finally {
+    sessionsLoading.value = false;
   }
 }
 
-// 健康状态函数
+// ===== 健康检查 =====
 async function handleRefreshHealth() {
+  healthLoading.value = true;
   try {
-    const response = await fetch("/api/admin/health", { credentials: "include" });
-    const data = await response.json();
-    if (data) {
-      healthData.kv = data.kv || "—";
-      healthData.loggedIn = !!data.loggedIn;
-      healthData.totalPolls = data.totalPolls || 0;
-      healthData.totalHandled = data.totalHandled || 0;
-      healthData.totalAICalls = data.totalAICalls || 0;
-      healthData.totalAIFails = data.totalAIFails || 0;
-      healthData.unresolvedAlerts = data.unresolvedAlerts || 0;
-      healthData.criticalAlerts = data.criticalAlerts || 0;
-      healthData.errorAlerts = data.errorAlerts || 0;
-      healthData.warningAlerts = data.warningAlerts || 0;
-      healthData.timestamp = data.timestamp || new Date().toISOString();
-    }
+    const data = await fetchHealth();
+    healthData.kv = data.kv || "—";
+    healthData.loggedIn = !!data.loggedIn;
+    healthData.totalPolls = data.totalPolls || 0;
+    healthData.totalHandled = data.totalHandled || 0;
+    healthData.totalAICalls = data.totalAICalls || 0;
+    healthData.totalAIFails = data.totalAIFails || 0;
+    healthData.unresolvedAlerts = data.unresolvedAlerts || 0;
+    healthData.criticalAlerts = data.criticalAlerts || 0;
+    healthData.errorAlerts = data.errorAlerts || 0;
+    healthData.warningAlerts = data.warningAlerts || 0;
+    healthData.timestamp = data.timestamp || new Date().toISOString();
   } catch (e: any) {
     console.error("刷新健康状态失败:", e);
+  } finally {
+    healthLoading.value = false;
   }
 }
 
-// 工具函数
+// ===== 工具函数 =====
 function getAlertLevelText(level: string): string {
   const map: Record<string, string> = {
     info: "ℹ️ 信息",
@@ -631,6 +801,7 @@ function formatTime(isoString: string): string {
   }
 }
 
+// ===== 生命周期 =====
 onMounted(async () => {
   try {
     const d = await checkLogin();
@@ -642,12 +813,20 @@ onMounted(async () => {
     router.push("/login");
     return;
   }
+
+  // 并行加载所有页面数据
   handleRefreshStatus();
   handleLoadConfig();
   handleRefreshAlerts();
   handleRefreshSessions();
   handleRefreshHealth();
-  refreshTimer = window.setInterval(handleRefreshStatus, 30000);
+
+  // 定时刷新状态（30秒）
+  refreshTimer = window.setInterval(() => {
+    handleRefreshStatus();
+    if (activeSection.value === "alerts") handleRefreshAlerts();
+    if (activeSection.value === "health") handleRefreshHealth();
+  }, 30000);
 });
 
 onUnmounted(() => {
@@ -684,36 +863,14 @@ onUnmounted(() => {
   font-weight: 600;
 }
 
-.alert-level.info {
-  background: #dbeafe;
-  color: #1e40af;
-}
+.alert-level.info { background: #dbeafe; color: #1e40af; }
+.alert-level.warning { background: #fef3c7; color: #92400e; }
+.alert-level.error { background: #fee2e2; color: #991b1b; }
+.alert-level.critical { background: #991b1b; color: #fff; }
 
-.alert-level.warning {
-  background: #fef3c7;
-  color: #92400e;
-}
-
-.alert-level.error {
-  background: #fee2e2;
-  color: #991b1b;
-}
-
-.alert-level.critical {
-  background: #991b1b;
-  color: #fff;
-}
-
-.alert-time {
-  color: #6b7280;
-  font-size: 12px;
-}
-
-.alert-resolved {
-  color: #16a34a;
-  font-size: 12px;
-  margin-left: auto;
-}
+.alert-time { color: #6b7280; font-size: 12px; }
+.alert-count { color: #6b7280; font-size: 12px; font-weight: 600; }
+.alert-resolved { color: #16a34a; font-size: 12px; margin-left: auto; }
 
 .alert-message {
   font-size: 14px;
@@ -736,20 +893,6 @@ onUnmounted(() => {
   color: #9ca3af;
   display: flex;
   gap: 12px;
-}
-
-.btn-link {
-  background: none;
-  border: none;
-  color: #2563eb;
-  cursor: pointer;
-  font-size: 12px;
-  padding: 2px 6px;
-  margin-left: auto;
-}
-
-.btn-link:hover {
-  text-decoration: underline;
 }
 
 .session-item {
@@ -775,16 +918,28 @@ onUnmounted(() => {
   gap: 16px;
 }
 
-.stat-item.success .stat-value {
-  color: #16a34a;
+.stat-item.success .stat-value { color: #16a34a; }
+.stat-item.warning .stat-value { color: #d97706; }
+.stat-item.error .stat-value { color: #dc2626; }
+
+.btn-link {
+  background: none;
+  border: none;
+  color: #2563eb;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 2px 6px;
+  margin-left: auto;
 }
 
-.stat-item.warning .stat-value {
-  color: #d97706;
-}
+.btn-link:hover { text-decoration: underline; }
 
-.stat-item.error .stat-value {
-  color: #dc2626;
+.filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+  flex-wrap: wrap;
 }
 
 .checkbox-label {
@@ -796,7 +951,58 @@ onUnmounted(() => {
   cursor: pointer;
 }
 
-.checkbox-label input {
-  cursor: pointer;
+.input.small {
+  font-size: 13px;
+  padding: 6px 10px;
+  min-width: 150px;
+  max-width: 300px;
+}
+
+.btn.small {
+  font-size: 12px;
+  padding: 6px 12px;
+}
+
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 15px;
+  margin-top: 16px;
+  font-size: 13px;
+  color: #6b7280;
+}
+
+.empty-state {
+  text-align: center;
+  padding: 40px;
+  color: #aaa;
+  font-size: 14px;
+}
+
+.result-box.success {
+  background: #ecfdf5;
+  color: #065f46;
+  border-color: #a7f3d0;
+}
+
+/* 骨架屏样式 */
+.skeleton-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 10px;
+}
+
+.skeleton-item {
+  height: 60px;
+  background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+  background-size: 200% 100%;
+  animation: skeleton-loading 1.5s infinite;
+  border-radius: 8px;
+}
+
+@keyframes skeleton-loading {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
 }
 </style>

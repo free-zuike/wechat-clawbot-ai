@@ -1,195 +1,311 @@
 // 管理路由 - 消息查询、会话管理、报警查询、统计数据
+// 优化：分页支持 + 搜索过滤 + 响应缓存
 
 import { json, verifyAdmin } from "../utils";
 import { Logger } from "../utils/error";
 import { alertService } from "../utils/alert";
+import { statusCache } from "../utils/cache";
 import type { Env } from "../index";
 
-interface MessageRecord {
-  from_user_id: string;
-  content_preview: string;
+interface AlertRecord {
+  id: string;
+  level: "info" | "warning" | "error" | "critical";
+  message: string;
+  error?: string;
+  endpoint?: string;
   timestamp: string;
-  message_type: number;
-  context_token: string;
+  count: number;
+  resolved?: boolean;
+  resolvedAt?: string;
 }
 
-interface SessionRecord {
-  from_user_id: string;
-  message_count: number;
-  last_message_at: string;
-  first_message_at: string;
+function parseLimit(url: URL, defaultValue = 50, max = 200): number {
+  const raw = url.searchParams.get("limit");
+  if (!raw) return defaultValue;
+  const parsed = parseInt(raw, 10);
+  if (Number.isNaN(parsed) || parsed <= 0) return defaultValue;
+  return Math.min(parsed, max);
 }
 
-interface StatsRecord {
-  date: string;
-  polls: number;
-  handled: number;
-  ai_calls: number;
-  ai_fails: number;
-  average_latency_ms: number;
+function parsePage(url: URL, defaultValue = 1): number {
+  const raw = url.searchParams.get("page");
+  if (!raw) return defaultValue;
+  const parsed = parseInt(raw, 10);
+  if (Number.isNaN(parsed) || parsed <= 0) return defaultValue;
+  return parsed;
 }
 
-// 获取最近消息记录（从 KV 中读取）
+// ============ 消息查询 ============
+
 export async function handleRecentMessages(request: Request, env: Env): Promise<Response> {
   const v = await verifyAdmin(request, env);
   if (!v.ok) return json({ error: v.error }, 401);
 
   try {
     const url = new URL(request.url);
-    const limit = parseInt(url.searchParams.get('limit') || '50');
-    const validLimit = Math.min(Math.max(limit, 1), 100);
-    
-    // 从 KV 读取消息记录（简单实现：从最近的 KV 记录查询）
-    const messages: MessageRecord[] = [];
-    const credentials = await env.CLAWBOT_KV.get('clawbot:credentials');
-    if (credentials) {
-      // 读取轮询统计信息
-      const stats = await env.CLAWBOT_KV.get('clawbot:stats');
-      if (stats) {
-        const statsData = JSON.parse(stats);
-        messages.push({
-          from_user_id: statsData.lastMessageFrom || 'system',
-          content_preview: `系统统计 - 轮询次数: ${statsData.polls || 0}, 处理: ${statsData.handled || 0}`,
-          timestamp: statsData.lastPollAt || new Date().toISOString(),
-          message_type: 0,
-          context_token: 'system',
-        });
-      }
-    }
-    
-    // 读取上下文中的消息（作为最近消息显示）
-    const { keys } = await env.CLAWBOT_KV.list({ prefix: 'clawbot:context:', limit: validLimit });
+    const limit = parseLimit(url);
+    const page = parsePage(url);
+    const search = url.searchParams.get("search")?.toLowerCase() || "";
+    const offset = (page - 1) * limit;
+
+    // 从 KV 读取消息记录
+    const messages: Array<{
+      from_user_id: string;
+      content_preview: string;
+      timestamp: string;
+      message_type: number;
+      context_token: string;
+    }> = [];
+
+    // 读取上下文信息作为消息列表
+    const prefix = "clawbot:context:";
+    const { keys } = await env.CLAWBOT_KV.list({ prefix });
+
     for (const key of keys) {
       const data = await env.CLAWBOT_KV.get(key.name);
-      if (data) {
-        const context = JSON.parse(data);
-        messages.push({
-          from_user_id: context.userId || key.name,
-          content_preview: `会话上下文 - 消息数: ${context.messages?.length || 0}`,
-          timestamp: context.lastUpdated || new Date().toISOString(),
-          message_type: 1,
-          context_token: key.name,
-        });
+      if (!data) continue;
+
+      let context: any = null;
+      try {
+        context = JSON.parse(data);
+      } catch {
+        continue;
       }
+
+      const userId = context.userId || key.name.replace(prefix, "");
+      const lastMessage =
+        (Array.isArray(context.messages) &&
+          context.messages[context.messages.length - 1]?.text) ||
+        "（无文本内容）";
+
+      messages.push({
+        from_user_id: userId,
+        content_preview: String(lastMessage).slice(0, 200),
+        timestamp: context.lastUpdated || new Date(key.expiration || Date.now()).toISOString(),
+        message_type: context.message_type || 1,
+        context_token: key.name,
+      });
     }
-    
-    Logger.info('[Admin] Recent messages queried', { count: messages.length });
-    
+
+    // 按时间排序（最新在前）
+    messages.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
+    // 搜索过滤
+    const filtered = search
+      ? messages.filter(
+          (m) =>
+            m.from_user_id.toLowerCase().includes(search) ||
+            m.content_preview.toLowerCase().includes(search)
+        )
+      : messages;
+
+    // 分页
+    const paged = filtered.slice(offset, offset + limit);
+
+    Logger.info("[Admin] messages queried", {
+      total: filtered.length,
+      page,
+      limit,
+      hasSearch: !!search,
+    });
+
     return json({
       success: true,
-      total: messages.length,
-      messages: messages.slice(0, validLimit),
+      total: filtered.length,
+      page,
+      limit,
+      totalPages: Math.ceil(filtered.length / limit) || 1,
+      messages: paged,
     });
   } catch (e: any) {
-    Logger.error('[Admin] Error querying recent messages', { error: e.message });
+    Logger.error("[Admin] messages query error", { error: e.message });
     return json({ error: e.message }, 500);
   }
 }
 
-// 获取用户会话列表
+// ============ 会话查询 ============
+
 export async function handleSessions(request: Request, env: Env): Promise<Response> {
   const v = await verifyAdmin(request, env);
   if (!v.ok) return json({ error: v.error }, 401);
 
   try {
-    const sessions: SessionRecord[] = [];
-    const { keys } = await env.CLAWBOT_KV.list({ prefix: 'clawbot:context:' });
-    
+    const url = new URL(request.url);
+    const limit = parseLimit(url);
+    const page = parsePage(url);
+    const search = url.searchParams.get("search")?.toLowerCase() || "";
+    const offset = (page - 1) * limit;
+
+    const sessions: Array<{
+      from_user_id: string;
+      message_count: number;
+      last_message_at: string;
+      first_message_at?: string;
+    }> = [];
+
+    const { keys } = await env.CLAWBOT_KV.list({ prefix: "clawbot:context:" });
+
     for (const key of keys) {
       const data = await env.CLAWBOT_KV.get(key.name);
-      if (data) {
-        const context = JSON.parse(data);
-        sessions.push({
-          from_user_id: context.userId || key.name.replace('clawbot:context:', ''),
-          message_count: context.messages?.length || 0,
-          last_message_at: context.lastUpdated || new Date(key.expiration || Date.now()).toISOString(),
-          first_message_at: context.firstMessageAt || new Date(key.expiration || Date.now()).toISOString(),
-        });
+      if (!data) continue;
+
+      let context: any = null;
+      try {
+        context = JSON.parse(data);
+      } catch {
+        continue;
       }
+
+      sessions.push({
+        from_user_id: context.userId || key.name.replace("clawbot:context:", ""),
+        message_count: Array.isArray(context.messages) ? context.messages.length : 0,
+        last_message_at: context.lastUpdated || new Date().toISOString(),
+        first_message_at: context.firstMessageAt,
+      });
     }
-    
-    // 按最后消息时间排序
+
     sessions.sort((a, b) => new Date(b.last_message_at).getTime() - new Date(a.last_message_at).getTime());
-    
-    Logger.info('[Admin] Sessions queried', { count: sessions.length });
-    
+
+    // 搜索过滤
+    const filtered = search
+      ? sessions.filter((s) => s.from_user_id.toLowerCase().includes(search))
+      : sessions;
+
+    // 分页
+    const paged = filtered.slice(offset, offset + limit);
+
+    Logger.info("[Admin] sessions queried", { total: filtered.length, page, limit });
+
     return json({
       success: true,
-      total: sessions.length,
-      sessions: sessions.slice(0, 50),
+      total: filtered.length,
+      page,
+      limit,
+      totalPages: Math.ceil(filtered.length / limit) || 1,
+      sessions: paged,
     });
   } catch (e: any) {
-    Logger.error('[Admin] Error querying sessions', { error: e.message });
+    Logger.error("[Admin] sessions query error", { error: e.message });
     return json({ error: e.message }, 500);
   }
 }
 
-// 获取报警列表
+// ============ 报警查询 ============
+
 export async function handleAlerts(request: Request, env: Env): Promise<Response> {
   const v = await verifyAdmin(request, env);
   if (!v.ok) return json({ error: v.error }, 401);
 
   try {
-    // 初始化报警服务
-    alertService.init(env.CLAWBOT_KV);
-    
     const url = new URL(request.url);
-    const onlyActive = url.searchParams.get('active') === 'true';
-    const limit = parseInt(url.searchParams.get('limit') || '50');
-    
-    let alerts;
-    if (onlyActive) {
-      alerts = alertService.getActiveAlerts();
-    } else {
-      alerts = alertService.getRecentAlerts(limit);
-    }
-    
+    const limit = parseLimit(url, 50, 100);
+    const page = parsePage(url);
+    const offset = (page - 1) * limit;
+    const onlyActive = url.searchParams.get("active") === "true";
+    const level = url.searchParams.get("level")?.toLowerCase();
+    const search = url.searchParams.get("search")?.toLowerCase() || "";
+
+    alertService.init(env.CLAWBOT_KV);
+
+    // 从 alertService 获取原始列表（底层没有直接分页 API，这里在内存中处理）
+    // 注意：alertService 是内存存储，这里直接访问 getActiveAlerts/getRecentAlerts
+    // 为获取所有报警需要走内部存储，这里直接调用 getSummary 和 getRecentAlerts
     const summary = alertService.getSummary();
-    
-    Logger.info('[Admin] Alerts queried', { count: alerts.length, unresolved: summary.unresolved });
-    
+
+    // 获取原始数据 - 通过刷新获取存储中的报警
+    let alerts: AlertRecord[] = [];
+
+    // 从 KV 直接读取以获取完整列表
+    try {
+      const raw = await env.CLAWBOT_KV.get("clawbot:alerts");
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        alerts = Array.isArray(parsed.alerts) ? parsed.alerts : [];
+      }
+    } catch {
+      // 忽略 - 使用内存中的摘要信息
+    }
+
+    // 过滤未解决
+    if (onlyActive) {
+      alerts = alerts.filter((a) => !a.resolved);
+    }
+
+    // 过滤级别
+    if (level) {
+      alerts = alerts.filter((a) => a.level === level);
+    }
+
+    // 搜索
+    if (search) {
+      alerts = alerts.filter(
+        (a) =>
+          a.message.toLowerCase().includes(search) ||
+          (a.endpoint || "").toLowerCase().includes(search) ||
+          (a.error || "").toLowerCase().includes(search)
+      );
+    }
+
+    // 排序：最新的优先
+    alerts.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
+    const total = alerts.length;
+    const paged = alerts.slice(offset, offset + limit);
+
+    Logger.info("[Admin] alerts queried", {
+      total,
+      unresolved: summary.unresolved,
+      page,
+      limit,
+      level,
+      hasSearch: !!search,
+    });
+
     return json({
       success: true,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit) || 1,
       summary,
-      total: alerts.length,
-      alerts: alerts.slice(0, limit),
+      alerts: paged,
     });
   } catch (e: any) {
-    Logger.error('[Admin] Error querying alerts', { error: e.message });
+    Logger.error("[Admin] alerts query error", { error: e.message });
     return json({ error: e.message }, 500);
   }
 }
 
-// 解决特定报警
+// ============ 解决报警 ============
+
 export async function handleResolveAlert(request: Request, env: Env): Promise<Response> {
   const v = await verifyAdmin(request, env);
   if (!v.ok) return json({ error: v.error }, 401);
 
   try {
     const url = new URL(request.url);
-    const id = url.searchParams.get('id');
-    
+    const id = url.searchParams.get("id");
+
     if (!id) {
-      return json({ error: '缺少报警ID' }, 400);
+      return json({ error: "缺少报警 ID" }, 400);
     }
-    
+
     alertService.init(env.CLAWBOT_KV);
     const success = await alertService.resolveAlert(id);
-    
+
     if (!success) {
-      return json({ error: '报警未找到或已解决' }, 404);
+      return json({ error: "报警未找到或已解决" }, 404);
     }
-    
-    Logger.info('[Admin] Alert resolved', { id });
-    
-    return json({ success: true, message: '报警已解决' });
+
+    Logger.info("[Admin] alert resolved", { id });
+
+    return json({ success: true, message: "报警已解决" });
   } catch (e: any) {
-    Logger.error('[Admin] Error resolving alert', { error: e.message });
+    Logger.error("[Admin] resolve alert error", { error: e.message });
     return json({ error: e.message }, 500);
   }
 }
 
-// 解决所有报警
 export async function handleResolveAllAlerts(request: Request, env: Env): Promise<Response> {
   const v = await verifyAdmin(request, env);
   if (!v.ok) return json({ error: v.error }, 401);
@@ -197,79 +313,99 @@ export async function handleResolveAllAlerts(request: Request, env: Env): Promis
   try {
     alertService.init(env.CLAWBOT_KV);
     const count = await alertService.resolveAllAlerts();
-    
-    Logger.info('[Admin] All alerts resolved', { count });
-    
+
+    Logger.info("[Admin] all alerts resolved", { count });
+
     return json({ success: true, resolved: count, message: `已解决 ${count} 条报警` });
   } catch (e: any) {
-    Logger.error('[Admin] Error resolving all alerts', { error: e.message });
+    Logger.error("[Admin] resolve all alerts error", { error: e.message });
     return json({ error: e.message }, 500);
   }
 }
 
-// 获取统计数据
+// ============ 统计数据 ============
+
 export async function handleStats(request: Request, env: Env): Promise<Response> {
   const v = await verifyAdmin(request, env);
   if (!v.ok) return json({ error: v.error }, 401);
 
   try {
-    const stats: StatsRecord[] = [];
-    
     // 从 KV 读取当前统计
-    const currentStats = await env.CLAWBOT_KV.get('clawbot:stats');
-    if (currentStats) {
-      const data = JSON.parse(currentStats);
-      stats.push({
-        date: new Date().toISOString().split('T')[0],
-        polls: data.polls || 0,
-        handled: data.handled || 0,
-        ai_calls: data.aiCalls || 0,
-        ai_fails: data.aiFails || 0,
-        average_latency_ms: data.lastLatencyMs || 0,
-      });
-    }
-    
-    // 读取报警摘要
+    const statsData = await env.CLAWBOT_KV.get("clawbot:stats");
+    const parsed = statsData ? JSON.parse(statsData) : {};
+
+    // 报警摘要
     alertService.init(env.CLAWBOT_KV);
     const alertSummary = alertService.getSummary();
-    
-    // 读取会话数
-    const { keys: contextKeys } = await env.CLAWBOT_KV.list({ prefix: 'clawbot:context:' });
-    
-    Logger.info('[Admin] Stats queried');
-    
+
+    // 会话数
+    const { keys: contextKeys } = await env.CLAWBOT_KV.list({ prefix: "clawbot:context:" });
+
+    Logger.info("[Admin] stats queried");
+
     return json({
       success: true,
-      dailyStats: stats,
+      dailyStats: [
+        {
+          date: new Date().toISOString().split("T")[0],
+          polls: parsed.polls || 0,
+          handled: parsed.handled || 0,
+          ai_calls: parsed.aiCalls || 0,
+          ai_fails: parsed.aiFails || 0,
+          average_latency_ms: parsed.lastLatencyMs || 0,
+        },
+      ],
       totalSessions: contextKeys.length,
-      totalPolls: stats[0]?.polls || 0,
-      totalHandled: stats[0]?.handled || 0,
-      totalAICalls: stats[0]?.ai_calls || 0,
-      totalAIFails: stats[0]?.ai_fails || 0,
+      totalPolls: parsed.polls || 0,
+      totalHandled: parsed.handled || 0,
+      totalAICalls: parsed.aiCalls || 0,
+      totalAIFails: parsed.aiFails || 0,
       alertSummary,
     });
   } catch (e: any) {
-    Logger.error('[Admin] Error querying stats', { error: e.message });
+    Logger.error("[Admin] stats query error", { error: e.message });
     return json({ error: e.message }, 500);
   }
 }
 
-// 获取系统健康状态
+// ============ 健康检查 ============
+
 export async function handleHealth(request: Request, env: Env): Promise<Response> {
   try {
+    // 使用缓存 - 避免频繁重复读取
+    const cached = statusCache.get<{
+      kv: string;
+      loggedIn: boolean;
+      totalPolls: number;
+      totalHandled: number;
+      totalAICalls: number;
+      totalAIFails: number;
+      unresolvedAlerts: number;
+      criticalAlerts: number;
+      errorAlerts: number;
+      warningAlerts: number;
+      timestamp: string;
+    }>("health");
+
+    if (cached) return json(cached);
+
     // 检查 KV
-    const kvCheck = await env.CLAWBOT_KV.get('clawbot:credentials').then(() => 'OK').catch(() => 'FAIL');
-    
-    // 检查统计
-    const stats = await env.CLAWBOT_KV.get('clawbot:stats').then(s => s ? JSON.parse(s) : null).catch(() => null);
-    
-    // 检查报警
+    const kvCheck = await env.CLAWBOT_KV.get("clawbot:credentials")
+      .then(() => "OK")
+      .catch(() => "FAIL");
+
+    // 统计
+    const stats = await env.CLAWBOT_KV.get("clawbot:stats")
+      .then((s) => (s ? JSON.parse(s) : null))
+      .catch(() => null);
+
+    // 报警
     alertService.init(env.CLAWBOT_KV);
     const alertSummary = alertService.getSummary();
-    
-    // 检查登录状态
-    const loginCheck = await env.CLAWBOT_KV.get('clawbot:credentials');
-    
+
+    // 登录状态
+    const loginCheck = await env.CLAWBOT_KV.get("clawbot:credentials");
+
     const healthStatus = {
       kv: kvCheck,
       loggedIn: !!loginCheck,
@@ -283,10 +419,13 @@ export async function handleHealth(request: Request, env: Env): Promise<Response
       warningAlerts: alertSummary.byLevel.warning,
       timestamp: new Date().toISOString(),
     };
-    
+
+    // 缓存 3 秒
+    statusCache.set("health", healthStatus, 3000);
+
     return json(healthStatus);
   } catch (e: any) {
-    Logger.error('[Admin] Health check error', { error: e.message });
+    Logger.error("[Admin] health check error", { error: e.message });
     return json({ success: false, error: e.message }, 500);
   }
 }
