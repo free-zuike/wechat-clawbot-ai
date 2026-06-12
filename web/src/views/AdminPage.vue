@@ -31,55 +31,75 @@
       <section v-if="activeSection === 'status'">
         <div class="card">
           <h2>📊 实时状态</h2>
-          <div class="desc">机器人运行状态、API 调用统计</div>
+          <div class="desc">机器人运行状态、系统健康度、API 调用统计</div>
           <div v-if="statusLoading" class="skeleton-grid">
-            <div v-for="i in 8" :key="i" class="skeleton-item"></div>
+            <div v-for="i in 10" :key="i" class="skeleton-item"></div>
           </div>
-          <div v-else class="stat-grid">
-            <div class="stat-item">
-              <div class="stat-label">登录状态</div>
-              <div class="stat-value">{{ status.loggedIn ? "✅ 在线" : "❌ 未登录" }}</div>
-            </div>
-            <div class="stat-item" v-if="status.loginAgeText">
-              <div class="stat-label">登录时长</div>
-              <div class="stat-value">{{ status.loginAgeText }}</div>
-            </div>
-            <div class="stat-item" v-if="status.tokenHealth && status.tokenHealth !== 'unknown'">
-              <div class="stat-label">Token 状态</div>
-              <div class="stat-value">
-                <span v-if="status.tokenHealth === 'valid'" style="color:#16a34a">有效</span>
-                <span v-else-if="status.tokenHealth === 'expired'" style="color:#dc2626">已过期</span>
-                <span v-else-if="status.tokenHealth === 'error'" style="color:#d97706">检查失败</span>
-                <span v-else style="color:#6b7280">未检测</span>
+          <template v-else>
+            <div class="stat-grid">
+              <!-- 登录与健康 -->
+              <div class="stat-item" :class="healthData.kv === 'OK' ? 'success' : 'error'">
+                <div class="stat-label">KV 存储</div>
+                <div class="stat-value">{{ healthData.kv === 'OK' ? '✅ 正常' : '❌ 异常' }}</div>
+              </div>
+              <div class="stat-item" :class="status.loggedIn ? 'success' : 'warning'">
+                <div class="stat-label">登录状态</div>
+                <div class="stat-value">{{ status.loggedIn ? "✅ 在线" : "❌ 未登录" }}</div>
+              </div>
+              <div class="stat-item" v-if="status.loginAgeText">
+                <div class="stat-label">登录时长</div>
+                <div class="stat-value">{{ status.loginAgeText }}</div>
+              </div>
+              <div class="stat-item" v-if="status.tokenHealth && status.tokenHealth !== 'unknown'">
+                <div class="stat-label">Token 状态</div>
+                <div class="stat-value">
+                  <span v-if="status.tokenHealth === 'valid'" style="color:#16a34a">有效</span>
+                  <span v-else-if="status.tokenHealth === 'expired'" style="color:#dc2626">已过期</span>
+                  <span v-else-if="status.tokenHealth === 'error'" style="color:#d97706">检查失败</span>
+                  <span v-else style="color:#6b7280">未检测</span>
+                </div>
+              </div>
+
+              <!-- 轮询与消息 -->
+              <div class="stat-item">
+                <div class="stat-label">累计轮询</div>
+                <div class="stat-value">{{ status.polls.toLocaleString() }}</div>
+              </div>
+              <div class="stat-item">
+                <div class="stat-label">累计处理</div>
+                <div class="stat-value">{{ status.handled.toLocaleString() }}</div>
+              </div>
+              <div class="stat-item">
+                <div class="stat-label">AI 调用</div>
+                <div class="stat-value">{{ status.aiCalls.toLocaleString() }}</div>
+              </div>
+              <div class="stat-item" :class="{ warning: status.aiFails > 0 }">
+                <div class="stat-label">AI 失败</div>
+                <div class="stat-value">{{ status.aiFails.toLocaleString() }}</div>
+              </div>
+              <div class="stat-item">
+                <div class="stat-label">上次耗时</div>
+                <div class="stat-value">{{ status.lastLatencyMs }}</div>
+              </div>
+
+              <!-- 报警摘要 -->
+              <div class="stat-item" :class="{ warning: (healthData.unresolvedAlerts || 0) > 0 }">
+                <div class="stat-label">未解决报警</div>
+                <div class="stat-value">{{ healthData.unresolvedAlerts || 0 }}</div>
+              </div>
+              <div class="stat-item" :class="{ error: (healthData.criticalAlerts || 0) > 0 }">
+                <div class="stat-label">严重报警</div>
+                <div class="stat-value">{{ healthData.criticalAlerts || 0 }}</div>
               </div>
             </div>
-            <div class="stat-item">
-              <div class="stat-label">累计轮询</div>
-              <div class="stat-value">{{ status.polls.toLocaleString() }}</div>
+
+            <div style="margin-top: 16px; font-size: 13px; color: #888">
+              最后更新: {{ healthData.timestamp || status.lastPollAt || '—' }}
             </div>
-            <div class="stat-item">
-              <div class="stat-label">累计处理</div>
-              <div class="stat-value">{{ status.handled.toLocaleString() }}</div>
+            <div v-if="status.tokenHealth === 'expired'" style="margin-top:12px;padding:10px 14px;background:#fef2f2;border-radius:8px;font-size:13px;color:#b91c1c">
+              ⚠️ Token 已过期，需要重新扫码登录
             </div>
-            <div class="stat-item">
-              <div class="stat-label">AI 调用</div>
-              <div class="stat-value">{{ status.aiCalls.toLocaleString() }}</div>
-            </div>
-            <div class="stat-item" :class="{ warning: status.aiFails > 0 }">
-              <div class="stat-label">AI 失败</div>
-              <div class="stat-value">{{ status.aiFails.toLocaleString() }}</div>
-            </div>
-            <div class="stat-item">
-              <div class="stat-label">上次耗时</div>
-              <div class="stat-value">{{ status.lastLatencyMs }}</div>
-            </div>
-          </div>
-          <div style="margin-top: 16px; font-size: 13px; color: #888">
-            最后轮询: {{ status.lastPollAt }}
-          </div>
-          <div v-if="status.tokenHealth === 'expired'" style="margin-top:12px;padding:10px 14px;background:#fef2f2;border-radius:8px;font-size:13px;color:#b91c1c">
-            ⚠️ Token 已过期，需要重新扫码登录
-          </div>
+          </template>
         </div>
 
         <!-- 调试面板 -->
@@ -89,7 +109,7 @@
           <button class="btn secondary" :disabled="debugLoading" @click="handleDebug">
             {{ debugLoading ? "诊断中..." : "🔍 运行诊断" }}
           </button>
-          <div v-if="debugInfo" style="margin-top:12px">
+          <div v-if="debugInfo" style="margin-top: 12px">
             <pre style="background:#1e1e1e;color:#d4d4d4;padding:12px;border-radius:8px;font-size:12px;overflow:auto;max-height:300px;white-space:pre-wrap;word-break:break-all">{{ debugInfo }}</pre>
           </div>
         </div>
@@ -367,63 +387,6 @@
           </template>
         </div>
       </section>
-
-      <!-- 系统健康 -->
-      <section v-if="activeSection === 'health'">
-        <div class="card">
-          <h2>💚 系统健康</h2>
-          <div class="desc">实时系统健康状态和性能指标</div>
-
-          <div v-if="healthLoading" class="skeleton-grid">
-            <div v-for="i in 10" :key="i" class="skeleton-item"></div>
-          </div>
-
-          <template v-else>
-            <div class="stat-grid" style="margin-top:12px">
-              <div class="stat-item" :class="healthData.kv === 'OK' ? 'success' : 'error'">
-                <div class="stat-label">KV 存储</div>
-                <div class="stat-value">{{ healthData.kv === 'OK' ? '✅ 正常' : '❌ 异常' }}</div>
-              </div>
-              <div class="stat-item" :class="healthData.loggedIn ? 'success' : 'warning'">
-                <div class="stat-label">登录状态</div>
-                <div class="stat-value">{{ healthData.loggedIn ? '✅ 已登录' : '⚠️ 未登录' }}</div>
-              </div>
-              <div class="stat-item">
-                <div class="stat-label">总轮询</div>
-                <div class="stat-value">{{ (healthData.totalPolls || 0).toLocaleString() }}</div>
-              </div>
-              <div class="stat-item">
-                <div class="stat-label">总处理</div>
-                <div class="stat-value">{{ (healthData.totalHandled || 0).toLocaleString() }}</div>
-              </div>
-              <div class="stat-item">
-                <div class="stat-label">AI 调用</div>
-                <div class="stat-value">{{ (healthData.totalAICalls || 0).toLocaleString() }}</div>
-              </div>
-              <div class="stat-item" :class="{ warning: (healthData.totalAIFails || 0) > 0 }">
-                <div class="stat-label">AI 失败</div>
-                <div class="stat-value">{{ (healthData.totalAIFails || 0).toLocaleString() }}</div>
-              </div>
-              <div class="stat-item" :class="{ warning: (healthData.unresolvedAlerts || 0) > 0 }">
-                <div class="stat-label">未解决报警</div>
-                <div class="stat-value">{{ healthData.unresolvedAlerts || 0 }}</div>
-              </div>
-              <div class="stat-item" :class="{ error: (healthData.criticalAlerts || 0) > 0 }">
-                <div class="stat-label">严重报警</div>
-                <div class="stat-value">{{ healthData.criticalAlerts || 0 }}</div>
-              </div>
-            </div>
-
-            <div style="margin-top:12px">
-              <button class="btn secondary small" @click="handleRefreshHealth">🔄 刷新健康状态</button>
-            </div>
-
-            <div style="margin-top:16px; font-size:12px; color:#888">
-              最后更新: {{ formatTime(healthData.timestamp) }}
-            </div>
-          </template>
-        </div>
-      </section>
     </main>
   </div>
 </template>
@@ -551,24 +514,42 @@ function handleApiError(error: unknown, defaultMessage: string): string {
 async function handleRefreshStatus() {
   statusLoading.value = true;
   try {
-    const d = await fetchStatus(isFirstRefresh);
-    // null 表示请求被新请求替换（主动取消），忽略
-    if (d === null) return;
+    // 并行拉取状态和健康数据
+    const [statusData, health] = await Promise.all([
+      fetchStatus(isFirstRefresh),
+      fetchHealth(),
+    ]);
 
-    status.loggedIn = !!d.loggedIn;
-    status.tokenHealth = d.tokenHealth || "";
-    status.loginAgeText = d.loginAgeText || "";
-    status.polls = d.stats?.polls || 0;
-    status.handled = d.stats?.handled || 0;
-    status.aiCalls = d.stats?.aiCalls || 0;
-    status.aiFails = d.stats?.aiFails || 0;
-    status.lastPollAt = d.stats?.lastPollAt
-      ? new Date(d.stats.lastPollAt).toLocaleString()
-      : "从未";
-    status.lastLatencyMs = d.stats?.lastLatencyMs == null ? "—" : d.stats.lastLatencyMs + " ms";
-    isFirstRefresh = false;
+    if (statusData !== null) {
+      status.loggedIn = !!statusData.loggedIn;
+      status.tokenHealth = statusData.tokenHealth || "";
+      status.loginAgeText = statusData.loginAgeText || "";
+      status.polls = statusData.stats?.polls || 0;
+      status.handled = statusData.stats?.handled || 0;
+      status.aiCalls = statusData.stats?.aiCalls || 0;
+      status.aiFails = statusData.stats?.aiFails || 0;
+      status.lastPollAt = statusData.stats?.lastPollAt
+        ? new Date(statusData.stats.lastPollAt).toLocaleString()
+        : "从未";
+      status.lastLatencyMs = statusData.stats?.lastLatencyMs == null ? "—" : statusData.stats.lastLatencyMs + " ms";
+      isFirstRefresh = false;
+    }
+
+    if (health !== null) {
+      healthData.kv = health.kv || "—";
+      healthData.loggedIn = !!health.loggedIn;
+      healthData.totalPolls = health.totalPolls || 0;
+      healthData.totalHandled = health.totalHandled || 0;
+      healthData.totalAICalls = health.totalAICalls || 0;
+      healthData.totalAIFails = health.totalAIFails || 0;
+      healthData.unresolvedAlerts = health.unresolvedAlerts || 0;
+      healthData.criticalAlerts = health.criticalAlerts || 0;
+      healthData.errorAlerts = health.errorAlerts || 0;
+      healthData.warningAlerts = health.warningAlerts || 0;
+      healthData.timestamp = health.timestamp || new Date().toISOString();
+    }
   } catch (e: any) {
-    if (e instanceof ApiError && e.isCancelled) return; // 忽略主动取消
+    if (e instanceof ApiError && e.isCancelled) return;
     console.error("状态刷新失败:", e);
   } finally {
     statusLoading.value = false;
@@ -821,19 +802,17 @@ onMounted(async () => {
     return;
   }
 
-  // 并行加载所有页面数据
+  // 并行加载所有页面数据（状态刷新已包含健康数据）
   handleRefreshStatus();
   handleLoadConfig();
   handleRefreshAlerts();
   handleRefreshSessions();
-  handleRefreshHealth();
 
   // 用 setTimeout 替代 setInterval，避免请求重叠
   async function tick() {
     try {
       await handleRefreshStatus();
       if (activeSection.value === "alerts") await handleRefreshAlerts();
-      if (activeSection.value === "health") await handleRefreshHealth();
     } finally {
       refreshTimer = window.setTimeout(tick, 30000);
     }
