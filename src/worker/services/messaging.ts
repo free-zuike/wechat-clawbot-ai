@@ -1,22 +1,21 @@
 // 消息处理服务 - 轮询微信消息并转发给 AI
-// 支持: 对话上下文、消息去重、统计持久化
+// 支持: 对话上下文、消息去重、统计持久化、D1 数据库存储
 
 import { getUpdates, sendTextMessage, extractMessageText, MessageType } from "./ilink";
 import { callAIWithContext } from "./ai";
 import { Logger } from "../utils/error";
+import { D1Service } from "./d1";
 import type { Env } from "../index";
 
 export interface ProcessResult {
   pulled: number;
   handled: number;
-  skipped: number; // 新增：跳过的重复消息
+  skipped: number;
   error?: string;
   latencyMs: number;
 }
 
-// 消息去重：生成消息唯一 ID
 function generateMessageId(msg: any): string {
-  // 使用 from_user_id + message_id + create_time_ms 作为唯一标识
   const parts = [
     msg.from_user_id || "",
     msg.message_id || "",
@@ -26,21 +25,17 @@ function generateMessageId(msg: any): string {
   return parts.join(":").slice(0, 64);
 }
 
-// 检查消息是否已处理（去重）
 async function isMessageProcessed(kv: KVNamespace, messageId: string): Promise<boolean> {
   const key = `clawbot:processed:${messageId}`;
   const exists = await kv.get(key);
   return exists !== null;
 }
 
-// 标记消息已处理
 async function markMessageProcessed(kv: KVNamespace, messageId: string): Promise<void> {
   const key = `clawbot:processed:${messageId}`;
-  // 保留 5 分钟的去重窗口
   await kv.put(key, "1", { expirationTtl: 300 });
 }
 
-// 统计数据持久化
 interface Stats {
   polls: number;
   handled: number;
@@ -55,14 +50,7 @@ async function loadStats(kv: KVNamespace): Promise<Stats> {
   if (stored) {
     return JSON.parse(stored);
   }
-  return {
-    polls: 0,
-    handled: 0,
-    aiCalls: 0,
-    aiFails: 0,
-    lastPollAt: "",
-    lastLatencyMs: 0
-  };
+  return { polls: 0, handled: 0, aiCalls: 0, aiFails: 0, lastPollAt: "", lastLatencyMs: 0 };
 }
 
 async function saveStats(kv: KVNamespace, stats: Stats): Promise<void> {
@@ -73,7 +61,19 @@ export async function processIncomingMessages(env: Env): Promise<ProcessResult> 
   const start = Date.now();
   Logger.info("[messaging] Starting message processing");
 
-  // 1. 获取凭证
+  // 初始化 D1（如果可用）
+  let d1: D1Service | null = null;
+  if (env.CLAWBOT_DB) {
+    try {
+      d1 = new D1Service(env.CLAWBOT_DB);
+      await d1.init();
+      Logger.info("[messaging] D1 database initialized");
+    } catch (error) {
+      Logger.warn("[messaging] Failed to initialize D1, falling back to KV", { error: (error as Error).message });
+      d1 = null;
+    }
+  }
+
   const credsRaw = await env.CLAWBOT_KV.get("clawbot:credentials");
   if (!credsRaw) {
     Logger.warn("[messaging] No credentials found");
@@ -88,7 +88,6 @@ export async function processIncomingMessages(env: Env): Promise<ProcessResult> 
     return { pulled: 0, handled: 0, skipped: 0, error: "凭证格式错误", latencyMs: Date.now() - start };
   }
 
-  // 构建 ILinkCredentials
   const ilinkCreds = {
     botToken: creds.botToken,
     accountId: creds.accountId,
@@ -100,17 +99,14 @@ export async function processIncomingMessages(env: Env): Promise<ProcessResult> 
     return { pulled: 0, handled: 0, skipped: 0, error: "凭证缺少必要字段", latencyMs: Date.now() - start };
   }
 
-  // 2. 从 KV 读取 AI 配置
   const configRaw = await env.CLAWBOT_KV.get("clawbot:config");
   let kvConfig: any = {};
   try { if (configRaw) kvConfig = JSON.parse(configRaw); } catch {}
   const systemPrompt = env.AI_SYSTEM_PROMPT || kvConfig.aiSystemPrompt || "";
   const aiModel = env.AI_MODEL || kvConfig.aiModel || "";
 
-  // 3. 加载统计数据
   const stats = await loadStats(env.CLAWBOT_KV);
 
-  // 4. 长轮询拉取消息（35秒超时），使用 syncBuf 作为游标
   const buf = creds.syncBuf || "";
   let updates: any;
   try {
@@ -121,14 +117,12 @@ export async function processIncomingMessages(env: Env): Promise<ProcessResult> 
     return { pulled: 0, handled: 0, skipped: 0, error: "getUpdates 异常: " + e.message, latencyMs: Date.now() - start };
   }
 
-  // 检查错误码
   const ret = updates.ret !== undefined ? updates.ret : updates.errcode;
   if (ret === -14 || ret === -10 || (typeof ret === "number" && ret < 0 && ret !== 0)) {
     Logger.warn("[messaging] getUpdates returned error", { ret, errmsg: updates.errmsg });
     return { pulled: 0, handled: 0, skipped: 0, error: `getUpdates ret=${ret} ${updates.errmsg || ""}`, latencyMs: Date.now() - start };
   }
 
-  // 5. 保存新的 syncBuf（断点续传用）
   if (updates.get_updates_buf && updates.get_updates_buf !== creds.syncBuf) {
     creds.syncBuf = updates.get_updates_buf;
     await env.CLAWBOT_KV.put("clawbot:credentials", JSON.stringify(creds));
@@ -141,16 +135,20 @@ export async function processIncomingMessages(env: Env): Promise<ProcessResult> 
     stats.lastPollAt = new Date().toISOString();
     stats.lastLatencyMs = Date.now() - start;
     await saveStats(env.CLAWBOT_KV, stats);
+    
+    // D1 统计更新
+    if (d1) {
+      await d1.incrementStats(d1.getTodayDate(), 1, 0, 0, 0, stats.lastLatencyMs);
+    }
+    
     return { pulled: 0, handled: 0, skipped: 0, latencyMs: Date.now() - start };
   }
 
   Logger.info("[messaging] Received messages", { count: msgs.length });
 
-  // 6. 处理消息（带去重和上下文）
   let handled = 0;
   let skipped = 0;
   for (const msg of msgs) {
-    // 只处理用户消息（非 bot 自己发的）
     if (msg.message_type !== undefined && msg.message_type !== MessageType.USER) continue;
     if (msg.message_type === undefined && !msg.from_user_id) continue;
 
@@ -161,7 +159,6 @@ export async function processIncomingMessages(env: Env): Promise<ProcessResult> 
     const ctxToken = msg.context_token;
     if (!from || !ctxToken) continue;
 
-    // 消息去重检查
     const messageId = generateMessageId(msg);
     if (await isMessageProcessed(env.CLAWBOT_KV, messageId)) {
       Logger.debug("[messaging] Skipping duplicate message", { messageId });
@@ -169,7 +166,6 @@ export async function processIncomingMessages(env: Env): Promise<ProcessResult> 
       continue;
     }
 
-    // 调用 AI（带上下文）
     try {
       stats.aiCalls++;
       const reply = await callAIWithContext(
@@ -181,13 +177,28 @@ export async function processIncomingMessages(env: Env): Promise<ProcessResult> 
         aiModel
       );
       
-      // 发送回复
       await sendTextMessage(ilinkCreds, from, ctxToken, reply);
       handled++;
       stats.handled++;
       
-      // 标记消息已处理
       await markMessageProcessed(env.CLAWBOT_KV, messageId);
+      
+      // D1 存储消息
+      if (d1) {
+        await d1.insertMessage({
+          message_id: messageId,
+          from_user_id: from,
+          to_user_id: msg.to_user_id,
+          content: text,
+          message_type: msg.message_type,
+          context_token: ctxToken,
+          created_at: msg.create_time_ms ? new Date(msg.create_time_ms).toISOString() : new Date().toISOString(),
+          processed: true,
+          reply_content: reply,
+          reply_at: new Date().toISOString()
+        });
+        await d1.upsertSession(from);
+      }
       
       Logger.info("[messaging] Message handled", { from, replyLength: reply.length });
     } catch (e: any) {
@@ -196,10 +207,21 @@ export async function processIncomingMessages(env: Env): Promise<ProcessResult> 
     }
   }
 
-  // 7. 保存统计数据
   stats.lastPollAt = new Date().toISOString();
   stats.lastLatencyMs = Date.now() - start;
   await saveStats(env.CLAWBOT_KV, stats);
+  
+  // D1 统计更新
+  if (d1) {
+    await d1.incrementStats(
+      d1.getTodayDate(),
+      1,
+      handled,
+      stats.aiCalls - (stats.aiCalls - handled), // 本次调用数
+      stats.aiFails - (stats.aiFails - (msgs.length - handled - skipped)), // 本次失败数
+      stats.lastLatencyMs
+    );
+  }
 
   const latencyMs = Date.now() - start;
   Logger.info("[messaging] Processing complete", { pulled: msgs.length, handled, skipped, latencyMs });

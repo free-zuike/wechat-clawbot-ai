@@ -1,53 +1,12 @@
 // iLink 协议实现 - 基于 weixin-ilink SDK 逆向（源自 @tencent-weixin/openclaw-weixin）
 
 import { Logger, withRetry, ClawBotError } from "../utils/error";
+import type { WeixinMessage, MessageItem, GetUpdatesResp, ILinkCredentials } from "../types";
 
-// ========== 类型定义 ==========
 export const MessageType = { NONE: 0, USER: 1, BOT: 2 } as const;
 export const MessageItemType = { NONE: 0, TEXT: 1, IMAGE: 2, VOICE: 3, FILE: 4, VIDEO: 5 } as const;
 export const MessageState = { NEW: 0, GENERATING: 1, FINISH: 2 } as const;
 export const TypingStatus = { TYPING: 1, CANCEL: 2 } as const;
-
-export interface MessageItem {
-  type?: number;
-  text_item?: { text?: string };
-  voice_item?: { text?: string; encode_type?: number; playtime?: number };
-  image_item?: { url?: string; cdn_url?: string; width?: number; height?: number };
-  file_item?: { url?: string; cdn_url?: string; file_name?: string; file_size?: number };
-  video_item?: { url?: string; cdn_url?: string; thumb_url?: string; width?: number; height?: number; duration?: number };
-  ref_msg?: { title?: string; message_item?: MessageItem };
-}
-
-export interface WeixinMessage {
-  seq?: number;
-  message_id?: number;
-  from_user_id?: string;
-  to_user_id?: string;
-  client_id?: string;
-  session_id?: string;
-  group_id?: string;
-  message_type?: number;
-  message_state?: number;
-  item_list?: MessageItem[];
-  context_token?: string;
-  create_time_ms?: number;
-}
-
-export interface GetUpdatesResp {
-  ret?: number;
-  errcode?: number;
-  errmsg?: string;
-  msgs?: WeixinMessage[];
-  get_updates_buf?: string;
-  longpolling_timeout_ms?: number;
-}
-
-export interface ILinkCredentials {
-  botToken: string;
-  accountId: string;
-  baseUrl: string;
-  userId?: string;
-}
 
 // ========== 常量 ==========
 const DEFAULT_BASE = "https://ilinkai.weixin.qq.com";
@@ -297,15 +256,62 @@ function maskToken(token: string): string {
 
 export function extractMessageText(msg: WeixinMessage): string {
   if (!msg.item_list?.length) return "";
+  
+  const parts: string[] = [];
+  
   for (const item of msg.item_list) {
     if (item.type === MessageItemType.TEXT && item.text_item?.text) {
       const ref = item.ref_msg;
-      if (ref?.title) return `[引用: ${ref.title}]\n${item.text_item.text}`;
-      return item.text_item.text;
+      if (ref?.title) {
+        parts.push(`[引用: ${ref.title}]\n${item.text_item.text}`);
+      } else {
+        parts.push(item.text_item.text);
+      }
     }
     if (item.type === MessageItemType.VOICE && item.voice_item?.text) {
-      return item.voice_item.text;
+      const playtime = item.voice_item.playtime ? `（${item.voice_item.playtime}秒）` : "";
+      parts.push(`🎤 [语音转文字${playtime}]: ${item.voice_item.text}`);
+    }
+    if (item.type === MessageItemType.IMAGE) {
+      const url = item.image_item?.cdn_url || item.image_item?.url;
+      const size = item.image_item?.width && item.image_item?.height 
+        ? `${item.image_item.width}x${item.image_item.height}` 
+        : "";
+      parts.push(`🖼️ [图片${size}]: ${url || "图片消息"}`);
+    }
+    if (item.type === MessageItemType.FILE) {
+      const name = item.file_item?.file_name || "文件";
+      const size = item.file_item?.file_size 
+        ? formatFileSize(item.file_item.file_size) 
+        : "";
+      parts.push(`📎 [文件${size}]: ${name}`);
+    }
+    if (item.type === MessageItemType.VIDEO) {
+      const url = item.video_item?.cdn_url || item.video_item?.url;
+      const duration = item.video_item?.duration 
+        ? formatDuration(item.video_item.duration) 
+        : "";
+      parts.push(`🎬 [视频${duration}]: ${url || "视频消息"}`);
+    }
+    if (!item.type || item.type === MessageItemType.NONE) {
+      // 未知类型，尝试提取文本
+      if (item.text_item?.text) {
+        parts.push(item.text_item.text);
+      }
     }
   }
-  return "";
+  
+  return parts.join("\n") || "";
+}
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes}B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
+}
+
+function formatDuration(seconds: number): string {
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  return mins > 0 ? `${mins}:${secs.toString().padStart(2, '0')}` : `${secs}秒`;
 }
