@@ -553,6 +553,9 @@ async function handleRefreshStatus() {
   statusLoading.value = true;
   try {
     const d = await fetchStatus(isFirstRefresh);
+    // null 表示请求被新请求替换（主动取消），忽略
+    if (d === null) return;
+
     status.loggedIn = !!d.loggedIn;
     status.tokenHealth = d.tokenHealth || "";
     status.loginAgeText = d.loginAgeText || "";
@@ -566,6 +569,7 @@ async function handleRefreshStatus() {
     status.lastLatencyMs = d.stats?.lastLatencyMs == null ? "—" : d.stats.lastLatencyMs + " ms";
     isFirstRefresh = false;
   } catch (e: any) {
+    if (e instanceof ApiError && e.isCancelled) return; // 忽略主动取消
     console.error("状态刷新失败:", e);
   } finally {
     statusLoading.value = false;
@@ -597,12 +601,14 @@ async function handleLoadConfig() {
   configResult.value = "加载中...";
   try {
     const d = await fetchConfig();
+    if (d === null) return; // 被新请求替换
     config.aiModel = d.aiModel || "";
     config.aiSystemPrompt = d.aiSystemPrompt || "";
     configResult.value = d.hasEnvOverride
       ? "✅ 已加载当前配置（注意：当前有环境变量覆盖）"
       : "✅ 已加载当前配置";
   } catch (e: any) {
+    if (e instanceof ApiError && e.isCancelled) return;
     configResult.value = "❌ 加载失败: " + handleApiError(e, "加载失败");
   }
 }
@@ -637,11 +643,19 @@ async function handleSendChat() {
 
   try {
     const d = await chat(q);
+    if (d === null) { // 被新请求取消
+      chatLoading.value = false;
+      return;
+    }
     chatMessages.value.push({
       role: "b",
       text: d.reply + (d.source === "shortcut" ? " [快捷回复]" : ""),
     });
   } catch (e: any) {
+    if (e instanceof ApiError && e.isCancelled) {
+      chatLoading.value = false;
+      return;
+    }
     chatMessages.value.push({
       role: "b",
       text: "错误: " + handleApiError(e, "AI 回复失败"),
@@ -678,16 +692,8 @@ async function handleDebug() {
 async function handleRefreshAlerts() {
   alertsLoading.value = true;
   try {
-    const params = new URLSearchParams();
-    if (alertsOnlyActive.value) params.set("active", "true");
-    if (alertsLevelFilter.value) params.set("level", alertsLevelFilter.value);
-    if (alertsSearch.value) params.set("search", alertsSearch.value);
-    params.set("page", String(alertsPage.value));
-    params.set("limit", "30");
-
-    // 兼容：使用内置 fetch 调用管理 API
-    const res = await fetch(`/api/admin/alerts?${params.toString()}`, { credentials: "include" });
-    const data = await res.json();
+    const data = await fetchAlerts(alertsOnlyActive.value);
+    if (data === null) return; // 被新请求替换
 
     if (data && data.alerts) {
       alerts.value = data.alerts;
@@ -705,6 +711,7 @@ async function handleRefreshAlerts() {
       }
     }
   } catch (e: any) {
+    if (e instanceof ApiError && e.isCancelled) return;
     console.error("刷新报警失败:", e);
   } finally {
     alertsLoading.value = false;
@@ -738,13 +745,8 @@ async function handleResolveAllAlerts() {
 async function handleRefreshSessions() {
   sessionsLoading.value = true;
   try {
-    const params = new URLSearchParams();
-    if (sessionsSearch.value) params.set("search", sessionsSearch.value);
-    params.set("page", String(sessionsPage.value));
-    params.set("limit", "30");
-
-    const res = await fetch(`/api/admin/sessions?${params.toString()}`, { credentials: "include" });
-    const data = await res.json();
+    const data = await fetchSessions();
+    if (data === null) return;
 
     if (data && data.sessions) {
       sessions.value = data.sessions;
@@ -752,6 +754,7 @@ async function handleRefreshSessions() {
       sessionsTotalPages.value = data.totalPages || 1;
     }
   } catch (e: any) {
+    if (e instanceof ApiError && e.isCancelled) return;
     console.error("刷新会话失败:", e);
   } finally {
     sessionsLoading.value = false;
@@ -763,6 +766,8 @@ async function handleRefreshHealth() {
   healthLoading.value = true;
   try {
     const data = await fetchHealth();
+    if (data === null) return;
+
     healthData.kv = data.kv || "—";
     healthData.loggedIn = !!data.loggedIn;
     healthData.totalPolls = data.totalPolls || 0;
@@ -775,6 +780,7 @@ async function handleRefreshHealth() {
     healthData.warningAlerts = data.warningAlerts || 0;
     healthData.timestamp = data.timestamp || new Date().toISOString();
   } catch (e: any) {
+    if (e instanceof ApiError && e.isCancelled) return;
     console.error("刷新健康状态失败:", e);
   } finally {
     healthLoading.value = false;
@@ -803,13 +809,15 @@ function formatTime(isoString: string): string {
 
 // ===== 生命周期 =====
 onMounted(async () => {
+  // 先检查登录状态
+  let loginOk = true;
   try {
     const d = await checkLogin();
-    if (!d.loggedIn) {
-      router.push("/login");
-      return;
-    }
+    if (!d.loggedIn) loginOk = false;
   } catch {
+    loginOk = false;
+  }
+  if (!loginOk) {
     router.push("/login");
     return;
   }
@@ -821,16 +829,21 @@ onMounted(async () => {
   handleRefreshSessions();
   handleRefreshHealth();
 
-  // 定时刷新状态（30秒）
-  refreshTimer = window.setInterval(() => {
-    handleRefreshStatus();
-    if (activeSection.value === "alerts") handleRefreshAlerts();
-    if (activeSection.value === "health") handleRefreshHealth();
-  }, 30000);
+  // 用 setTimeout 替代 setInterval，避免请求重叠
+  async function tick() {
+    try {
+      await handleRefreshStatus();
+      if (activeSection.value === "alerts") await handleRefreshAlerts();
+      if (activeSection.value === "health") await handleRefreshHealth();
+    } finally {
+      refreshTimer = window.setTimeout(tick, 30000);
+    }
+  }
+  refreshTimer = window.setTimeout(tick, 30000);
 });
 
 onUnmounted(() => {
-  if (refreshTimer) clearInterval(refreshTimer);
+  if (refreshTimer) clearTimeout(refreshTimer);
 });
 </script>
 

@@ -30,6 +30,11 @@ export class ApiError extends Error {
   get isNetworkError(): boolean {
     return this.status === 0 || this.code === "NETWORK_ERROR";
   }
+
+  // 主动取消不算错误
+  get isCancelled(): boolean {
+    return this.code === "ABORTED";
+  }
 }
 
 function withPwd(path: string, pwd: string): string {
@@ -127,6 +132,11 @@ async function apiFetch(
       return json;
     } catch (err: any) {
       if (err?.name === "AbortError") {
+        // 被主动取消的请求（被新请求替换）不算错误
+        if (cancelKey) {
+          // 被新请求替换 - 静默返回 null
+          return null;
+        }
         throw new ApiError("请求已取消", "ABORTED", 0);
       }
       lastError = err;
