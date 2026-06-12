@@ -34,6 +34,13 @@ binding = "CLAWBOT_R2"
 bucket_name = "clawbot-history"
 preview_bucket_name = "clawbot-history"
 
+# ===== D1 数据库 =====
+# messages / sessions / stats 持久化存储
+[[d1_databases]]
+binding = "CLAWBOT_DB"
+database_name = "clawbot-db"
+database_id = "f430014e-6323-4318-b7b3-ea6f83f17541"
+
 # ===== 开启日志 =====
 [observability.logs]
 enabled = true
