@@ -1,5 +1,4 @@
 import { json, verifyAdmin } from "../utils";
-import { getUpdates } from "../services/ilink";
 import { D1Service } from "../services/d1";
 import { Logger } from "../utils/error";
 import type { Env } from "../index";
@@ -25,7 +24,15 @@ function formatAge(ms: number): string {
   return d + "天";
 }
 
-// 状态查询：检查是否登录及 token 健康状态
+function getTokenHealth(createdAt?: number): string {
+  if (!createdAt) return "unknown";
+  const ageHours = (Date.now() - createdAt) / 3600000;
+  if (ageHours < 6) return "valid";
+  if (ageHours < 12) return "expiring";
+  return "expired";
+}
+
+// 状态查询：只读当前状态，不再调用 getUpdates 推进消息游标
 export async function handleStatus(request: Request, env: Env): Promise<Response> {
   // 鉴权（通过 session cookie 或管理员密码）
   const v = await verifyAdmin(request, env);
@@ -98,6 +105,7 @@ export async function handleStatus(request: Request, env: Env): Promise<Response
     userId: creds?.userId,
     loginAgeMs,
     loginAgeText: loginAgeMs ? formatAge(loginAgeMs) : null,
+    tokenHealth: getTokenHealth(creds?.createdAt),
     hasSyncBuf: !!(creds?.syncBuf || doStatus?.syncBuf),
     doRunning: !!doStatus?.isRunning,
     consecutiveErrors: doStatus?.consecutiveErrors || 0,
@@ -110,33 +118,6 @@ export async function handleStatus(request: Request, env: Env): Promise<Response
       lastLatencyMs: stats.lastLatencyMs
     }
   };
-
-  // 可选：检查 token 健康状态
-  const url = new URL(request.url);
-  const shouldCheck = url.searchParams.get("check") === "1" || url.searchParams.get("checkToken") === "true";
-  if (shouldCheck && creds?.botToken) {
-    Logger.info("[status] Checking token health");
-    try {
-      const ilinkCreds = {
-        botToken: creds.botToken,
-        accountId: creds.accountId,
-        baseUrl: creds.baseUrl || "https://ilinkai.weixin.qq.com",
-        userId: creds.userId,
-      };
-      const updates = await getUpdates(ilinkCreds, creds.syncBuf || "");
-      const ret = updates.ret !== undefined ? updates.ret : updates.errcode;
-      result.tokenHealth = ret === 0 ? "valid" : `invalid(ret=${ret}: ${updates.errmsg || ""}`;
-      result.msgsCount = updates.msgs?.length || 0;
-      if (updates.get_updates_buf && updates.get_updates_buf !== creds.syncBuf) {
-        creds.syncBuf = updates.get_updates_buf;
-        await env.CLAWBOT_KV.put("clawbot:credentials", JSON.stringify(creds));
-        result.bufUpdated = true;
-      }
-    } catch (e: any) {
-      Logger.error("[status] Token health check failed", { error: e.message });
-      result.tokenHealth = "error: " + e.message;
-    }
-  }
 
   return json(result);
 }

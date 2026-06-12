@@ -158,11 +158,8 @@ async function apiFetch(
 
 // ============ 现有 API ============
 
-export async function fetchStatus(checkToken = false): Promise<any> {
-  const url = checkToken
-    ? API_BASE + "/api/status?checkToken=true"
-    : API_BASE + "/api/status";
-  return apiFetch(url, { cancelable: "status" });
+export async function fetchStatus(_checkToken = false): Promise<any> {
+  return apiFetch(API_BASE + "/api/status", { cancelable: "status" });
 }
 
 export async function fetchConfig(): Promise<any> {
