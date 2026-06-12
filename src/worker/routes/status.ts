@@ -1,6 +1,17 @@
 import { json, verifyAdmin } from "../utils";
 import { getUpdates } from "../services/ilink";
+import { Logger } from "../utils/error";
 import type { Env } from "../index";
+
+// 统计数据结构（与 messaging.ts 一致）
+interface Stats {
+  polls: number;
+  handled: number;
+  aiCalls: number;
+  aiFails: number;
+  lastPollAt: string;
+  lastLatencyMs: number;
+}
 
 function formatAge(ms: number): string {
   const s = Math.floor(ms / 1000);
@@ -26,6 +37,16 @@ export async function handleStatus(request: Request, env: Env): Promise<Response
   try { creds = JSON.parse(credsRaw); } catch { return json({ status: "error", message: "凭证格式错误" }); }
 
   const loginAgeMs = creds.createdAt ? Date.now() - creds.createdAt : null;
+  
+  // 从 KV 读取持久化的统计数据
+  let stats: Stats = { polls: 0, handled: 0, aiCalls: 0, aiFails: 0, lastPollAt: "", lastLatencyMs: 0 };
+  try {
+    const statsRaw = await env.CLAWBOT_KV.get("clawbot:stats");
+    if (statsRaw) stats = JSON.parse(statsRaw);
+  } catch (e) {
+    Logger.warn("[status] Error loading stats", { error: (e as Error).message });
+  }
+  
   const result: any = {
     loggedIn: true,
     status: "logged_in",
@@ -35,12 +56,21 @@ export async function handleStatus(request: Request, env: Env): Promise<Response
     loginAgeMs,
     loginAgeText: loginAgeMs ? formatAge(loginAgeMs) : null,
     hasSyncBuf: !!creds.syncBuf,
+    stats: {
+      polls: stats.polls,
+      handled: stats.handled,
+      aiCalls: stats.aiCalls,
+      aiFails: stats.aiFails,
+      lastPollAt: stats.lastPollAt,
+      lastLatencyMs: stats.lastLatencyMs
+    }
   };
 
   // 可选：检查 token 健康状态
   const url = new URL(request.url);
   const shouldCheck = url.searchParams.get("check") === "1" || url.searchParams.get("checkToken") === "true";
   if (shouldCheck && creds.botToken) {
+    Logger.info("[status] Checking token health");
     try {
       const ilinkCreds = {
         botToken: creds.botToken,
@@ -58,6 +88,7 @@ export async function handleStatus(request: Request, env: Env): Promise<Response
         result.bufUpdated = true;
       }
     } catch (e: any) {
+      Logger.error("[status] Token health check failed", { error: e.message });
       result.tokenHealth = "error: " + e.message;
     }
   }

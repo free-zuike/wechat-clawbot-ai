@@ -1,6 +1,16 @@
 // AI 服务 - Worker AI 集成
 // 默认模型: @cf/meta/llama-3.2-3b-instruct
 // 可通过配置 KV 中的 AI_MODEL 覆盖
+// 支持: 对话上下文（按 user_id 存储最近 N 条消息）
+
+import { Logger } from "../utils/error";
+import {
+  getContext,
+  addMessageToContext,
+  clearContext,
+  buildMessagesWithContext,
+  shouldClearContext,
+} from "./context";
 
 const DEFAULT_SYSTEM_PROMPT =
   "你是爪爪（ClawBot AI），一个由 Cloudflare Workers + Worker AI 驱动的微信机器人助手。" +
@@ -41,6 +51,67 @@ export function tryQuickReply(text: string): string | null {
   return null;
 }
 
+// 带上下文的 AI 调用（用于微信消息处理）
+export async function callAIWithContext(
+  kv: KVNamespace,
+  aiBinding: any,
+  userId: string,
+  userMessage: string,
+  systemPrompt: string,
+  aiModel: string
+): Promise<string> {
+  const cleanMsg = (userMessage || "").trim();
+  
+  // 检查快捷回复
+  const quick = tryQuickReply(cleanMsg);
+  if (quick) {
+    Logger.info(`[ai] Quick reply for ${userId}`, { message: cleanMsg.slice(0, 30) });
+    return quick;
+  }
+  
+  // 检查是否需要清空上下文
+  if (shouldClearContext(cleanMsg)) {
+    await clearContext(kv, userId);
+    return "✅ 已清空对话上下文，我们重新开始吧！";
+  }
+  
+  const model = aiModel || "@cf/meta/llama-3.2-3b-instruct";
+  const system = systemPrompt || DEFAULT_SYSTEM_PROMPT;
+  
+  // 获取用户上下文
+  const context = await getContext(kv, userId);
+  Logger.debug(`[ai] Context for ${userId}`, { messageCount: context.messages.length });
+  
+  // 构建带上下文的消息数组
+  const messages = buildMessagesWithContext(system, cleanMsg, context);
+  
+  Logger.info(`[ai] Calling AI for ${userId}`, { model, contextSize: context.messages.length });
+  
+  try {
+    const response = await aiBinding.run(model, {
+      messages,
+      max_tokens: 320,
+    });
+    
+    const text = typeof response === "string" ? response : response?.response || "";
+    
+    if (text) {
+      // 保存用户消息和 AI 回复到上下文
+      await addMessageToContext(kv, userId, "user", cleanMsg);
+      await addMessageToContext(kv, userId, "assistant", text);
+      Logger.info(`[ai] Reply saved for ${userId}`, { replyLength: text.length });
+    } else {
+      Logger.warn(`[ai] Empty response for ${userId}`);
+    }
+    
+    return (text || "").slice(0, 700) || "（AI 没有返回内容）";
+  } catch (e: any) {
+    Logger.error(`[ai] AI call failed for ${userId}`, { error: e?.message || String(e) });
+    return "抱歉，我刚刚脑子卡了一下 😅 能换个说法再问一遍吗？";
+  }
+}
+
+// 无上下文的 AI 调用（用于管理后台测试）
 export async function callAI(
   aiBinding: any,
   userMessage: string,
@@ -54,8 +125,7 @@ export async function callAI(
   const model = aiModel || "@cf/meta/llama-3.2-3b-instruct";
   const system = systemPrompt || DEFAULT_SYSTEM_PROMPT;
 
-  console.log("[ai] calling AI with model:", model);
-  console.log("[ai] user message:", cleanMsg.slice(0, 50));
+  Logger.info(`[ai] Calling AI (no context)`, { model });
 
   try {
     const response = await aiBinding.run(model, {
@@ -65,16 +135,10 @@ export async function callAI(
       ],
       max_tokens: 320,
     });
-    console.log("[ai] response type:", typeof response);
-    console.log("[ai] response:", JSON.stringify(response).slice(0, 200));
     const text = typeof response === "string" ? response : response?.response || "";
-    if (!text) {
-      console.warn("[ai] empty response from AI");
-    }
     return (text || "").slice(0, 700) || "（AI 没有返回内容）";
   } catch (e: any) {
-    console.error("[ai] AI call failed:", e?.message || e?.reason || String(e));
-    console.error("[ai] error details:", JSON.stringify(e));
+    Logger.error(`[ai] AI call failed`, { error: e?.message || String(e) });
     return "抱歉，我刚刚脑子卡了一下 😅 能换个说法再问一遍吗？";
   }
 }
