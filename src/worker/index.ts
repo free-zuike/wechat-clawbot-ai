@@ -5,7 +5,9 @@
 //    - web/          Vue 前端源码（通过 vite build 构建到 dist/）
 // ======================================================================
 
-import { router, metrics, errorTracker } from "./utils";
+import { router } from "./utils/router";
+import { metrics } from "./utils/metrics";
+import { errorTracker } from "./utils/metrics";
 
 export interface Env {
   AI: any;

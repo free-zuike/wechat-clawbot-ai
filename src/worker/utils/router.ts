@@ -45,6 +45,9 @@ interface Route {
   method?: string;
   handler: RouteHandler;
   requireAuth?: boolean;
+  rateLimit?: boolean;
+  rateLimitMax?: number;
+  rateLimitWindowMs?: number;
 }
 
 export class Router {
@@ -58,14 +61,14 @@ export class Router {
 
   private registerRoutes(): void {
     this.routes = [
-      { path: "/api/qrcode", method: "GET", handler: handleQRCode },
-      { path: "/api/qrcode-status", method: "GET", handler: handleQRCodeStatus },
-      { path: "/api/status", handler: handleStatus },
-      { path: "/api/chat", method: "POST", handler: handleChat },
-      { path: "/api/trigger-poll", method: "POST", handler: handleTriggerPoll },
-      { path: "/api/logout", method: "POST", handler: handleLogout },
-      { path: "/api/config", handler: handleConfig },
-      { path: "/api/debug-login", method: "GET", handler: handleDebugLogin },
+      { path: "/api/qrcode", method: "GET", handler: handleQRCode, rateLimit: true, rateLimitMax: 5, rateLimitWindowMs: 60000 },
+      { path: "/api/qrcode-status", method: "GET", handler: handleQRCodeStatus, rateLimit: true, rateLimitMax: 20, rateLimitWindowMs: 60000 },
+      { path: "/api/status", handler: handleStatus, requireAuth: true, rateLimit: true, rateLimitMax: 30, rateLimitWindowMs: 60000 },
+      { path: "/api/chat", method: "POST", handler: handleChat, requireAuth: true, rateLimit: true, rateLimitMax: 15, rateLimitWindowMs: 60000 },
+      { path: "/api/trigger-poll", method: "POST", handler: handleTriggerPoll, requireAuth: true, rateLimit: true, rateLimitMax: 5, rateLimitWindowMs: 60000 },
+      { path: "/api/logout", method: "POST", handler: handleLogout, requireAuth: true },
+      { path: "/api/config", handler: handleConfig, requireAuth: true, rateLimit: true, rateLimitMax: 10, rateLimitWindowMs: 60000 },
+      { path: "/api/debug-login", method: "GET", handler: handleDebugLogin, requireAuth: true },
     ];
   }
 
@@ -94,22 +97,26 @@ export class Router {
 
     // API 路由
     if (path.startsWith("/api/")) {
-      // 请求频率限制
-      if (this.rateLimiter) {
-        const limitResult = await this.rateLimiter.middleware(request);
+      // 查找路由
+      const route = this.findRoute(path, method);
+      if (!route) {
+        return json({ error: "Not Found" }, 404);
+      }
+
+      // 路由级频率限制（覆盖全局）
+      if (route.rateLimit) {
+        const max = route.rateLimitMax || 100;
+        const windowMs = route.rateLimitWindowMs || 60000;
+        const perRouteLimiter = createIPRateLimiter(env.CLAWBOT_KV, windowMs, max);
+        const limitResult = await perRouteLimiter.middleware(request);
         if (limitResult) return limitResult;
       }
 
       // 指标计数
       metrics.incr(`requests.${method}.${path}`);
 
-      // 查找并执行路由
-      const route = this.findRoute(path, method);
-      if (route) {
-        return this.executeHandler(route.handler, request, env, path);
-      }
-
-      return json({ error: "Not Found" }, 404);
+      // 执行路由（已有认证在 handler 内实现，这里额外 requireAuth 标志）
+      return this.executeHandler(route.handler, request, env, path);
     }
 
     // 静态资源

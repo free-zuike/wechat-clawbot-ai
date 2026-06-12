@@ -1,9 +1,15 @@
-import { json } from "../utils";
+import { json, verifyAdmin } from "../utils";
+import { Logger } from "../utils/error";
 import { getUpdates } from "../services/ilink";
 import type { Env } from "../index";
 
 // 诊断登录状态
 export async function handleDebugLogin(request: Request, env: Env): Promise<Response> {
+  const v = await verifyAdmin(request, env);
+  if (!v.ok) return json({ error: v.error }, 401);
+
+  Logger.info('[debug-login] diagnostic request');
+
   const credsRaw = await env.CLAWBOT_KV.get("clawbot:credentials");
   if (!credsRaw) return json({ ok: false, error: "未登录，没有凭证" });
 
@@ -56,6 +62,12 @@ export async function handleDebugLogin(request: Request, env: Env): Promise<Resp
   } catch (e: any) {
     getUpdatesResult = { error: e.message };
   }
+
+  Logger.info('[debug-login] diagnostic result', {
+    networkOk,
+    getUpdatesSuccess: getUpdatesResult.success || false,
+    msgsCount: getUpdatesResult.msgsCount || 0,
+  });
 
   return json({
     ok: getUpdatesResult.success || false,
