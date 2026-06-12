@@ -13,6 +13,12 @@ compatibility_flags = ["nodejs_compat"]
 # 静态资源目录（Vite 构建产物）
 assets = { directory = "./dist", binding = "ASSETS" }
 
+# ===== 部署策略 =====
+# Durable Object 迁移必须使用非版本化部署
+# 详见: https://developers.cloudflare.com/workers/configuration/versions-and-deployments/gradual-deployments/#gradual-deployments-for-durable-objects
+[deployment]
+strategy = "all_at_once"
+
 # ===== Cron 触发器 =====
 # 每 2 分钟自动拉取一次微信消息并回复
 [triggers]
