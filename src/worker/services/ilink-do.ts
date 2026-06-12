@@ -116,16 +116,32 @@ export class ILinkConnectionDO implements DurableObject {
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
 
-    // 初始化 SQLite
+    // 初始化 SQLite（credentials / contexts / do_config 建表）
     await this.initSQLite();
 
-    // 初始化凭证
+    // 初始化凭证（从 SQLite → KV fallback 迁移）
     await this.initCredentials();
-    if (!this.ilinkCreds) {
-      return new Response(JSON.stringify({ error: "未登录或凭证无效" }), {
-        status: 401,
-        headers: { "Content-Type": "application/json" },
+
+    // 有凭证就尝试启动轮询（DO eviction 后自动恢复，不依赖特定路径触发）
+    if (this.ilinkCreds && !this.pollLoopRunning) {
+      this.pollLoopRunning = true;
+      this.runPollLoop().catch((e) => {
+        Logger.error("[DO] Poll loop error", { error: e.message });
+        this.pollLoopRunning = false;
       });
+    }
+
+    // /status：不检查凭证，允许返回 needsReLogin 状态（供管理面板判断）
+    if (url.pathname === "/status") {
+      return this.handleStatus();
+    }
+
+    // 其它路径：必须已登录
+    if (!this.ilinkCreds) {
+      return new Response(
+        JSON.stringify({ error: "未登录或凭证无效，请重新扫码登录", needsReLogin: true }),
+        { status: 401, headers: { "Content-Type": "application/json" } }
+      );
     }
 
     // 路由分发
@@ -240,6 +256,7 @@ export class ILinkConnectionDO implements DurableObject {
       consecutiveErrors: this.state.consecutiveErrors,
       pendingMessages: this.state.pendingMessages.length,
       hasCredentials: !!this.ilinkCreds,
+      needsReLogin: !this.ilinkCreds,  // true = 需要重新扫码
     }), {
       headers: { "Content-Type": "application/json" },
     });
@@ -306,6 +323,25 @@ export class ILinkConnectionDO implements DurableObject {
 
       } catch (e: any) {
         Logger.error("[DO] Poll error", { error: e.message });
+
+        // ILINK_SESSION_TIMEOUT：微信凭证过期，标记需要重新扫码
+        // （其它错误继续计数，连错太多时暂停轮询）
+        if (e.code === "ILINK_SESSION_TIMEOUT" || e.message?.includes("ILINK_SESSION_TIMEOUT")) {
+          Logger.error("[DO] Token expired — clearing credentials, user needs to re-scan");
+          this.ilinkCreds = null;
+          this.cache.credentials = null;
+          this.pollLoopRunning = false;
+          // 同时清空 DO SQLite 和 KV，确保下次扫码走全新登录流程
+          try {
+            await this.state.storage.sql.exec("DELETE FROM credentials WHERE id = 1");
+          } catch (_) {}
+          try {
+            await this.kv?.delete("clawbot:credentials");
+          } catch (_) {}
+          await this.saveState();
+          return;
+        }
+
         this.state.consecutiveErrors++;
         await this.saveState();
 

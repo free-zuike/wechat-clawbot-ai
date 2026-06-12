@@ -46,10 +46,11 @@ export default {
       const doId = env.ILINK_CONNECTION.idFromName("main");
       const doStub = env.ILINK_CONNECTION.get(doId);
 
-      // 调用 DO 的状态接口，触发轮询循环启动（如果尚未启动）
-      const response = await doStub.fetch(new Request("http://localhost/status"));
-      const status = await response.json();
-      console.log("[cron] DO status:", JSON.stringify(status));
+      // 调用 DO 的 /poll 接口：会初始化凭证 + 启动轮询循环
+      // （之前调用 /status 只返回状态，不会启动轮询，导致 DO eviction 后消息永远不被拉取）
+      const response = await doStub.fetch(new Request("http://localhost/poll"));
+      const data = await response.json();
+      console.log("[cron] DO /poll:", JSON.stringify(data));
 
     } catch (e: any) {
       console.error("[cron] error:", e);

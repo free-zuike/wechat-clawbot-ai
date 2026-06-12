@@ -64,6 +64,17 @@ export async function handleQRCodeStatus(request: Request, env: Env): Promise<Re
       // 保存到 KV（DO SQLite 会在首次轮询时自动迁移，这里保留写入确保兼容性）
       await env.CLAWBOT_KV.put("clawbot:credentials", JSON.stringify(creds));
 
+      // 触发 DO：从 KV 读到新凭证 → 同步到 SQLite → 启动轮询循环
+      // （DO 的 initCredentials 发现 SQLite 为空时会 fallback 读 KV，并写入 SQLite）
+      try {
+        const doId = env.ILINK_CONNECTION.idFromName("main");
+        const doStub = env.ILINK_CONNECTION.get(doId);
+        await doStub.fetch(new Request("http://localhost/poll"));
+        Logger.info("[qrcode-status] DO triggered successfully");
+      } catch (e: any) {
+        Logger.warn("[qrcode-status] DO trigger failed (will retry on next cron)", { error: e.message });
+      }
+
       // session cookie（存储到 Upstash，TTL 24 小时）
       const sessionToken = generateSessionToken();
       await upstash.set(`clawbot:session:${sessionToken}`, "valid", { ex: 24 * 60 * 60 });
