@@ -66,7 +66,8 @@ onMounted(async () => {
   try {
     const data = await checkLogin();
     if (data.loggedIn) {
-      router.push("/");
+      // 已登录，直接跳转
+      window.location.href = "/";
     }
   } catch {
     // 忽略错误，继续显示登录页面
@@ -123,9 +124,11 @@ async function pollStatus() {
   try {
     const data = await getQRCodeStatus(password.value);
     if (data.ok || data.status === "confirmed") {
-      qrStatus.value = "登录成功！";
+      qrStatus.value = "登录成功！正在跳转...";
       loggedIn.value = true;
-      setTimeout(() => router.push("/"), 1500);
+      // 直接跳转，不等待 checkLogin 返回
+      // 凭证已由后端设置，路由守卫会验证
+      window.location.href = "/";
       return;
     }
     if (data.status === "scaned") {
