@@ -32,7 +32,8 @@ interface RuntimeCache {
   credentialsLoadedAt: number;
   config: { aiSystemPrompt: string; aiModel: string } | null;
   configLoadedAt: number;
-  processedIds: Set<string>;
+  // 注意：不再用内存 Set 去重，改为依赖 syncBuf 服务端去重
+  // 每次轮询用 syncBuf 告诉服务器"我只接收这个位置之后的消息"
 }
 
 export class ILinkConnectionDO implements DurableObject {
@@ -47,7 +48,6 @@ export class ILinkConnectionDO implements DurableObject {
     credentialsLoadedAt: 0,
     config: null,
     configLoadedAt: 0,
-    processedIds: new Set(),
   };
   private sqliteInitialized = false;
 
@@ -451,10 +451,16 @@ export class ILinkConnectionDO implements DurableObject {
       const ctxToken = msg.context_token;
       if (!from || !ctxToken) continue;
 
+      // 去重：依赖 syncBuf 服务端去重（iLink API 根据 syncBuf 位置只返回新消息）
+      // 兜底：如果 D1 里已处理过这条消息，跳过
       const messageId = this.generateMessageId(msg);
-
-      // 内存 Set 去重
-      if (this.cache.processedIds.has(messageId)) continue;
+      if (this.d1) {
+        const existing = await this.d1.getMessageById(messageId);
+        if (existing) {
+          Logger.info("[DO] Message already processed (D1 dedup)", { messageId });
+          continue;
+        }
+      }
 
       const createdAt = msg.create_time_ms
         ? new Date(msg.create_time_ms).toISOString()
@@ -484,13 +490,6 @@ export class ILinkConnectionDO implements DurableObject {
       } catch (e: any) {
         aiFailCount++;
         Logger.error("[DO] AI processing failed", { error: e.message, from });
-      }
-
-      this.cache.processedIds.add(messageId);
-      // 防止内存 Set 无限增长（超过 1000 条就剪到最新 500）
-      if (this.cache.processedIds.size > 1000) {
-        const arr = Array.from(this.cache.processedIds).slice(-500);
-        this.cache.processedIds = new Set(arr);
       }
 
       processedCount++;
