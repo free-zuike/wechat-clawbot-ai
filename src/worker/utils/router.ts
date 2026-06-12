@@ -18,6 +18,12 @@ import {
   handleStats,
   handleHealth,
 } from "../routes/admin";
+import {
+  handleD1Messages,
+  handleD1Sessions,
+  handleD1Stats,
+  handleD1Summary,
+} from "../routes/d1";
 import { json, html } from "../utils";
 import { metrics, runHealthChecks, errorTracker } from "../utils/metrics";
 import { createIPRateLimiter } from "../utils/security";
@@ -88,6 +94,11 @@ export class Router {
       { path: "/api/admin/alerts/resolve-all", method: "POST", handler: handleResolveAllAlerts, requireAuth: true, rateLimit: true, rateLimitMax: 5, rateLimitWindowMs: 60000 },
       { path: "/api/admin/stats", method: "GET", handler: handleStats, requireAuth: true, rateLimit: true, rateLimitMax: 30, rateLimitWindowMs: 60000 },
       { path: "/api/admin/health", method: "GET", handler: handleHealth, requireAuth: true, rateLimit: true, rateLimitMax: 60, rateLimitWindowMs: 60000 },
+      // D1 数据库查询路由
+      { path: "/api/admin/d1/messages", method: "GET", handler: handleD1Messages, requireAuth: true, rateLimit: true, rateLimitMax: 30, rateLimitWindowMs: 60000 },
+      { path: "/api/admin/d1/sessions", method: "GET", handler: handleD1Sessions, requireAuth: true, rateLimit: true, rateLimitMax: 30, rateLimitWindowMs: 60000 },
+      { path: "/api/admin/d1/stats", method: "GET", handler: handleD1Stats, requireAuth: true, rateLimit: true, rateLimitMax: 30, rateLimitWindowMs: 60000 },
+      { path: "/api/admin/d1/summary", method: "GET", handler: handleD1Summary, requireAuth: true, rateLimit: true, rateLimitMax: 60, rateLimitWindowMs: 60000 },
     ];
   }
 
