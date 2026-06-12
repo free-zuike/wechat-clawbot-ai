@@ -173,7 +173,7 @@ export async function sendTextMessage(
     message_type: MessageType.BOT,
     message_state: MessageState.FINISH,
     context_token: contextToken,
-    item_list: [{ type: MessageItemType.TEXT, text_item: { text } },
+    item_list: [{ type: MessageItemType.TEXT, text_item: { text } }],
   };
   await post(creds, "ilink/bot/sendmessage", { msg }, DEFAULT_API_MS);
 }
