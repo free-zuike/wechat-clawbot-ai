@@ -16,9 +16,10 @@ export async function handleQRCode(request: Request, env: Env): Promise<Response
   try {
     const data = await fetchQRCode();
 
-    // 使用 Upstash 存储（TTL 5 分钟）
+    // 存储 qrcode_key：优先 Upstash（支持 TTL），兜底写入 KV
     const upstash = getUpstashService(env);
     await upstash.set("clawbot:qrcode_key", data.qrcode, { ex: 5 * 60 });
+    await env.CLAWBOT_KV.put("clawbot:qrcode_key", data.qrcode, { expirationTtl: 5 * 60 });
 
     Logger.info("[qrcode] obtained", { hasUrl: !!data.qrcode_img_content });
     return json({ qrcode: data.qrcode, qrcode_url: data.qrcode_img_content });
