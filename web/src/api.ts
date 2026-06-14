@@ -178,7 +178,7 @@ export async function saveConfig(config: { aiModel?: string; aiSystemPrompt?: st
 export async function triggerPoll(): Promise<any> {
   return apiFetch(API_BASE + "/api/trigger-poll", {
     method: "POST",
-    timeout: 30000, // 拉取消息可能较慢
+    timeout: 60000,
   });
 }
 
