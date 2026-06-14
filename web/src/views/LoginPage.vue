@@ -123,7 +123,7 @@ async function startLogin() {
 async function pollStatus() {
   try {
     const data = await getQRCodeStatus(password.value);
-    if (data.ok || data.status === "confirmed") {
+    if (data.ok) {
       qrStatus.value = "登录成功！正在跳转...";
       loggedIn.value = true;
       // 直接跳转，不等待 checkLogin 返回
