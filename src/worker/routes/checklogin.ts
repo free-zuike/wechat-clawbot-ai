@@ -1,9 +1,7 @@
 // 检查登录状态 - 前端通过此接口判断是否已扫码登录
-// 优化：session 检查优先用 Upstash，兜底用 KV
 
 import { json } from "../utils";
 import { Logger } from "../utils/error";
-import { getUpstashService } from "../services/upstash";
 import type { Env } from "../index";
 
 // 检查登录状态
@@ -32,7 +30,6 @@ export async function handleCheckLogin(request: Request, env: Env): Promise<Resp
             loginAgeText = `已登录 ${hours} 小时`;
           }
         }
-        // ILink token 有效期判断
         if (creds.createdAt) {
           const age = Date.now() - creds.createdAt;
           const hours = age / 3600000;
@@ -43,16 +40,12 @@ export async function handleCheckLogin(request: Request, env: Env): Promise<Resp
       }
     }
 
-    // 检查 session cookie（优先 Upstash，兜底 KV）
+    // 检查 session cookie（从 KV 读）
     const cookieHeader = request.headers.get("Cookie") || "";
     const sessionMatch = cookieHeader.match(/clawbot_session=([^;]+)/);
     if (sessionMatch) {
       const sessionToken = sessionMatch[1];
-      const upstash = getUpstashService(env);
-      let sessionValid = await upstash.get(`clawbot:session:${sessionToken}`);
-      if (sessionValid === null) {
-        sessionValid = await env.CLAWBOT_KV?.get(`clawbot:session:${sessionToken}`);
-      }
+      const sessionValid = await env.CLAWBOT_KV.get(`clawbot:session:${sessionToken}`);
       if (sessionValid) {
         hasSession = true;
         loggedIn = true;

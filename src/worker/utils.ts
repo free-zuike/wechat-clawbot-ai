@@ -37,23 +37,12 @@ export function clearSessionCookie(): string {
 
 // 验证管理员密码或 session
 export async function verifyAdmin(request: Request, env: any): Promise<{ ok: boolean; error?: string }> {
-  // 动态导入避免循环依赖
-  const { getUpstashService } = await import("./services/upstash");
-
-  // 先检查 session cookie（优先用 Upstash，兜底用 KV）
+  // 先检查 session cookie（从 KV 读）
   const cookieHeader = request.headers.get("Cookie") || "";
   const sessionMatch = cookieHeader.match(/clawbot_session=([^;]+)/);
   if (sessionMatch) {
     const sessionToken = sessionMatch[1];
-    const upstash = getUpstashService(env);
-
-    // 优先从 Upstash 读 session
-    let sessionValid = await upstash.get(`clawbot:session:${sessionToken}`);
-    if (sessionValid === null) {
-      // 兜底从 KV 读（兼容旧 session）
-      sessionValid = await env.CLAWBOT_KV?.get(`clawbot:session:${sessionToken}`);
-    }
-
+    const sessionValid = await env.CLAWBOT_KV?.get(`clawbot:session:${sessionToken}`);
     if (sessionValid) {
       return { ok: true };
     }

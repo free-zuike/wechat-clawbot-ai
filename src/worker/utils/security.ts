@@ -1,50 +1,43 @@
 // 安全工具 - 速率限制 + IP 白名单
-// 优化：ratelimit 从 KV 迁移到 Upstash Redis
+// 使用 Cloudflare KV 实现速率限制
 
 import { Logger } from "./error";
-import { getUpstashService } from "../services/upstash";
 import type { Env } from "../index";
 
 // ========== 配置 ==========
 
 interface RateLimitConfig {
-  windowMs: number;      // 时间窗口（毫秒）
-  maxRequests: number;    // 窗口内最大请求数
-  keyPrefix: string;      // Redis key 前缀
-  enabled: boolean;       // 是否启用
+  windowMs: number;
+  maxRequests: number;
+  keyPrefix: string;
+  enabled: boolean;
 }
 
-// 默认配置
 const DEFAULT_LIMITS: Record<string, RateLimitConfig> = {
-  // 全局限流：10 秒内最多 100 次请求
   global: {
     windowMs: 10 * 1000,
     maxRequests: 100,
     keyPrefix: "ratelimit:global:",
     enabled: true,
   },
-  // 每 IP：1 分钟内最多 60 次
   ip: {
     windowMs: 60 * 1000,
     maxRequests: 60,
     keyPrefix: "ratelimit:ip:",
     enabled: true,
   },
-  // 登录接口：5 分钟内最多 10 次
   login: {
     windowMs: 5 * 60 * 1000,
     maxRequests: 10,
     keyPrefix: "ratelimit:login:",
     enabled: true,
   },
-  // 扫码接口：1 分钟内最多 5 次
   qrcode: {
     windowMs: 60 * 1000,
     maxRequests: 5,
     keyPrefix: "ratelimit:qrcode:",
     enabled: true,
   },
-  // 发送消息：1 分钟内最多 30 次
   send: {
     windowMs: 60 * 1000,
     maxRequests: 30,
@@ -62,57 +55,55 @@ export class RateLimiter {
     this.config = config;
   }
 
-  // 检查请求是否超过限制
   async check(env: Env, identifier: string): Promise<{ allowed: boolean; remaining: number; resetMs: number }> {
     if (!this.config.enabled) {
       return { allowed: true, remaining: this.config.maxRequests, resetMs: 0 };
     }
 
-    const upstash = getUpstashService(env);
     const key = `${this.config.keyPrefix}${identifier}`;
-    const windowSec = Math.ceil(this.config.windowMs / 1000);
 
     try {
-      // 使用 INCR + EXPIRE 实现滑动窗口
-      const count = await upstash.incr(key, windowSec);
+      const existing = await env.CLAWBOT_KV.get(key, { type: "json" }) as { count: number; resetAt: number } | null;
+      const now = Date.now();
 
-      // TTL 返回剩余过期时间（秒）
-      const ttl = await upstash.ttl(key);
-      const resetMs = ttl > 0 ? ttl * 1000 : this.config.windowMs;
-
-      const allowed = count <= this.config.maxRequests;
-      const remaining = Math.max(0, this.config.maxRequests - count);
-
-      if (!allowed) {
-        Logger.warn("[RateLimit] Rate limit exceeded", {
-          key,
-          count,
-          max: this.config.maxRequests,
+      if (!existing || now > existing.resetAt) {
+        // 新窗口或已过期
+        const resetAt = now + this.config.windowMs;
+        await env.CLAWBOT_KV.put(key, JSON.stringify({ count: 1, resetAt }), {
+          expirationTtl: Math.ceil(this.config.windowMs / 1000) + 10,
         });
+        return { allowed: true, remaining: this.config.maxRequests - 1, resetMs: this.config.windowMs };
       }
 
-      return { allowed, remaining, resetMs };
+      if (existing.count >= this.config.maxRequests) {
+        const resetMs = existing.resetAt - now;
+        Logger.warn("[RateLimit] Rate limit exceeded", { key, count: existing.count, max: this.config.maxRequests });
+        return { allowed: false, remaining: 0, resetMs };
+      }
+
+      // 增加计数（非原子操作，KV 场景下可接受）
+      existing.count += 1;
+      await env.CLAWBOT_KV.put(key, JSON.stringify(existing), {
+        expirationTtl: Math.ceil((existing.resetAt - now) / 1000) + 10,
+      });
+      return { allowed: true, remaining: this.config.maxRequests - existing.count, resetMs: existing.resetAt - now };
     } catch (e) {
-      // 如果 Upstash 不可用，降级为允许（保守策略）
+      // KV 不可用时放行
       Logger.warn("[RateLimit] Check failed, allowing", { key, error: (e as Error).message });
       return { allowed: true, remaining: 0, resetMs: 0 };
     }
   }
 
-  // 重置限制计数
   async reset(env: Env, identifier: string): Promise<void> {
-    const upstash = getUpstashService(env);
     const key = `${this.config.keyPrefix}${identifier}`;
-    await upstash.del(key);
+    await env.CLAWBOT_KV.delete(key);
   }
 }
 
-// 导出各个限制器工厂
 export function createRateLimiter(type: keyof typeof DEFAULT_LIMITS): RateLimiter {
   return new RateLimiter(DEFAULT_LIMITS[type]);
 }
 
-// 预创建的限制器实例
 export const rateLimiters = {
   global: createRateLimiter("global"),
   ip: createRateLimiter("ip"),
@@ -130,19 +121,14 @@ export interface RateLimitResult {
   retryAfterMs?: number;
 }
 
-// 从请求中提取客户端标识
 export function getClientIdentifier(request: Request): string {
-  // 优先使用真实 IP（通过 CF-Connecting-IP 头）
   const ip = request.headers.get("CF-Connecting-IP") ||
              request.headers.get("X-Forwarded-For")?.split(",")[0]?.trim() ||
              request.headers.get("X-Real-IP") ||
              "unknown";
-
-  // 清理并截断
   return ip.replace(/[^a-zA-Z0-9.:_-]/g, "").slice(0, 50);
 }
 
-// 应用速率限制（返回 429 响应或 null）
 export async function applyRateLimit(
   request: Request,
   env: Env,
@@ -170,7 +156,6 @@ export async function applyRateLimit(
   return null;
 }
 
-// 获取限制信息（用于调试或显示）
 export async function getRateLimitInfo(
   request: Request,
   env: Env,
