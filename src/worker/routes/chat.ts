@@ -16,12 +16,17 @@ export async function handleChat(request: Request, env: Env): Promise<Response> 
   Logger.info(`[chat][${requestId}] handleChat called`);
 
   try {
-    const body: any = await request.json();
+    let body: any;
+    try {
+      body = await request.json();
+    } catch (e: any) {
+      return json({ error: "INVALID_JSON", message: "无法解析请求体: " + e.message }, 400);
+    }
     const rawMessage = body?.message;
 
     // 验证消息
     if (typeof rawMessage !== "string") {
-      return json({ error: "VALIDATION_ERROR", message: "message 必须是字符串" }, 400);
+      return json({ error: "VALIDATION_ERROR", message: `message 必须是字符串，收到: ${typeof rawMessage} (${JSON.stringify(rawMessage)})`, body_keys: Object.keys(body || {}) }, 400);
     }
 
     const trimmed = rawMessage.trim();
