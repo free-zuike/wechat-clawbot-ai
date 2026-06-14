@@ -1,115 +1,92 @@
-// 安全工具 - 速率限制 + IP 白名单
-// 使用 Cloudflare KV 实现速率限制
+// 安全工具 - 速率限制（内存实现，不消耗KV写入配额）
 
 import { Logger } from "./error";
 import type { Env } from "../index";
 
-// ========== 配置 ==========
+// ========== 内存限流器 ==========
+
+interface WindowEntry {
+  count: number;
+  resetAt: number;
+}
+
+const buckets = new Map<string, WindowEntry>();
+
+// 定期清理过期条目（利用每次请求触发）
+function gcWindows(now: number): void {
+  if (buckets.size > 1000) {
+    for (const [k, v] of buckets) {
+      if (now > v.resetAt) buckets.delete(k);
+    }
+  }
+}
+
+function checkWindow(key: string, windowMs: number, maxRequests: number): { allowed: boolean; remaining: number; resetMs: number } {
+  const now = Date.now();
+  gcWindows(now);
+
+  const existing = buckets.get(key);
+
+  if (!existing || now > existing.resetAt) {
+    buckets.set(key, { count: 1, resetAt: now + windowMs });
+    return { allowed: true, remaining: maxRequests - 1, resetMs: windowMs };
+  }
+
+  if (existing.count >= maxRequests) {
+    return { allowed: false, remaining: 0, resetMs: existing.resetAt - now };
+  }
+
+  existing.count += 1;
+  return { allowed: true, remaining: maxRequests - existing.count, resetMs: existing.resetAt - now };
+}
+
+// ========== 速率限制配置 ==========
 
 interface RateLimitConfig {
   windowMs: number;
   maxRequests: number;
-  keyPrefix: string;
   enabled: boolean;
 }
 
 const DEFAULT_LIMITS: Record<string, RateLimitConfig> = {
-  global: {
-    windowMs: 10 * 1000,
-    maxRequests: 100,
-    keyPrefix: "ratelimit:global:",
-    enabled: true,
-  },
-  ip: {
-    windowMs: 60 * 1000,
-    maxRequests: 60,
-    keyPrefix: "ratelimit:ip:",
-    enabled: true,
-  },
-  login: {
-    windowMs: 5 * 60 * 1000,
-    maxRequests: 10,
-    keyPrefix: "ratelimit:login:",
-    enabled: true,
-  },
-  qrcode: {
-    windowMs: 60 * 1000,
-    maxRequests: 5,
-    keyPrefix: "ratelimit:qrcode:",
-    enabled: true,
-  },
-  send: {
-    windowMs: 60 * 1000,
-    maxRequests: 30,
-    keyPrefix: "ratelimit:send:",
-    enabled: true,
-  },
+  global: { windowMs: 10_000, maxRequests: 100, enabled: true },
+  ip: { windowMs: 60_000, maxRequests: 60, enabled: true },
+  login: { windowMs: 5 * 60_000, maxRequests: 10, enabled: true },
+  qrcode: { windowMs: 60_000, maxRequests: 5, enabled: true },
+  send: { windowMs: 60_000, maxRequests: 30, enabled: true },
 };
-
-// ========== 速率限制器 ==========
 
 export class RateLimiter {
   private config: RateLimitConfig;
+  private name: string;
 
-  constructor(config: RateLimitConfig) {
+  constructor(name: string, config: RateLimitConfig) {
+    this.name = name;
     this.config = config;
   }
 
-  async check(env: Env, identifier: string): Promise<{ allowed: boolean; remaining: number; resetMs: number }> {
+  check(_env: Env, identifier: string): { allowed: boolean; remaining: number; resetMs: number } {
     if (!this.config.enabled) {
       return { allowed: true, remaining: this.config.maxRequests, resetMs: 0 };
     }
-
-    const key = `${this.config.keyPrefix}${identifier}`;
-
-    try {
-      const existing = await env.CLAWBOT_KV.get(key, { type: "json" }) as { count: number; resetAt: number } | null;
-      const now = Date.now();
-
-      if (!existing || now > existing.resetAt) {
-        // 新窗口或已过期
-        const resetAt = now + this.config.windowMs;
-        await env.CLAWBOT_KV.put(key, JSON.stringify({ count: 1, resetAt }), {
-          expirationTtl: Math.ceil(this.config.windowMs / 1000) + 10,
-        });
-        return { allowed: true, remaining: this.config.maxRequests - 1, resetMs: this.config.windowMs };
-      }
-
-      if (existing.count >= this.config.maxRequests) {
-        const resetMs = existing.resetAt - now;
-        Logger.warn("[RateLimit] Rate limit exceeded", { key, count: existing.count, max: this.config.maxRequests });
-        return { allowed: false, remaining: 0, resetMs };
-      }
-
-      // 增加计数（非原子操作，KV 场景下可接受）
-      existing.count += 1;
-      await env.CLAWBOT_KV.put(key, JSON.stringify(existing), {
-        expirationTtl: Math.ceil((existing.resetAt - now) / 1000) + 10,
-      });
-      return { allowed: true, remaining: this.config.maxRequests - existing.count, resetMs: existing.resetAt - now };
-    } catch (e) {
-      // KV 不可用时放行
-      Logger.warn("[RateLimit] Check failed, allowing", { key, error: (e as Error).message });
-      return { allowed: true, remaining: 0, resetMs: 0 };
-    }
+    return checkWindow(`${this.name}:${identifier}`, this.config.windowMs, this.config.maxRequests);
   }
 
-  async reset(env: Env, identifier: string): Promise<void> {
-    const key = `${this.config.keyPrefix}${identifier}`;
-    await env.CLAWBOT_KV.delete(key);
+  reset(_env: Env, identifier: string): void {
+    buckets.delete(`${this.name}:${identifier}`);
   }
 }
 
-export function createRateLimiter(type: keyof typeof DEFAULT_LIMITS): RateLimiter {
-  return new RateLimiter(DEFAULT_LIMITS[type]);
+export function createRateLimiter(name: string, type: keyof typeof DEFAULT_LIMITS): RateLimiter {
+  return new RateLimiter(name, DEFAULT_LIMITS[type]);
 }
 
 export const rateLimiters = {
-  global: createRateLimiter("global"),
-  ip: createRateLimiter("ip"),
-  login: createRateLimiter("login"),
-  qrcode: createRateLimiter("qrcode"),
-  send: createRateLimiter("send"),
+  global: createRateLimiter("global", "global"),
+  ip: createRateLimiter("ip", "ip"),
+  login: createRateLimiter("login", "login"),
+  qrcode: createRateLimiter("qrcode", "qrcode"),
+  send: createRateLimiter("send", "send"),
 };
 
 // ========== 速率限制中间件 ==========
@@ -136,7 +113,7 @@ export async function applyRateLimit(
 ): Promise<Response | null> {
   const limiter = rateLimiters[type];
   const identifier = getClientIdentifier(request);
-  const result = await limiter.check(env, identifier);
+  const result = limiter.check(env, identifier);
 
   if (!result.allowed) {
     return new Response(JSON.stringify({
