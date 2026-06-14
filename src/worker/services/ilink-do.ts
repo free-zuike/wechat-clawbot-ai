@@ -804,7 +804,22 @@ export class ILinkConnectionDO implements DurableObject {
       Logger.warn("[DO] Failed to read credentials from SQLite", { error: (e as Error).message });
     }
 
-    // 3) 兜底：从 KV 读取（兼容旧数据，扫码登录后会被写入 SQLite）
+    // 3) 从 DO storage 读取（/save-creds 存储的凭证）
+    try {
+      const stored = await this.state.storage.get<string>("credentials");
+      if (stored) {
+        const creds = JSON.parse(stored);
+        if (creds.botToken && creds.accountId) {
+          this.cache.credentials = creds;
+          this.cache.credentialsLoadedAt = now;
+          this.ilinkCreds = { botToken: creds.botToken, accountId: creds.accountId, baseUrl: creds.baseUrl || "https://ilinkai.weixin.qq.com", userId: creds.userId || "" };
+          this.state.syncBuf = creds.syncBuf || "";
+          return;
+        }
+      }
+    } catch {}
+
+    // 4) 兜底：从 KV 读取（兼容旧数据）
     const credsRaw = await this.kv?.get("clawbot:credentials");
     if (!credsRaw) {
       this.ilinkCreds = null;
