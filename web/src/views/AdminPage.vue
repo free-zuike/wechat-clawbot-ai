@@ -119,14 +119,41 @@
       <section v-if="activeSection === 'control'">
         <div class="card">
           <h2>🎮 消息控制</h2>
-          <div class="desc">手动触发消息拉取，测试微信消息流</div>
-          <button class="btn" :disabled="isPolling" @click="handleTriggerPoll">
-            {{ isPolling ? "轮询中..." : "🔄 立即拉取消息" }}
-          </button>
+          <div class="desc">手动触发消息拉取 + 实时消息推送</div>
+          <div style="display: flex; gap: 10px; align-items: center; margin-bottom: 16px">
+            <button class="btn" :disabled="isPolling" @click="handleTriggerPoll">
+              {{ isPolling ? "轮询中..." : "🔄 立即拉取消息" }}
+            </button>
+            <span :style="{ color: wsConnected ? '#16a34a' : '#dc2626', fontSize: '13px' }">
+              {{ wsConnected ? '🟢 实时连接已建立' : '🔴 未连接' }}
+            </span>
+          </div>
           <div v-if="pollResult" class="result-box">{{ pollResult }}</div>
+
+          <!-- 实时消息列表 -->
+          <div v-if="wsMessages.length > 0" style="margin-top: 20px">
+            <h3 style="font-size: 14px; margin-bottom: 8px">📡 实时消息 ({{ wsMessages.length }})</h3>
+            <div style="max-height: 400px; overflow-y: auto; border: 1px solid #e5e7eb; border-radius: 8px">
+              <div
+                v-for="(msg, i) in wsMessages"
+                :key="i"
+                style="padding: 10px 14px; border-bottom: 1px solid #f3f4f6; font-size: 13px"
+              >
+                <div style="display: flex; justify-content: space-between; margin-bottom: 4px">
+                  <span style="font-weight: 600; color: #2563eb">📩 {{ msg.data?.fromUserId || '未知' }}</span>
+                  <span style="color: #9ca3af; font-size: 12px">{{ msg.data?.timestamp || '' }}</span>
+                </div>
+                <div style="color: #374151">{{ msg.data?.content || msg.data }}</div>
+                <div v-if="msg.data?.replyContent" style="color: #16a34a; margin-top: 4px; padding: 6px 8px; background: #f0fdf4; border-radius: 4px">
+                  💬 {{ msg.data.replyContent }}
+                </div>
+              </div>
+            </div>
+            <button class="btn secondary small" style="margin-top: 8px" @click="wsMessages = []">清空消息</button>
+          </div>
+
           <div class="notice" style="margin-top: 20px">
-            💡 <strong>提示：</strong>手动轮询适合测试场景。生产环境建议在
-            wrangler.toml 中配置 cron 触发器，每 2 分钟自动拉取一次消息。
+            💡 <strong>提示：</strong>实时消息通过 WebSocket 推送，无需手动刷新。手动轮询适合测试场景。
           </div>
         </div>
       </section>
@@ -501,6 +528,30 @@ const chatLoading = ref(false);
 const pollResult = ref("");
 const isPolling = ref(false);
 
+// ===== WebSocket 实时消息 =====
+const wsConnected = ref(false);
+const wsMessages = ref<Array<{ type: string; data: any }>>([]);
+let ws: WebSocket | null = null;
+
+function connectWebSocket() {
+  if (ws && ws.readyState === WebSocket.OPEN) return;
+  const proto = location.protocol === "https:" ? "wss:" : "ws:";
+  ws = new WebSocket(`${proto}//${location.host}/api/ws`);
+  ws.onopen = () => { wsConnected.value = true; };
+  ws.onclose = () => {
+    wsConnected.value = false;
+    setTimeout(connectWebSocket, 3000);
+  };
+  ws.onerror = () => { ws.close(); };
+  ws.onmessage = (e) => {
+    try {
+      const msg = JSON.parse(e.data);
+      wsMessages.value.push(msg);
+      if (wsMessages.value.length > 200) wsMessages.value.shift();
+    } catch {}
+  };
+}
+
 // ===== 调试数据 =====
 const debugInfo = ref("");
 const debugLoading = ref(false);
@@ -863,11 +914,14 @@ onMounted(async () => {
     return;
   }
 
-  // 并行加载所有页面数据（状态刷新已包含健康数据）
+  // 并行加载所有页面数据
   handleRefreshStatus();
   handleLoadConfig();
   handleRefreshAlerts();
   handleRefreshSessions();
+
+  // 启动 WebSocket 实时连接
+  connectWebSocket();
 
   // 用 setTimeout 替代 setInterval，避免请求重叠
   async function tick() {

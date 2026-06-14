@@ -44,6 +44,7 @@ export class ILinkConnectionDO implements DurableObject {
   private d1: D1Service | null = null;
   private pollLoopRunning = false;
   private kv: KVNamespace | null = null;
+  private websockets: Set<WebSocket> = new Set();
   private cache: RuntimeCache = {
     credentials: null,
     credentialsLoadedAt: 0,
@@ -153,6 +154,11 @@ export class ILinkConnectionDO implements DurableObject {
       });
     }
 
+    // WebSocket 升级
+    if (url.pathname === "/ws") {
+      return this.handleWebSocket(request);
+    }
+
     // /status、/qr-poll、/check-session：不检查凭证
     if (url.pathname === "/status") {
       return this.handleStatus();
@@ -243,6 +249,41 @@ export class ILinkConnectionDO implements DurableObject {
       skipped: 0,
       latencyMs: 5000,
     }), { headers: { "Content-Type": "application/json" } });
+  }
+
+  // ========== WebSocket 实时推送 ==========
+
+  private handleWebSocket(request: Request): Response {
+    const pair = new WebSocketPair();
+    const [client, server] = [pair[0], pair[1]];
+
+    this.websockets.add(server);
+    Logger.info("[DO] WebSocket connected", { total: this.websockets.size });
+
+    server.accept();
+    server.addEventListener("close", () => {
+      this.websockets.delete(server);
+      Logger.info("[DO] WebSocket disconnected", { total: this.websockets.size });
+    });
+    server.addEventListener("error", () => {
+      this.websockets.delete(server);
+    });
+
+    // 发送欢迎消息
+    server.send(JSON.stringify({ type: "connected", message: "实时消息连接已建立" }));
+
+    return new Response(null, { status: 101, webSocket: client });
+  }
+
+  private broadcastToWebSockets(data: Record<string, unknown>): void {
+    const msg = JSON.stringify(data);
+    for (const ws of this.websockets) {
+      try {
+        ws.send(msg);
+      } catch {
+        this.websockets.delete(ws);
+      }
+    }
   }
 
   // ========== 检查 session 是否有效（DO SQLite）==========
@@ -688,8 +729,8 @@ export class ILinkConnectionDO implements DurableObject {
         }
       }
 
-      // 添加到待处理队列（供长轮询消费者消费）
-      this.state.pendingMessages.push({
+      // 添加到待处理队列
+      const pendingMsg = {
         messageId,
         fromUserId: from,
         content: text,
@@ -697,7 +738,13 @@ export class ILinkConnectionDO implements DurableObject {
         replyContent,
         replyAt,
         processed: true,
-      });
+      };
+      this.state.pendingMessages.push(pendingMsg);
+
+      // 广播到 WebSocket 客户端
+      if (this.websockets.size > 0) {
+        this.broadcastToWebSockets({ type: "message", data: pendingMsg });
+      }
     }
 
     // 批量更新一次统计
