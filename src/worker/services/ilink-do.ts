@@ -153,27 +153,15 @@ export class ILinkConnectionDO implements DurableObject {
       });
     }
 
-    // /status、/qr-poll、/save-creds、/check-session、/clear-creds：不检查凭证（登录前/退出时触发）
+    // /status、/qr-poll、/check-session：不检查凭证
     if (url.pathname === "/status") {
       return this.handleStatus();
     }
     if (url.pathname === "/qr-poll") {
       return this.handleQRPoll(url);
     }
-    if (url.pathname === "/save-creds") {
-      return this.handleSaveCreds(request);
-    }
     if (url.pathname === "/check-session") {
       return this.handleCheckSession(url);
-    }
-    if (url.pathname === "/clear-creds") {
-      return this.handleClearCreds();
-    }
-    if (url.pathname === "/save-config") {
-      return this.handleSaveConfig(request);
-    }
-    if (url.pathname === "/get-config") {
-      return this.handleGetConfig();
     }
 
     // 其它路径：必须已登录
@@ -474,38 +462,14 @@ export class ILinkConnectionDO implements DurableObject {
   // ========== 查询状态 ==========
 
   private async handleStatus(): Promise<Response> {
-    // 如果内存中没有凭证，尝试从 DO storage 恢复
-    if (!this.ilinkCreds) {
-      try {
-        const stored = await this.state.storage.get<string>("credentials");
-        if (stored) {
-          const creds = JSON.parse(stored);
-          this.ilinkCreds = { botToken: creds.botToken, accountId: creds.accountId, baseUrl: creds.baseUrl, userId: creds.userId };
-        }
-      } catch {}
-    }
-
-    // 准备凭证字符串（供诊断使用）
-    let credsStr: string | undefined;
-    if (this.ilinkCreds) {
-      try {
-        const stored = await this.state.storage.get<string>("credentials");
-        credsStr = stored || JSON.stringify(this.ilinkCreds);
-      } catch {
-        credsStr = JSON.stringify(this.ilinkCreds);
-      }
-    }
-
     return new Response(JSON.stringify({
       success: true,
       isRunning: this.pollLoopRunning,
-      syncBuf: this.state.syncBuf ? "***" + this.state.syncBuf.slice(-8) : "",
       lastPollAt: this.state.lastPollAt,
       consecutiveErrors: this.state.consecutiveErrors,
       pendingMessages: this.state.pendingMessages.length,
       hasCredentials: !!this.ilinkCreds,
       needsReLogin: !this.ilinkCreds,
-      creds: credsStr,
     }), {
       headers: { "Content-Type": "application/json" },
     });
@@ -620,11 +584,11 @@ export class ILinkConnectionDO implements DurableObject {
     let aiApiKey = "";
     let aiMaxTokens = 1024;
 
-    // 从 DO storage 读配置
+    // 从 KV 读配置
+    const configRaw = await this.kv?.get("clawbot:config");
     try {
-      const stored = await this.state.storage.get<string>("app_config");
-      if (stored) {
-        const kvConfig = JSON.parse(stored);
+      if (configRaw) {
+        const kvConfig = JSON.parse(configRaw);
         aiSystemPrompt = aiSystemPrompt || kvConfig.aiSystemPrompt || "";
         aiModel = aiModel || kvConfig.aiModel || "";
         aiProvider = kvConfig.aiProvider || "cloudflare";
@@ -795,49 +759,33 @@ export class ILinkConnectionDO implements DurableObject {
       return;
     }
 
-    // 2) 从 DO SQLite 读取凭证
+    // 2) 从 KV 读取凭证（主存储）
     try {
-      const result = await this.state.storage.sql.exec(
-        `SELECT bot_token, account_id, base_url, user_id, sync_buf FROM credentials WHERE id = 1`
-      );
-      const row = result.next().value;
-
-      if (row) {
-        this.cache.credentials = {
-          botToken: row.bot_token as string,
-          accountId: row.account_id as string,
-          baseUrl: (row.base_url as string) || "https://ilinkai.weixin.qq.com",
-          userId: row.user_id as string,
-          syncBuf: (row.sync_buf as string) || "",
-        };
-        this.cache.credentialsLoadedAt = now;
-        this.ilinkCreds = {
-          botToken: row.bot_token as string,
-          accountId: row.account_id as string,
-          baseUrl: (row.base_url as string) || "https://ilinkai.weixin.qq.com",
-          userId: row.user_id as string,
-        };
-        this.state.syncBuf = (row.sync_buf as string) || "";
-        return;
-      }
-    } catch (e) {
-      Logger.warn("[DO] Failed to read credentials from SQLite", { error: (e as Error).message });
-    }
-
-    // 3) 从 DO storage 读取（/save-creds 存储的凭证）
-    try {
-      const stored = await this.state.storage.get<string>("credentials");
-      if (stored) {
-        const creds = JSON.parse(stored);
+      const credsRaw = await this.kv?.get("clawbot:credentials");
+      if (credsRaw) {
+        const creds = JSON.parse(credsRaw);
         if (creds.botToken && creds.accountId) {
-          this.cache.credentials = creds;
+          this.cache.credentials = {
+            botToken: creds.botToken,
+            accountId: creds.accountId,
+            baseUrl: creds.baseUrl || "https://ilinkai.weixin.qq.com",
+            userId: creds.userId || "",
+            syncBuf: creds.syncBuf || "",
+          };
           this.cache.credentialsLoadedAt = now;
-          this.ilinkCreds = { botToken: creds.botToken, accountId: creds.accountId, baseUrl: creds.baseUrl || "https://ilinkai.weixin.qq.com", userId: creds.userId || "" };
+          this.ilinkCreds = {
+            botToken: creds.botToken,
+            accountId: creds.accountId,
+            baseUrl: creds.baseUrl || "https://ilinkai.weixin.qq.com",
+            userId: creds.userId || "",
+          };
           this.state.syncBuf = creds.syncBuf || "";
           return;
         }
       }
-    } catch (_e) {}
+    } catch (e) {
+      Logger.warn("[DO] Failed to read credentials from KV", { error: (e as Error).message });
+    }
 
     // 无凭证可用
     this.ilinkCreds = null;

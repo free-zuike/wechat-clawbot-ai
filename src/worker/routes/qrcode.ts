@@ -43,33 +43,29 @@ export async function handleQRCodeStatus(request: Request, env: Env): Promise<Re
 
     // 如果已确认或KV中已有凭证（DO可能先保存了），返回确认
     if (status.status === "confirmed" && status.bot_token && status.ilink_bot_id) {
-      const baseUrl = status.baseurl || "https://ilinkai.weixin.qq.com";
-
       const creds = {
         botToken: status.bot_token,
         accountId: status.ilink_bot_id,
         userId: status.ilink_user_id,
-        baseUrl,
+        baseUrl: status.baseurl || "https://ilinkai.weixin.qq.com",
         syncBuf: "",
         rawLoginResponse: status.raw,
         createdAt: Date.now(),
       };
 
-      // 凭证只存DO（不再写KV）
-      const doId = env.ILINK_CONNECTION.idFromName("main");
-      const doStub = env.ILINK_CONNECTION.get(doId);
-      doStub.fetch(new Request("http://localhost/save-creds", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(creds),
-      })).catch((e: any) => Logger.warn("[qrcode-status] DO save-creds failed", { error: e.message }));
+      // 写入 KV（主存储）
+      try {
+        await env.CLAWBOT_KV.put("clawbot:credentials", JSON.stringify(creds));
+      } catch (e: any) {
+        Logger.warn("[qrcode-status] KV put failed", { error: e.message });
+      }
 
       // 触发 DO 启动轮询
+      const doId = env.ILINK_CONNECTION.idFromName("main");
+      const doStub = env.ILINK_CONNECTION.get(doId);
       doStub.fetch(new Request("http://localhost/poll")).catch(() => {});
 
-      // session cookie（只存DO，不再写KV）
       const sessionToken = generateSessionToken();
-
       Logger.info("[qrcode-status] login confirmed", { accountId: status.ilink_bot_id });
 
       return json({ status: "confirmed", ok: true, accountId: status.ilink_bot_id }, 200, {

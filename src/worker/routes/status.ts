@@ -1,4 +1,4 @@
-// 状态查询 - 只读 DO 状态
+// 状态查询 - KV为主
 
 import { json, verifyAdmin } from "../utils";
 import { Logger } from "../utils/error";
@@ -9,27 +9,32 @@ export async function handleStatus(request: Request, env: Env): Promise<Response
   const v = await verifyAdmin(request, env);
   if (!v.ok) return json({ error: v.error }, 401);
 
+  let loggedIn = false;
+  let accountId: string | undefined;
+
+  try {
+    const credsRaw = await env.CLAWBOT_KV.get("clawbot:credentials");
+    if (credsRaw) {
+      loggedIn = true;
+      const creds = JSON.parse(credsRaw);
+      accountId = creds.accountId;
+    }
+  } catch (_e) {}
+
+  // DO 状态（后台轮询信息）
   let doStatus: any = null;
   try {
     const doId = env.ILINK_CONNECTION.idFromName("main");
     const doStub = env.ILINK_CONNECTION.get(doId);
     const doResp = await doStub.fetch(new Request("http://localhost/status"), { signal: AbortSignal.timeout(3000) });
     doStatus = await doResp.json();
-  } catch (e) {
-    Logger.warn("[status] Failed to query DO", { error: (e as Error).message });
-  }
-
-  const loggedIn = !!doStatus?.hasCredentials;
-
-  if (!loggedIn) {
-    return json({ loggedIn: false, stats: { polls: 0, handled: 0, aiCalls: 0, aiFails: 0, lastPollAt: "", lastLatencyMs: 0 }, alerts: { unresolved: 0, critical: 0, error: 0, warning: 0 }, timestamp: new Date().toISOString() });
-  }
+  } catch (_e) {}
 
   const alertSummary = alertService.getSummary();
 
   return json({
-    loggedIn: true,
-    accountId: doStatus?.accountId,
+    loggedIn,
+    accountId,
     doRunning: !!doStatus?.isRunning,
     consecutiveErrors: doStatus?.consecutiveErrors || 0,
     stats: { polls: 0, handled: 0, aiCalls: 0, aiFails: 0, lastPollAt: doStatus?.lastPollAt || "", lastLatencyMs: 0 },

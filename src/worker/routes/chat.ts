@@ -1,4 +1,4 @@
-// 聊天路由 - 与 AI 对话（管理后台测试用）
+// 聊天路由 - KV 读配置
 
 import { json, verifyAdmin } from "../utils";
 import { Logger } from "../utils/error";
@@ -15,13 +15,10 @@ export async function handleChat(request: Request, env: Env): Promise<Response> 
 
   try {
     let body: any;
-    try {
-      body = await request.json();
-    } catch (e: any) {
+    try { body = await request.json(); } catch (e: any) {
       return json({ error: "INVALID_JSON", message: "无法解析请求体: " + e.message }, 400);
     }
     const rawMessage = body?.message;
-
     if (!rawMessage || typeof rawMessage !== "string" || !rawMessage.trim()) {
       return json({ error: "VALIDATION_ERROR", message: "请输入消息内容" }, 400);
     }
@@ -29,47 +26,28 @@ export async function handleChat(request: Request, env: Env): Promise<Response> 
     const trimmed = rawMessage.trim();
     Logger.info(`[chat][${requestId}] message received`, { length: trimmed.length });
 
-    // 快捷回复
     const quick = tryQuickReply(trimmed);
-    if (quick) {
-      return json({ reply: quick, source: "shortcut" });
-    }
+    if (quick) return json({ reply: quick, source: "shortcut" });
 
-    // 加载配置
-    const config = await configCache.getOrLoad(
-      "config",
-      async () => {
-        let kvConfig: Record<string, any> = {};
+    const config = await configCache.getOrLoad("config", async () => {
+      let kvConfig: Record<string, any> = {};
+      try {
+        const configRaw = await env.CLAWBOT_KV.get("clawbot:config");
+        if (configRaw) kvConfig = JSON.parse(configRaw);
+      } catch (_e) {}
+      return {
+        aiProvider: kvConfig.aiProvider || "cloudflare",
+        aiModel: kvConfig.aiModel || "",
+        aiBaseUrl: kvConfig.aiBaseUrl || "",
+        aiApiKey: kvConfig.aiApiKey || "",
+        aiMaxTokens: kvConfig.aiMaxTokens || 1024,
+        aiSystemPrompt: kvConfig.aiSystemPrompt || "",
+      };
+    }, 10000);
 
-        if (env.ILINK_CONNECTION) {
-          try {
-            const doId = env.ILINK_CONNECTION.idFromName("main");
-            const doStub = env.ILINK_CONNECTION.get(doId);
-            const resp = await doStub.fetch(new Request("http://localhost/get-config"), { signal: AbortSignal.timeout(3000) });
-            const data = await resp.json() as any;
-            if (data.config) kvConfig = data.config;
-          } catch (_e) {}
-        }
+    Logger.info(`[chat][${requestId}] provider`, { provider: config.aiProvider, model: config.aiModel || "default" });
 
-        return {
-          aiProvider: kvConfig.aiProvider || "cloudflare",
-          aiModel: kvConfig.aiModel || "",
-          aiBaseUrl: kvConfig.aiBaseUrl || "",
-          aiApiKey: kvConfig.aiApiKey || "",
-          aiMaxTokens: kvConfig.aiMaxTokens || 1024,
-          aiSystemPrompt: kvConfig.aiSystemPrompt || "",
-        };
-      },
-      10000
-    );
-
-    const systemPrompt = config.aiSystemPrompt || "";
-    const aiModel = config.aiModel || "";
-
-    Logger.info(`[chat][${requestId}] provider`, { provider: config.aiProvider, model: aiModel || "default" });
-
-    // 调用 AI
-    const reply = await callAI(env.AI, trimmed, systemPrompt, aiModel, {
+    const reply = await callAI(env.AI, trimmed, config.aiSystemPrompt, config.aiModel, {
       provider: config.aiProvider,
       baseUrl: config.aiBaseUrl,
       apiKey: config.aiApiKey,
@@ -81,6 +59,6 @@ export async function handleChat(request: Request, env: Env): Promise<Response> 
   } catch (e: any) {
     const msg = e?.message || String(e);
     Logger.error(`[chat][${requestId}] error`, { error: msg });
-    return json({ error: "INTERNAL_ERROR", reply: "错误: " + msg, source: "error" });
+    return json({ reply: "错误: " + msg, source: "error" });
   }
 }

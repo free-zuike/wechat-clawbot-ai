@@ -1,4 +1,4 @@
-// 检查登录状态
+// 检查登录状态 - 直接查 KV（快速，无网络延迟）
 
 import { json } from "../utils";
 import { Logger } from "../utils/error";
@@ -11,14 +11,15 @@ export async function handleCheckLogin(request: Request, env: Env): Promise<Resp
     let tokenHealth: string = "unknown";
 
     try {
-      const doId = env.ILINK_CONNECTION.idFromName("main");
-      const doStub = env.ILINK_CONNECTION.get(doId);
-      const resp = await doStub.fetch(new Request("http://localhost/status"), { signal: AbortSignal.timeout(3000) });
-      const data = await resp.json() as any;
-      if (data.hasCredentials) {
+      const credsRaw = await env.CLAWBOT_KV.get("clawbot:credentials");
+      if (credsRaw) {
         loggedIn = true;
-        tokenHealth = "valid";
-        accountId = data.accountId;
+        const creds = JSON.parse(credsRaw);
+        accountId = creds.accountId;
+        if (creds.createdAt) {
+          const hours = (Date.now() - creds.createdAt) / 3600000;
+          tokenHealth = hours < 6 ? "valid" : hours < 12 ? "expiring" : "expired";
+        }
       }
     } catch (_e) {}
 
