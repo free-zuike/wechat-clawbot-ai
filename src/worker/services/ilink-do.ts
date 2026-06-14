@@ -99,15 +99,6 @@ export class ILinkConnectionDO implements DurableObject {
       )
     `);
 
-    // config 表：存储运行时配置（替代 KV clawbot:config）
-    await sql.exec(`
-      CREATE TABLE IF NOT EXISTS do_config (
-        key TEXT PRIMARY KEY,
-        value TEXT NOT NULL,
-        updated_at INTEGER NOT NULL
-      )
-    `);
-
     // processed_messages 表：本地持久化去重，避免 syncBuf 回退时重复回复历史消息
     await sql.exec(`
       CREATE TABLE IF NOT EXISTS processed_messages (
@@ -134,7 +125,7 @@ export class ILinkConnectionDO implements DurableObject {
       await this.d1.init(); // 执行 CREATE TABLE IF NOT EXISTS
       Logger.info("[DO] D1 initialized successfully");
     } catch (e: any) {
-      Logger.error("[DO] D1 init failed — messages will NOT be persisted", { error: e.message });
+      Logger.warn("[DO] D1 init failed — messages will NOT be persisted", { error: e.message });
       this.d1 = null;
     }
   }
@@ -298,7 +289,6 @@ export class ILinkConnectionDO implements DurableObject {
   private async handleClearCreds(): Promise<Response> {
     try {
       await this.state.storage.delete("credentials");
-      await this.state.storage.delete("login_session");
       this.ilinkCreds = null;
       this.cache.credentials = null;
       Logger.info("[DO] Credentials cleared");
@@ -361,9 +351,8 @@ export class ILinkConnectionDO implements DurableObject {
         syncBuf: syncBuf || "", createdAt: createdAt || Date.now(),
       }));
 
-      // 同时存 session token（用独立 key 避免和 DO state 冲突）
+      // 同时存 session token
       const sessionToken = generateSessionToken();
-      await this.state.storage.put("login_session", sessionToken);
 
       // 同步到内存
       this.ilinkCreds = { botToken, accountId, baseUrl: baseUrl || "https://ilinkai.weixin.qq.com", userId: userId || "" };

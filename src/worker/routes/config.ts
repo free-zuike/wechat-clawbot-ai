@@ -17,21 +17,24 @@ export async function handleConfig(request: Request, env: Env): Promise<Response
     if (!v.ok) return json({ error: v.error }, 401);
 
     const result = await configCache.getOrLoad(CACHE_KEY, async () => {
-      // 先查 KV
-      const configRaw = await env.CLAWBOT_KV.get(KV_CONFIG_KEY);
       let kvConfig: Record<string, any> = {};
-      try {
-        if (configRaw) kvConfig = JSON.parse(configRaw);
-      } catch {}
 
-      // KV 无配置时查 DO storage
-      if (Object.keys(kvConfig).length === 0 && env.ILINK_CONNECTION) {
+      // 从 DO storage 读配置
+      if (env.ILINK_CONNECTION) {
         try {
           const doId = env.ILINK_CONNECTION.idFromName("main");
           const doStub = env.ILINK_CONNECTION.get(doId);
-          const resp = await doStub.fetch(new Request("http://localhost/get-config"));
+          const resp = await doStub.fetch(new Request("http://localhost/get-config"), { signal: AbortSignal.timeout(3000) });
           const data = await resp.json() as any;
           if (data.config) kvConfig = data.config;
+        } catch {}
+      }
+
+      // 兜底：从 KV 读（兼容旧数据）
+      if (!kvConfig.aiProvider) {
+        const configRaw = await env.CLAWBOT_KV.get(KV_CONFIG_KEY);
+        try {
+          if (configRaw) kvConfig = JSON.parse(configRaw);
         } catch {}
       }
 
@@ -126,16 +129,8 @@ export async function handleConfig(request: Request, env: Env): Promise<Response
         }
       }
 
-      // 保存到 KV（失败则保存到 DO storage 备用）
-      let savedToKV = false;
-      try {
-        await env.CLAWBOT_KV.put(KV_CONFIG_KEY, JSON.stringify(updated));
-        savedToKV = true;
-      } catch (e: any) {
-        Logger.warn("[config] KV put failed, saving to DO storage", { error: e.message });
-      }
-
-      if (!savedToKV && env.ILINK_CONNECTION) {
+      // 保存到 DO storage（不再写KV）
+      if (env.ILINK_CONNECTION) {
         try {
           const doId = env.ILINK_CONNECTION.idFromName("main");
           const doStub = env.ILINK_CONNECTION.get(doId);
@@ -144,11 +139,9 @@ export async function handleConfig(request: Request, env: Env): Promise<Response
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(updated),
           }));
-          // 尝试删除 KV 旧数据，避免 GET 读到旧配置
-          try { await env.CLAWBOT_KV.delete(KV_CONFIG_KEY); } catch {}
         } catch (e: any) {
-          Logger.error("[config] DO save also failed", { error: e.message });
-          return json({ error: "KV 和 DO 保存均失败: " + e.message }, 500);
+          Logger.error("[config] DO save failed", { error: e.message });
+          return json({ error: "配置保存失败: " + e.message }, 500);
         }
       }
 
