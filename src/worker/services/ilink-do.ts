@@ -159,7 +159,7 @@ export class ILinkConnectionDO implements DurableObject {
       return this.handleWebSocket(request);
     }
 
-    // /status、/qr-poll、/check-session：不检查凭证
+    // /status、/qr-poll、/check-session、/save-creds：不检查凭证
     if (url.pathname === "/status") {
       return this.handleStatus();
     }
@@ -168,6 +168,9 @@ export class ILinkConnectionDO implements DurableObject {
     }
     if (url.pathname === "/check-session") {
       return this.handleCheckSession(url);
+    }
+    if (url.pathname === "/save-creds") {
+      return this.handleSaveCreds(request);
     }
 
     // 其它路径：必须已登录
@@ -286,6 +289,25 @@ export class ILinkConnectionDO implements DurableObject {
     }
   }
 
+  // ========== 保存凭证到 DO 存储（KV 备份）==========
+
+  private async handleSaveCreds(request: Request): Promise<Response> {
+    try {
+      const creds = await request.json();
+      await this.state.storage.put("clawbot:credentials", JSON.stringify(creds));
+      Logger.info("[DO] Credentials saved to DO storage");
+      return new Response(JSON.stringify({ ok: true }), {
+        headers: { "Content-Type": "application/json" },
+      });
+    } catch (e: any) {
+      Logger.error("[DO] Failed to save credentials", { error: e.message });
+      return new Response(JSON.stringify({ error: e.message }), {
+        status: 500,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+  }
+
   // ========== 检查 session 是否有效（DO SQLite）==========
 
   private async handleCheckSession(url: URL): Promise<Response> {
@@ -379,6 +401,9 @@ export class ILinkConnectionDO implements DurableObject {
         baseUrl: baseUrl || "https://ilinkai.weixin.qq.com",
         syncBuf: syncBuf || "", createdAt: createdAt || Date.now(),
       }));
+
+      // 同时更新内存状态，让 handleStatus 能检测到
+      this.ilinkCreds = { botToken, accountId, baseUrl: baseUrl || "https://ilinkai.weixin.qq.com", userId: userId || "" };
 
       // 同时存 session token
       const sessionToken = generateSessionToken();

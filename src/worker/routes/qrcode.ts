@@ -54,10 +54,28 @@ export async function handleQRCodeStatus(request: Request, env: Env): Promise<Re
       };
 
       // 写入 KV（主存储）
+      let kvOk = false;
       try {
         await env.CLAWBOT_KV.put("clawbot:credentials", JSON.stringify(creds));
+        kvOk = true;
       } catch (e: any) {
-        Logger.warn("[qrcode-status] KV put failed", { error: e.message });
+        Logger.warn("[qrcode-status] KV put failed, trying DO backup", { error: e.message });
+      }
+
+      // KV 失败时写入 DO 存储作为备份
+      if (!kvOk) {
+        try {
+          const doId = env.ILINK_CONNECTION.idFromName("main");
+          const doStub = env.ILINK_CONNECTION.get(doId);
+          await doStub.fetch(new Request("http://localhost/save-creds", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(creds),
+          }));
+          Logger.info("[qrcode-status] Credentials saved to DO backup");
+        } catch (e: any) {
+          Logger.error("[qrcode-status] DO backup also failed", { error: e.message });
+        }
       }
 
       // 触发 DO 启动轮询

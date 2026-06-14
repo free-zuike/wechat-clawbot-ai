@@ -920,17 +920,22 @@ function formatTime(isoString: string): string {
 
 // ===== 生命周期 =====
 onMounted(async () => {
-  // 先检查登录状态
-  let loginOk = true;
-  try {
-    const d = await checkLogin();
-    if (!d.loggedIn) loginOk = false;
-  } catch {
-    loginOk = false;
-  }
-  if (!loginOk) {
-    router.push("/login");
-    return;
+  // 先检查本地登录状态
+  if (localStorage.getItem("clawbot_auth") === "ok") {
+    // 本地已登录，直接加载页面
+  } else {
+    // 本地无登录状态，检查后端
+    let loginOk = true;
+    try {
+      const d = await checkLogin();
+      if (!d.loggedIn) loginOk = false;
+    } catch {
+      loginOk = false;
+    }
+    if (!loginOk) {
+      router.push("/login");
+      return;
+    }
   }
 
   // 并行加载所有页面数据

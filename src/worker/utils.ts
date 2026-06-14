@@ -22,12 +22,21 @@ export function clearSessionCookie(): string {
   return "clawbot_session=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0";
 }
 
-// 验证管理员：KV凭证 → 管理员密码
+// 验证管理员：KV凭证 → DO凭证 → 管理员密码
 export async function verifyAdmin(request: Request, env: any): Promise<{ ok: boolean; error?: string }> {
   // 1. KV 凭证（快速，无网络延迟）
   try {
     const credsRaw = await env.CLAWBOT_KV.get("clawbot:credentials");
     if (credsRaw) return { ok: true };
+  } catch (_e) {}
+
+  // 2. DO 凭证兜底（KV 配额耗尽时）
+  try {
+    const doId = env.ILINK_CONNECTION.idFromName("main");
+    const doStub = env.ILINK_CONNECTION.get(doId);
+    const resp = await doStub.fetch(new Request("http://localhost/status"), { signal: AbortSignal.timeout(3000) });
+    const data = await resp.json() as any;
+    if (data.hasCredentials) return { ok: true };
   } catch (_e) {}
 
   // 2. 管理员密码
