@@ -104,10 +104,9 @@ export async function handleChat(request: Request, env: Env): Promise<Response> 
     return json(
       {
         error: "INTERNAL_ERROR",
-        reply: "抱歉，我刚刚脑子卡了一下 😅 能换个说法再问一遍吗？",
+        reply: "错误: " + msg,
         source: "error",
-      },
-      500
+      }
     );
   }
 }
