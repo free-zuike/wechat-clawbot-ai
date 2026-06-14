@@ -39,11 +39,24 @@ export async function handleChat(request: Request, env: Env): Promise<Response> 
     const config = await configCache.getOrLoad(
       "config",
       async () => {
+        // 先查 KV
         const configRaw = await env.CLAWBOT_KV.get("clawbot:config");
         let kvConfig: Record<string, any> = {};
         try {
           if (configRaw) kvConfig = JSON.parse(configRaw);
         } catch {}
+
+        // KV 无数据时查 DO
+        if (!kvConfig.aiProvider && env.ILINK_CONNECTION) {
+          try {
+            const doId = env.ILINK_CONNECTION.idFromName("main");
+            const doStub = env.ILINK_CONNECTION.get(doId);
+            const resp = await doStub.fetch(new Request("http://localhost/get-config"));
+            const data = await resp.json() as any;
+            if (data.config) kvConfig = data.config;
+          } catch {}
+        }
+
         return {
           aiProvider: kvConfig.aiProvider || "cloudflare",
           aiModel: kvConfig.aiModel || "",
