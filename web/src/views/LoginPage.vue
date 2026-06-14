@@ -121,18 +121,23 @@ async function startLogin() {
 
 async function pollStatus() {
   try {
-    // 轮询 check-login（快速，不调iLink API）
-    // 后端DO会在后台轮询iLink API检测扫码状态
-    const data = await checkLogin();
+    const data = await getQRCodeStatus(password.value);
     console.log("[pollStatus] data:", JSON.stringify(data));
-    if (data.loggedIn) {
-      console.log("[pollStatus] logged in, redirecting...");
+    if (data.ok || data.status === "confirmed") {
+      console.log("[pollStatus] confirmed, redirecting...");
       qrStatus.value = "登录成功！正在跳转...";
       loggedIn.value = true;
-      window.location.replace("/");
+      window.location.href = "/";
       return;
     }
-    qrStatus.value = "等待扫码...";
+    if (data.status === "scaned") {
+      qrStatus.value = "已扫码，请在手机上确认";
+    } else if (data.status === "expired") {
+      qrStatus.value = "二维码已过期，请刷新重试";
+      return;
+    } else {
+      qrStatus.value = "等待扫码...";
+    }
     pollTimer = window.setTimeout(pollStatus, 2000);
   } catch (e: any) {
     console.error("[pollStatus] error:", e);
