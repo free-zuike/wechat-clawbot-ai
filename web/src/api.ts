@@ -293,7 +293,8 @@ export interface HealthStatus {
 }
 
 export async function fetchHealth(): Promise<HealthStatus> {
-  return apiFetch("/api/admin/health", { cancelable: "health" });
+  // 已合并到 fetchStatus，保留兼容
+  return fetchStatus() as Promise<HealthStatus>;
 }
 
 export interface MessageRecord {

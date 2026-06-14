@@ -1,9 +1,9 @@
 import { json, verifyAdmin } from "../utils";
 import { D1Service } from "../services/d1";
 import { Logger } from "../utils/error";
+import { alertService } from "../utils/alert";
 import type { Env } from "../index";
 
-// 统计数据结构（与 messaging.ts 一致）
 interface Stats {
   polls: number;
   handled: number;
@@ -32,13 +32,20 @@ function getTokenHealth(createdAt?: number): string {
   return "expired";
 }
 
-// 状态查询：只读当前状态，不再调用 getUpdates 推进消息游标
 export async function handleStatus(request: Request, env: Env): Promise<Response> {
-  // 鉴权（通过 session cookie 或管理员密码）
   const v = await verifyAdmin(request, env);
   if (!v.ok) return json({ error: v.error }, 401);
 
-  const credsRaw = await env.CLAWBOT_KV.get("clawbot:credentials");
+  // KV 状态
+  let kvOk = true;
+  let credsRaw: string | null = null;
+  try {
+    credsRaw = await env.CLAWBOT_KV.get("clawbot:credentials");
+  } catch {
+    kvOk = false;
+  }
+
+  // DO 状态
   let doStatus: any = null;
   try {
     const doId = env.ILINK_CONNECTION.idFromName("main");
@@ -49,33 +56,26 @@ export async function handleStatus(request: Request, env: Env): Promise<Response
     Logger.warn("[status] Failed to query DO status", { error: (e as Error).message });
   }
 
-  if (!credsRaw && !doStatus?.hasCredentials) {
+  const loggedIn = !!(credsRaw || doStatus?.hasCredentials);
+
+  if (!loggedIn) {
     return json({
       loggedIn: false,
-      status: "not_logged_in",
-      stats: {
-        polls: 0,
-        handled: 0,
-        aiCalls: 0,
-        aiFails: 0,
-        lastPollAt: doStatus?.lastPollAt || "",
-        lastLatencyMs: 0,
-      },
+      kv: kvOk ? "OK" : "FAIL",
+      stats: { polls: 0, handled: 0, aiCalls: 0, aiFails: 0, lastPollAt: "", lastLatencyMs: 0 },
+      alerts: { unresolved: 0, critical: 0, error: 0, warning: 0 },
+      timestamp: new Date().toISOString(),
     });
   }
 
   let creds: any = null;
   if (credsRaw) {
-    try {
-      creds = JSON.parse(credsRaw);
-    } catch {
-      return json({ status: "error", message: "凭证格式错误" });
-    }
+    try { creds = JSON.parse(credsRaw); } catch {}
   }
 
   const loginAgeMs = creds?.createdAt ? Date.now() - creds.createdAt : null;
-  
-  // 统计以 D1 + DO 为准，不再读旧 KV stats
+
+  // D1 统计
   let stats: Stats = { polls: 0, handled: 0, aiCalls: 0, aiFails: 0, lastPollAt: "", lastLatencyMs: 0 };
   try {
     if (env.CLAWBOT_DB) {
@@ -96,10 +96,13 @@ export async function handleStatus(request: Request, env: Env): Promise<Response
   } catch (e) {
     Logger.warn("[status] Error loading D1 stats", { error: (e as Error).message });
   }
-  
-  const result: any = {
-    loggedIn: !!(credsRaw || doStatus?.hasCredentials),
-    status: "logged_in",
+
+  // 报警统计
+  const alertSummary = alertService.getSummary();
+
+  return json({
+    loggedIn: true,
+    kv: kvOk ? "OK" : "FAIL",
     accountId: creds?.accountId,
     baseUrl: creds?.baseUrl,
     userId: creds?.userId,
@@ -109,15 +112,13 @@ export async function handleStatus(request: Request, env: Env): Promise<Response
     hasSyncBuf: !!(creds?.syncBuf || doStatus?.syncBuf),
     doRunning: !!doStatus?.isRunning,
     consecutiveErrors: doStatus?.consecutiveErrors || 0,
-    stats: {
-      polls: stats.polls,
-      handled: stats.handled,
-      aiCalls: stats.aiCalls,
-      aiFails: stats.aiFails,
-      lastPollAt: stats.lastPollAt,
-      lastLatencyMs: stats.lastLatencyMs
-    }
-  };
-
-  return json(result);
+    stats,
+    alerts: {
+      unresolved: alertSummary.unresolved,
+      critical: alertSummary.byLevel.critical,
+      error: alertSummary.byLevel.error,
+      warning: alertSummary.byLevel.warning,
+    },
+    timestamp: new Date().toISOString(),
+  });
 }

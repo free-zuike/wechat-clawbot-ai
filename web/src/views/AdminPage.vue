@@ -514,27 +514,16 @@ function handleApiError(error: unknown, defaultMessage: string): string {
 const firstLoadDone = ref(false);
 
 async function handleRefreshStatus() {
-  // 只有首次加载才显示骨架屏，避免闪烁
   if (!firstLoadDone.value) statusLoading.value = true;
 
   try {
-    // 独立 try/catch：一个失败不影响另一个
     let statusData: any = null;
-    let health: any = null;
 
     try {
       statusData = await fetchStatus(isFirstRefresh);
     } catch (e: any) {
       if (!(e instanceof ApiError && e.isCancelled)) {
         console.error("状态API失败:", e);
-      }
-    }
-
-    try {
-      health = await fetchHealth();
-    } catch (e: any) {
-      if (!(e instanceof ApiError && e.isCancelled)) {
-        console.error("健康API失败:", e);
       }
     }
 
@@ -550,22 +539,21 @@ async function handleRefreshStatus() {
         ? new Date(statusData.stats.lastPollAt).toLocaleString()
         : "从未";
       status.lastLatencyMs = statusData.stats?.lastLatencyMs == null ? "—" : statusData.stats.lastLatencyMs + " ms";
+
+      healthData.kv = statusData.kv || "—";
+      healthData.loggedIn = statusData.loggedIn;
+      healthData.totalPolls = statusData.stats?.polls || 0;
+      healthData.totalHandled = statusData.stats?.handled || 0;
+      healthData.totalAICalls = statusData.stats?.aiCalls || 0;
+      healthData.totalAIFails = statusData.stats?.aiFails || 0;
+      healthData.unresolvedAlerts = statusData.alerts?.unresolved || 0;
+      healthData.criticalAlerts = statusData.alerts?.critical || 0;
+      healthData.errorAlerts = statusData.alerts?.error || 0;
+      healthData.warningAlerts = statusData.alerts?.warning || 0;
+      healthData.timestamp = statusData.timestamp || new Date().toISOString();
+
       isFirstRefresh = false;
       firstLoadDone.value = true;
-    }
-
-    if (health && health !== null) {
-      healthData.kv = health.kv || "—";
-      healthData.loggedIn = !!health.loggedIn;
-      healthData.totalPolls = health.totalPolls || 0;
-      healthData.totalHandled = health.totalHandled || 0;
-      healthData.totalAICalls = health.totalAICalls || 0;
-      healthData.totalAIFails = health.totalAIFails || 0;
-      healthData.unresolvedAlerts = health.unresolvedAlerts || 0;
-      healthData.criticalAlerts = health.criticalAlerts || 0;
-      healthData.errorAlerts = health.errorAlerts || 0;
-      healthData.warningAlerts = health.warningAlerts || 0;
-      healthData.timestamp = health.timestamp || new Date().toISOString();
     }
   } catch (e: any) {
     console.error("状态刷新失败:", e);
