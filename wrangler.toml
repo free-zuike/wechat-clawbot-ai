@@ -34,12 +34,6 @@ binding = "CLAWBOT_KV"
 id = "2fac06f019ce476084f5066e432a1183"
 preview_id = "2fac06f019ce476084f5066e432a1183"
 
-# ===== R2 长期对话历史 (可选) =====
-[[r2_buckets]]
-binding = "CLAWBOT_R2"
-bucket_name = "clawbot-history"
-preview_bucket_name = "clawbot-history"
-
 # ===== D1 数据库 =====
 # messages / sessions / stats 持久化存储
 [[d1_databases]]
