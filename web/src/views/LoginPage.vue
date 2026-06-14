@@ -62,16 +62,9 @@ const loggedIn = ref(false);
 
 let pollTimer: number | null = null;
 
-onMounted(async () => {
-  try {
-    const data = await checkLogin();
-    if (data.loggedIn) {
-      localStorage.setItem("clawbot_auth", "ok");
-      router.push("/");
-    }
-  } catch {
-    // 忽略错误，继续显示登录页面
-  }
+onMounted(() => {
+  // 不再自动跳转，用户在登录页就让他登录
+  // 路由守卫已处理 / 页面的登录验证
 });
 
 async function startLogin() {
