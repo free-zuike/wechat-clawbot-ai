@@ -130,7 +130,7 @@ async function pollStatus() {
     }
 
     // 轮询扫码状态
-    const data = await getQRCodeStatus(password.value);
+    const data = await getQRCodeStatus(password.value, qrCode.value);
     console.log("[pollStatus] data:", JSON.stringify(data));
     if (data.ok || data.status === "confirmed") {
       qrStatus.value = "登录成功！正在跳转...";

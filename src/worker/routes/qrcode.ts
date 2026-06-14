@@ -10,20 +10,11 @@ export async function handleQRCode(request: Request, env: Env): Promise<Response
   const v = await verifyAdmin(request, env);
   if (!v.ok) return json({ error: v.error }, 401);
 
-  Logger.info("[qrcode] fetching QR code");
+    Logger.info("[qrcode] fetching QR code");
   try {
     const data = await fetchQRCode();
 
-    // 存储 qrcode_key 到 KV（TTL 5 分钟）
-    await env.CLAWBOT_KV.put("clawbot:qrcode_key", data.qrcode, { expirationTtl: 5 * 60 });
-
-    // 触发 DO 开始轮询 QR 码状态（后台每3秒调 iLink API）
-    // 不 await，fire-and-forget，避免阻塞 Worker
-    const doId = env.ILINK_CONNECTION.idFromName("main");
-    const doStub = env.ILINK_CONNECTION.get(doId);
-    doStub.fetch(new Request(`http://localhost/qr-poll?qrcode=${data.qrcode}`)).catch((e: any) => {
-      Logger.warn("[qrcode] DO QR poll trigger failed", { error: e.message });
-    });
+    // 不再写入KV（省写入配额），前端轮询时直接传qrcode key
 
     Logger.info("[qrcode] obtained", { hasUrl: !!data.qrcode_img_content });
     return json({ qrcode: data.qrcode, qrcode_url: data.qrcode_img_content });

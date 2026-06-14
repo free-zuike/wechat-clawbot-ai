@@ -190,8 +190,10 @@ export async function getQRCode(pwd: string): Promise<any> {
   return apiFetch(withPwd("/api/qrcode", pwd));
 }
 
-export async function getQRCodeStatus(pwd: string): Promise<any> {
-  return apiFetch(withPwd("/api/qrcode-status", pwd), { timeout: 40000 });
+export async function getQRCodeStatus(pwd: string, qrcode?: string): Promise<any> {
+  let url = withPwd("/api/qrcode-status", pwd);
+  if (qrcode) url += "&qrcode=" + encodeURIComponent(qrcode);
+  return apiFetch(url, { timeout: 40000 });
 }
 
 export async function checkLogin(): Promise<any> {
