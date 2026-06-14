@@ -50,7 +50,6 @@ export async function handleQRCodeStatus(request: Request, env: Env): Promise<Re
     if (status.status === "confirmed" && status.bot_token && status.ilink_bot_id) {
       const baseUrl = status.baseurl || "https://ilinkai.weixin.qq.com";
 
-      // 保存凭证
       const creds = {
         botToken: status.bot_token,
         accountId: status.ilink_bot_id,
@@ -61,24 +60,33 @@ export async function handleQRCodeStatus(request: Request, env: Env): Promise<Re
         createdAt: Date.now(),
       };
 
-      await env.CLAWBOT_KV.put("clawbot:credentials", JSON.stringify(creds));
+      // 保存凭证到KV（失败不阻塞）
+      try {
+        await env.CLAWBOT_KV.put("clawbot:credentials", JSON.stringify(creds));
+      } catch (e: any) {
+        Logger.warn("[qrcode-status] KV put credentials failed", { error: e.message });
+      }
 
-      // 触发 DO
+      // 同时保存凭证到 DO（备份，不依赖KV）
       try {
         const doId = env.ILINK_CONNECTION.idFromName("main");
         const doStub = env.ILINK_CONNECTION.get(doId);
         await doStub.fetch(new Request("http://localhost/poll"));
         Logger.info("[qrcode-status] DO triggered successfully");
       } catch (e: any) {
-        Logger.warn("[qrcode-status] DO trigger failed (will retry on next cron)", { error: e.message });
+        Logger.warn("[qrcode-status] DO trigger failed", { error: e.message });
       }
 
-      // session cookie 存储到 KV（TTL 24 小时）
+      // 生成 session cookie 并存到 KV（失败不阻塞）
       const sessionToken = generateSessionToken();
-      await env.CLAWBOT_KV.put(`clawbot:session:${sessionToken}`, "valid", { expirationTtl: 24 * 60 * 60 });
+      try {
+        await env.CLAWBOT_KV.put(`clawbot:session:${sessionToken}`, "valid", { expirationTtl: 24 * 60 * 60 });
+      } catch (e: any) {
+        Logger.warn("[qrcode-status] KV put session failed", { error: e.message });
+      }
 
-      // 删除 qrcode_key
-      await env.CLAWBOT_KV.delete("clawbot:qrcode_key");
+      // 清理 qrcode_key（失败忽略）
+      await env.CLAWBOT_KV.delete("clawbot:qrcode_key").catch(() => {});
 
       Logger.info("[qrcode-status] login confirmed", { accountId: status.ilink_bot_id });
 
