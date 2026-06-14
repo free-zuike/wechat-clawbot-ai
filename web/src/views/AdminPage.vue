@@ -670,7 +670,7 @@ async function handleLogout() {
     await logout();
   } catch {}
   localStorage.removeItem("clawbot_auth");
-  router.push("/login");
+  window.location.href = "/login";
 }
 
 // ===== 调试 =====

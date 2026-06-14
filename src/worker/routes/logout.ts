@@ -19,8 +19,15 @@ export async function handleLogout(request: Request, env: Env): Promise<Response
     await env.CLAWBOT_KV.delete(`clawbot:session:${token}`);
   }
 
-  // 删除登录凭证
+  // 删除登录凭证（KV）
   await env.CLAWBOT_KV.delete("clawbot:credentials");
+
+  // 删除 DO 中的凭证
+  try {
+    const doId = env.ILINK_CONNECTION.idFromName("main");
+    const doStub = env.ILINK_CONNECTION.get(doId);
+    await doStub.fetch(new Request("http://localhost/clear-creds"));
+  } catch {}
 
   Logger.info("[logout] session cleared");
   return json({ ok: true }, 200, { "Set-Cookie": clearSessionCookie() });

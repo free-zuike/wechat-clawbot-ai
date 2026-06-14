@@ -162,7 +162,7 @@ export class ILinkConnectionDO implements DurableObject {
       });
     }
 
-    // /status、/qr-poll、/save-creds、/check-session：不检查凭证（登录前触发）
+    // /status、/qr-poll、/save-creds、/check-session、/clear-creds：不检查凭证（登录前/退出时触发）
     if (url.pathname === "/status") {
       return this.handleStatus();
     }
@@ -174,6 +174,9 @@ export class ILinkConnectionDO implements DurableObject {
     }
     if (url.pathname === "/check-session") {
       return this.handleCheckSession(url);
+    }
+    if (url.pathname === "/clear-creds") {
+      return this.handleClearCreds();
     }
 
     // 其它路径：必须已登录
@@ -276,6 +279,23 @@ export class ILinkConnectionDO implements DurableObject {
         headers: { "Content-Type": "application/json" },
       });
     }
+  }
+
+  // ========== 清除凭证（退出登录时调用）==========
+
+  private async handleClearCreds(): Promise<Response> {
+    try {
+      await this.state.storage.delete("credentials");
+      await this.state.storage.delete("login_session");
+      this.ilinkCreds = null;
+      this.cache.credentials = null;
+      Logger.info("[DO] Credentials cleared");
+    } catch (e: any) {
+      Logger.error("[DO] /clear-creds error", { error: e.message });
+    }
+    return new Response(JSON.stringify({ ok: true }), {
+      headers: { "Content-Type": "application/json" },
+    });
   }
 
   // ========== 保存凭证（登录确认时调用，绕过KV）==========
