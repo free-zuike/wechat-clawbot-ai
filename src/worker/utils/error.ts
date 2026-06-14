@@ -209,16 +209,10 @@ function getClientIP(request: Request): string {
 
 // 统一认证检查
 async function checkAuth(request: Request, env: Env): Promise<{ ok: boolean; error?: string }> {
-  // 查 DO 凭证
-  if (env.ILINK_CONNECTION) {
-    try {
-      const doId = env.ILINK_CONNECTION.idFromName("main");
-      const doStub = env.ILINK_CONNECTION.get(doId);
-      const resp = await doStub.fetch(new Request("http://localhost/status"), { signal: AbortSignal.timeout(3000) });
-      const data = await resp.json() as any;
-      if (data.hasCredentials) return { ok: true };
-    } catch (_e) {}
-  }
+  try {
+    const credsRaw = await env.CLAWBOT_KV.get("clawbot:credentials");
+    if (credsRaw) return { ok: true };
+  } catch (_e) {}
 
   // 管理员密码
   if (env.ADMIN_PASSWORD) {
