@@ -178,6 +178,12 @@ export class ILinkConnectionDO implements DurableObject {
     if (url.pathname === "/clear-creds") {
       return this.handleClearCreds();
     }
+    if (url.pathname === "/save-config") {
+      return this.handleSaveConfig(request);
+    }
+    if (url.pathname === "/get-config") {
+      return this.handleGetConfig();
+    }
 
     // 其它路径：必须已登录
     if (!this.ilinkCreds) {
@@ -302,6 +308,37 @@ export class ILinkConnectionDO implements DurableObject {
     return new Response(JSON.stringify({ ok: true }), {
       headers: { "Content-Type": "application/json" },
     });
+  }
+
+  // ========== 配置存储（DO storage 备用）==========
+
+  private async handleSaveConfig(request: Request): Promise<Response> {
+    try {
+      const body = await request.json();
+      await this.state.storage.put("app_config", JSON.stringify(body));
+      return new Response(JSON.stringify({ ok: true }), {
+        headers: { "Content-Type": "application/json" },
+      });
+    } catch (e: any) {
+      Logger.error("[DO] /save-config error", { error: e.message });
+      return new Response(JSON.stringify({ error: e.message }), {
+        status: 500,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+  }
+
+  private async handleGetConfig(): Promise<Response> {
+    try {
+      const stored = await this.state.storage.get<string>("app_config");
+      return new Response(JSON.stringify({ config: stored ? JSON.parse(stored) : null }), {
+        headers: { "Content-Type": "application/json" },
+      });
+    } catch (e: any) {
+      return new Response(JSON.stringify({ config: null }), {
+        headers: { "Content-Type": "application/json" },
+      });
+    }
   }
 
   // ========== 保存凭证（登录确认时调用，绕过KV）==========
