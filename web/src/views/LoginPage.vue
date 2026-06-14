@@ -121,10 +121,18 @@ async function startLogin() {
 
 async function pollStatus() {
   try {
+    // 快速检查：DO可能已先完成确认并保存凭证
+    const loginCheck = await checkLogin();
+    if (loginCheck.loggedIn) {
+      loggedIn.value = true;
+      window.location.href = "/";
+      return;
+    }
+
+    // 轮询扫码状态
     const data = await getQRCodeStatus(password.value);
     console.log("[pollStatus] data:", JSON.stringify(data));
     if (data.ok || data.status === "confirmed") {
-      console.log("[pollStatus] confirmed, redirecting...");
       qrStatus.value = "登录成功！正在跳转...";
       loggedIn.value = true;
       window.location.href = "/";
@@ -141,6 +149,15 @@ async function pollStatus() {
     pollTimer = window.setTimeout(pollStatus, 2000);
   } catch (e: any) {
     console.error("[pollStatus] error:", e);
+    // 请求失败时也检查登录状态（DO可能已先保存凭证）
+    try {
+      const loginCheck = await checkLogin();
+      if (loginCheck.loggedIn) {
+        loggedIn.value = true;
+        window.location.href = "/";
+        return;
+      }
+    } catch {}
     pollTimer = window.setTimeout(pollStatus, 3000);
   }
 }
