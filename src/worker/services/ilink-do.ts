@@ -162,7 +162,7 @@ export class ILinkConnectionDO implements DurableObject {
       });
     }
 
-    // /status、/qr-poll、/save-creds：不检查凭证（登录前触发）
+    // /status、/qr-poll、/save-creds、/check-session：不检查凭证（登录前触发）
     if (url.pathname === "/status") {
       return this.handleStatus();
     }
@@ -171,6 +171,9 @@ export class ILinkConnectionDO implements DurableObject {
     }
     if (url.pathname === "/save-creds") {
       return this.handleSaveCreds(request);
+    }
+    if (url.pathname === "/check-session") {
+      return this.handleCheckSession(url);
     }
 
     // 其它路径：必须已登录
@@ -246,6 +249,33 @@ export class ILinkConnectionDO implements DurableObject {
     }), {
       headers: { "Content-Type": "application/json" },
     });
+  }
+
+  // ========== 检查 session 是否有效（DO SQLite）==========
+
+  private async handleCheckSession(url: URL): Promise<Response> {
+    const token = url.searchParams.get("token");
+    if (!token) {
+      return new Response(JSON.stringify({ valid: false }), {
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    try {
+      await this.initSQLite();
+      const result = await this.state.storage.sql.exec(
+        `SELECT token FROM sessions WHERE token = ?`,
+        [token]
+      );
+      const row = result.next().value;
+      return new Response(JSON.stringify({ valid: !!row }), {
+        headers: { "Content-Type": "application/json" },
+      });
+    } catch {
+      return new Response(JSON.stringify({ valid: false }), {
+        headers: { "Content-Type": "application/json" },
+      });
+    }
   }
 
   // ========== 保存凭证（登录确认时调用，绕过KV）==========
@@ -326,7 +356,6 @@ export class ILinkConnectionDO implements DurableObject {
         Logger.info("[DO] QR poll check", { status: status.status, attempt: i + 1 });
 
         if (status.status === "confirmed" && status.bot_token && status.ilink_bot_id) {
-          // 保存凭证到 KV
           const creds = {
             botToken: status.bot_token,
             accountId: status.ilink_bot_id,
@@ -336,11 +365,12 @@ export class ILinkConnectionDO implements DurableObject {
             rawLoginResponse: status.raw,
             createdAt: Date.now(),
           };
-          await this.kv!.put("clawbot:credentials", JSON.stringify(creds));
-
-          // session cookie
-          const sessionToken = generateSessionToken();
-          await this.kv!.put(`clawbot:session:${sessionToken}`, "valid", { expirationTtl: 24 * 60 * 60 });
+          // KV写入失败不阻塞
+          try { await this.kv!.put("clawbot:credentials", JSON.stringify(creds)); } catch {}
+          try {
+            const sessionToken = generateSessionToken();
+            await this.kv!.put(`clawbot:session:${sessionToken}`, "valid", { expirationTtl: 24 * 60 * 60 });
+          } catch {}
 
           Logger.info("[DO] QR login confirmed", { accountId: status.ilink_bot_id });
           return new Response(JSON.stringify({ status: "confirmed", ok: true }), {

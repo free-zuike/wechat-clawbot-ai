@@ -13,15 +13,27 @@ export async function handleCheckLogin(request: Request, env: Env): Promise<Resp
     let loginAgeText: string | undefined;
     let hasSession = false;
 
-    // 1. 检查 session cookie（优先）
+    // 1. 检查 session cookie
     const cookieHeader = request.headers.get("Cookie") || "";
     const sessionMatch = cookieHeader.match(/clawbot_session=([^;]+)/);
     if (sessionMatch) {
       const sessionToken = sessionMatch[1];
+      // 先查 KV，再查 DO SQLite
       const sessionValid = await env.CLAWBOT_KV.get(`clawbot:session:${sessionToken}`);
       if (sessionValid) {
         hasSession = true;
         loggedIn = true;
+      } else {
+        try {
+          const doId = env.ILINK_CONNECTION.idFromName("main");
+          const doStub = env.ILINK_CONNECTION.get(doId);
+          const resp = await doStub.fetch(new Request(`http://localhost/check-session?token=${sessionToken}`));
+          const data = await resp.json() as any;
+          if (data.valid) {
+            hasSession = true;
+            loggedIn = true;
+          }
+        } catch {}
       }
     }
 
