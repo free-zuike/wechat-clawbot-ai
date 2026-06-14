@@ -43,11 +43,19 @@ export async function handleQRCodeStatus(request: Request, env: Env): Promise<Re
     if (!key) {
       key = url.searchParams.get("qrcode") || undefined;
     }
-    if (!key) return json({ status: "unknown" });
+    if (!key) {
+      // qrcode_key 不存在，检查是否已登录（DO可能已先完成确认）
+      const creds = await env.CLAWBOT_KV.get("clawbot:credentials");
+      if (creds) {
+        return json({ status: "confirmed", ok: true });
+      }
+      return json({ status: "unknown" });
+    }
 
     const status = await getQRCodeStatus(key);
     Logger.info("[qrcode-status] poll", { status: status.status });
 
+    // 如果已确认或KV中已有凭证（DO可能先保存了），返回确认
     if (status.status === "confirmed" && status.bot_token && status.ilink_bot_id) {
       const baseUrl = status.baseurl || "https://ilinkai.weixin.qq.com";
 

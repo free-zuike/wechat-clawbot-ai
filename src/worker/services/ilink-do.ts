@@ -277,9 +277,6 @@ export class ILinkConnectionDO implements DurableObject {
           const sessionToken = generateSessionToken();
           await this.kv!.put(`clawbot:session:${sessionToken}`, "valid", { expirationTtl: 24 * 60 * 60 });
 
-          // 删除 qrcode_key
-          await this.kv!.delete("clawbot:qrcode_key");
-
           Logger.info("[DO] QR login confirmed", { accountId: status.ilink_bot_id });
           return new Response(JSON.stringify({ status: "confirmed", ok: true }), {
             headers: { "Content-Type": "application/json" },
