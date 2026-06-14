@@ -126,7 +126,7 @@ export async function getQRCodeStatus(qrcode: string, baseUrl = DEFAULT_BASE): P
   const base = baseUrl.endsWith("/") ? baseUrl : baseUrl + "/";
   const url = `${base}ilink/bot/get_qrcode_status?qrcode=${encodeURIComponent(qrcode)}`;
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 35000);
+  const timer = setTimeout(() => ctrl.abort(), 25000);
   
   try {
     Logger.debug(`[iLink] Polling QR status`, { qrcode: maskToken(qrcode) });
