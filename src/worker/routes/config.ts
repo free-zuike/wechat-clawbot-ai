@@ -1,4 +1,4 @@
-// 配置路由 - KV 读写
+// 配置路由
 
 import { json, verifyAdmin } from "../utils";
 import { Logger } from "../utils/error";
@@ -6,11 +6,22 @@ import { configCache } from "../utils/cache";
 import type { Env } from "../index";
 
 const KV_CONFIG_KEY = "clawbot:config";
-const CACHE_KEY = "config";
+const CONFIG_FIELDS = ["aiProvider", "aiModel", "aiBaseUrl", "aiApiKey", "aiMaxTokens", "aiSystemPrompt"] as const;
+type ConfigField = (typeof CONFIG_FIELDS)[number];
 
 function maskKey(key: string): string {
-  if (key.length <= 8) return "***";
-  return key.slice(0, 4) + "***" + key.slice(-4);
+  return key.length <= 8 ? "***" : key.slice(0, 4) + "***" + key.slice(-4);
+}
+
+function getConfigResponse(kvConfig: Record<string, unknown>) {
+  return {
+    aiProvider: (kvConfig.aiProvider as string) || "cloudflare",
+    aiModel: (kvConfig.aiModel as string) || "",
+    aiBaseUrl: (kvConfig.aiBaseUrl as string) || "",
+    aiApiKey: typeof kvConfig.aiApiKey === "string" && kvConfig.aiApiKey ? maskKey(kvConfig.aiApiKey as string) : "",
+    aiMaxTokens: (kvConfig.aiMaxTokens as number) || 1024,
+    aiSystemPrompt: (kvConfig.aiSystemPrompt as string) || "",
+  };
 }
 
 export async function handleConfig(request: Request, env: Env): Promise<Response> {
@@ -18,22 +29,15 @@ export async function handleConfig(request: Request, env: Env): Promise<Response
     const v = await verifyAdmin(request, env);
     if (!v.ok) return json({ error: v.error }, 401);
 
-    const result = await configCache.getOrLoad(CACHE_KEY, async () => {
-      let kvConfig: Record<string, any> = {};
+    const result = await configCache.getOrLoad("config", async () => {
+      let kvConfig: Record<string, unknown> = {};
       try {
-        const configRaw = await env.CLAWBOT_KV.get(KV_CONFIG_KEY);
-        if (configRaw) kvConfig = JSON.parse(configRaw);
-      } catch (_e) {}
-
-      return {
-        aiProvider: kvConfig.aiProvider || "cloudflare",
-        aiModel: kvConfig.aiModel || "",
-        aiBaseUrl: kvConfig.aiBaseUrl || "",
-        aiApiKey: kvConfig.aiApiKey ? maskKey(kvConfig.aiApiKey) : "",
-        aiMaxTokens: kvConfig.aiMaxTokens || 1024,
-        aiSystemPrompt: kvConfig.aiSystemPrompt || "",
-        hasEnvOverride: !!(env.AI_MODEL || env.AI_SYSTEM_PROMPT),
-      };
+        const raw = await env.CLAWBOT_KV.get(KV_CONFIG_KEY);
+        if (raw) kvConfig = JSON.parse(raw);
+      } catch (e) {
+        Logger.warn("[config] KV read failed", { error: (e as Error).message });
+      }
+      return { ...getConfigResponse(kvConfig), hasEnvOverride: !!(env.AI_MODEL || env.AI_SYSTEM_PROMPT) };
     }, 10000);
 
     return json(result);
@@ -43,11 +47,13 @@ export async function handleConfig(request: Request, env: Env): Promise<Response
     const v = await verifyAdmin(request, env);
     if (!v.ok) return json({ error: v.error }, 401);
 
-    Logger.info("[config] POST update requested");
+    Logger.info("[config] POST update");
 
     try {
-      let body: any;
-      try { body = await request.json(); } catch (e: any) {
+      let body: Record<string, unknown>;
+      try {
+        body = await request.json() as Record<string, unknown>;
+      } catch {
         return json({ error: "INVALID_JSON", message: "无效的 JSON 请求体" }, 400);
       }
 
@@ -55,15 +61,15 @@ export async function handleConfig(request: Request, env: Env): Promise<Response
         return json({ error: "VALIDATION_ERROR", message: "请求体必须是 JSON 对象" }, 400);
       }
 
-      // 读取当前配置
-      let current: Record<string, any> = {};
+      let current: Record<string, unknown> = {};
       try {
-        const currentRaw = await env.CLAWBOT_KV.get(KV_CONFIG_KEY);
-        if (currentRaw) current = JSON.parse(currentRaw);
-      } catch (_e) {}
+        const raw = await env.CLAWBOT_KV.get(KV_CONFIG_KEY);
+        if (raw) current = JSON.parse(raw);
+      } catch (e) {
+        Logger.warn("[config] KV read failed", { error: (e as Error).message });
+      }
 
-      const updated: Record<string, any> = { ...current };
-      const CONFIG_FIELDS = ["aiProvider", "aiModel", "aiBaseUrl", "aiApiKey", "aiMaxTokens", "aiSystemPrompt"];
+      const updated: Record<string, unknown> = { ...current };
 
       for (const field of CONFIG_FIELDS) {
         if (field in body) {
@@ -73,7 +79,7 @@ export async function handleConfig(request: Request, env: Env): Promise<Response
         }
       }
 
-      if (updated.aiProvider && !["cloudflare", "openai"].includes(updated.aiProvider)) {
+      if (updated.aiProvider && !["cloudflare", "openai"].includes(updated.aiProvider as string)) {
         return json({ error: "VALIDATION_ERROR", message: "aiProvider 必须是 cloudflare 或 openai" }, 400);
       }
       if (updated.aiProvider === "openai" && !updated.aiBaseUrl) {
@@ -87,7 +93,7 @@ export async function handleConfig(request: Request, env: Env): Promise<Response
         if (isNaN(n) || n < 1 || n > 32000) return json({ error: "VALIDATION_ERROR", message: "max_tokens 必须在 1-32000 之间" }, 400);
         updated.aiMaxTokens = n;
       }
-      if (updated.aiApiKey && updated.aiApiKey.includes("***")) {
+      if (typeof updated.aiApiKey === "string" && updated.aiApiKey.includes("***")) {
         updated.aiApiKey = current.aiApiKey || "";
       }
 
@@ -98,13 +104,14 @@ export async function handleConfig(request: Request, env: Env): Promise<Response
       }
 
       await env.CLAWBOT_KV.put(KV_CONFIG_KEY, JSON.stringify(updated));
-      configCache.invalidate(CACHE_KEY);
+      configCache.invalidate("config");
 
       Logger.info("[config] updated", { provider: updated.aiProvider, model: updated.aiModel });
       return json({ ok: true, message: "配置已保存" });
-    } catch (e: any) {
-      Logger.error("[config] update error", { error: e?.message || String(e) });
-      return json({ error: e?.message || String(e) }, 500);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      Logger.error("[config] update error", { error: msg });
+      return json({ error: msg }, 500);
     }
   }
 

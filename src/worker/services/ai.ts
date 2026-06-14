@@ -79,7 +79,7 @@ async function callOpenAICompatible(params: {
     throw new Error(`API ${resp.status}: ${errBody.slice(0, 200)}`);
   }
 
-  const data = await resp.json();
+  const data = await resp.json() as { choices?: Array<{ message?: { content?: string } }> };
   return data.choices?.[0]?.message?.content || "";
 }
 
