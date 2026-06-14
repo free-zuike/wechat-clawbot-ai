@@ -66,7 +66,7 @@ onMounted(async () => {
   try {
     const data = await checkLogin();
     if (data.loggedIn) {
-      router.replace("/");
+      window.location.replace("/");
     }
   } catch {
     // 忽略错误，继续显示登录页面
@@ -122,10 +122,12 @@ async function startLogin() {
 async function pollStatus() {
   try {
     const data = await getQRCodeStatus(password.value);
+    console.log("[pollStatus] data:", JSON.stringify(data));
     if (data.ok || data.status === "confirmed") {
+      console.log("[pollStatus] confirmed, redirecting...");
       qrStatus.value = "登录成功！正在跳转...";
       loggedIn.value = true;
-      router.replace("/");
+      window.location.replace("/");
       return;
     }
     if (data.status === "scaned") {
@@ -137,7 +139,8 @@ async function pollStatus() {
       qrStatus.value = "等待扫码...";
     }
     pollTimer = window.setTimeout(pollStatus, 2000);
-  } catch {
+  } catch (e: any) {
+    console.error("[pollStatus] error:", e);
     pollTimer = window.setTimeout(pollStatus, 3000);
   }
 }
