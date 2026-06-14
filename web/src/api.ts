@@ -166,7 +166,7 @@ export async function fetchConfig(): Promise<any> {
   return apiFetch(API_BASE + "/api/config", { cancelable: "config" });
 }
 
-export async function saveConfig(config: { aiModel?: string; aiSystemPrompt?: string }): Promise<any> {
+export async function saveConfig(config: Record<string, any>): Promise<any> {
   return apiFetch(API_BASE + "/api/config", {
     method: "POST",
     headers: { "Content-Type": "application/json" },

@@ -135,19 +135,66 @@
       <section v-if="activeSection === 'config'">
         <div class="card">
           <h2>⚙️ 系统配置</h2>
-          <div class="desc">配置 AI 模型和人设提示词，保存后即时生效</div>
+          <div class="desc">配置 AI 提供商、模型和人设提示词</div>
+
+          <div class="field">
+            <label>AI 提供商</label>
+            <select v-model="config.aiProvider" class="input">
+              <option value="cloudflare">Cloudflare Workers AI</option>
+              <option value="openai">OpenAI 兼容 API（DeepSeek/通义千问/Moonshot/智谱GLM 等）</option>
+            </select>
+          </div>
 
           <div class="field">
             <label>AI 模型</label>
             <input
               v-model="config.aiModel"
               class="input"
-              placeholder="@cf/meta/llama-3-8b-instruct"
+              :placeholder="config.aiProvider === 'openai' ? 'deepseek-chat / qwen-turbo / glm-4-flash' : '@cf/meta/llama-3-8b-instruct'"
             />
             <div style="font-size: 12px; color: #888; margin-top: 6px">
-              留空使用默认模型。支持 Cloudflare Worker AI 系列模型
+              {{ config.aiProvider === 'openai' ? '填写对应平台的模型名称' : '留空使用默认模型 @cf/meta/llama-3.2-3b-instruct' }}
             </div>
           </div>
+
+          <template v-if="config.aiProvider === 'openai'">
+            <div class="field">
+              <label>API 地址</label>
+              <input
+                v-model="config.aiBaseUrl"
+                class="input"
+                placeholder="https://api.deepseek.com"
+              />
+              <div style="font-size: 12px; color: #888; margin-top: 6px">
+                OpenAI 兼容接口地址，不要加 /v1/chat/completions 后缀
+              </div>
+            </div>
+
+            <div class="field">
+              <label>API 密钥</label>
+              <input
+                v-model="config.aiApiKey"
+                class="input"
+                type="password"
+                placeholder="sk-..."
+              />
+              <div style="font-size: 12px; color: #888; margin-top: 6px">
+                已有密钥时留空不修改，填写新密钥则覆盖
+              </div>
+            </div>
+
+            <div class="field">
+              <label>最大 Token 数</label>
+              <input
+                v-model.number="config.aiMaxTokens"
+                class="input"
+                type="number"
+                min="1"
+                max="32000"
+                placeholder="1024"
+              />
+            </div>
+          </template>
 
           <div class="field">
             <label>人设提示词 (system prompt)</label>
@@ -168,7 +215,7 @@
               {{ configSaving ? "保存中..." : "💾 保存配置" }}
             </button>
           </div>
-          <div v-if="configResult" :class="['result-box', configResult.includes('成功') ? 'success' : '']">
+          <div v-if="configResult" :class="['result-box', configResult.includes('✅') ? 'success' : '']">
             {{ configResult }}
           </div>
         </div>
@@ -441,7 +488,7 @@ const status = reactive({
 const statusLoading = ref(false);
 
 // ===== 配置数据 =====
-const config = reactive({ aiModel: "", aiSystemPrompt: "" });
+const config = reactive({ aiProvider: "cloudflare", aiModel: "", aiBaseUrl: "", aiApiKey: "", aiMaxTokens: 1024, aiSystemPrompt: "" });
 const configResult = ref("");
 const configSaving = ref(false);
 
@@ -587,8 +634,12 @@ async function handleLoadConfig() {
   configResult.value = "加载中...";
   try {
     const d = await fetchConfig();
-    if (d === null) return; // 被新请求替换
+    if (d === null) return;
+    config.aiProvider = d.aiProvider || "cloudflare";
     config.aiModel = d.aiModel || "";
+    config.aiBaseUrl = d.aiBaseUrl || "";
+    config.aiApiKey = d.aiApiKey || "";
+    config.aiMaxTokens = d.aiMaxTokens || 1024;
     config.aiSystemPrompt = d.aiSystemPrompt || "";
     configResult.value = d.hasEnvOverride
       ? "✅ 已加载当前配置（注意：当前有环境变量覆盖）"

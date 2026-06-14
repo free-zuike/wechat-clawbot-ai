@@ -581,47 +581,34 @@ export class ILinkConnectionDO implements DurableObject {
 
   // ========== 处理消息 ==========
 
-  private async getConfigCached(): Promise<{ aiSystemPrompt: string; aiModel: string }> {
+  private async getConfigCached() {
     const now = Date.now();
     if (this.cache.config && now - this.cache.configLoadedAt < 10 * 60 * 1000) {
       return this.cache.config;
     }
 
-    // 优先从 DO SQLite 读配置
     let aiSystemPrompt = this.env.AI_SYSTEM_PROMPT || "";
     let aiModel = this.env.AI_MODEL || "";
+    let aiProvider = "cloudflare";
+    let aiBaseUrl = "";
+    let aiApiKey = "";
+    let aiMaxTokens = 1024;
 
-    if (!aiSystemPrompt || !aiModel) {
-      try {
-        const result = await this.state.storage.sql.exec(
-          `SELECT value FROM do_config WHERE key = 'ai_system_prompt'`
-        );
-        const row = result.next().value;
-        if (row) aiSystemPrompt = row.value as string;
-      } catch { /* ignore */ }
+    // 从 KV 读配置
+    const configRaw = await this.kv?.get("clawbot:config");
+    try {
+      if (configRaw) {
+        const kvConfig = JSON.parse(configRaw);
+        aiSystemPrompt = aiSystemPrompt || kvConfig.aiSystemPrompt || "";
+        aiModel = aiModel || kvConfig.aiModel || "";
+        aiProvider = kvConfig.aiProvider || "cloudflare";
+        aiBaseUrl = kvConfig.aiBaseUrl || "";
+        aiApiKey = kvConfig.aiApiKey || "";
+        aiMaxTokens = kvConfig.aiMaxTokens || 1024;
+      }
+    } catch {}
 
-      try {
-        const result = await this.state.storage.sql.exec(
-          `SELECT value FROM do_config WHERE key = 'ai_model'`
-        );
-        const row = result.next().value;
-        if (row) aiModel = row.value as string;
-      } catch { /* ignore */ }
-    }
-
-    // 兜底：从 KV 读（兼容旧数据）
-    if (!aiSystemPrompt || !aiModel) {
-      const configRaw = await this.kv?.get("clawbot:config");
-      try {
-        if (configRaw) {
-          const kvConfig = JSON.parse(configRaw);
-          aiSystemPrompt = aiSystemPrompt || kvConfig.aiSystemPrompt || "";
-          aiModel = aiModel || kvConfig.aiModel || "";
-        }
-      } catch { /* ignore */ }
-    }
-
-    const cfg = { aiSystemPrompt, aiModel };
+    const cfg = { aiSystemPrompt, aiModel, aiProvider, aiBaseUrl, aiApiKey, aiMaxTokens };
     this.cache.config = cfg;
     this.cache.configLoadedAt = now;
     return cfg;
@@ -683,7 +670,8 @@ export class ILinkConnectionDO implements DurableObject {
           from,
           text,
           systemPrompt,
-          aiModel
+          aiModel,
+          { provider: cfg.aiProvider, baseUrl: cfg.aiBaseUrl, apiKey: cfg.aiApiKey, maxTokens: cfg.aiMaxTokens }
         );
 
         // 发送回复

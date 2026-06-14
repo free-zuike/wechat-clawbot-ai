@@ -1,155 +1,139 @@
-// 配置路由 - 读取/保存 AI 模型和人设提示词
-// 优化：请求验证 + 响应缓存 + 更清晰的错误
+// 配置路由 - 读取/保存 AI 配置（支持 Cloudflare AI + OpenAI 兼容 API）
 
 import { json, verifyAdmin } from "../utils";
 import { Logger } from "../utils/error";
-import { validateModelName, validatePrompt, validateObject } from "../utils/validation";
 import { configCache } from "../utils/cache";
 import type { Env } from "../index";
 
 const KV_CONFIG_KEY = "clawbot:config";
 const CACHE_KEY = "config";
 
-// 轻量级 IP 频率限制（60 秒 10 次）
-const configRateLimiter = new Map<string, { count: number; resetAt: number }>();
-
-function checkConfigRateLimit(request: Request): { allowed: boolean; retryAfter: number } {
-  const ip = request.headers.get('CF-Connecting-IP') ||
-             request.headers.get('X-Forwarded-For') ||
-             request.headers.get('X-Real-IP') || 'unknown';
-  const now = Date.now();
-  const existing = configRateLimiter.get(ip);
-  if (existing && now >= existing.resetAt) {
-    configRateLimiter.delete(ip);
-  }
-  const current = configRateLimiter.get(ip) || { count: 0, resetAt: now + 60000 };
-  current.count++;
-  configRateLimiter.set(ip, current);
-
-  const allowed = current.count <= 10;
-  const retryAfter = Math.ceil((current.resetAt - now) / 1000);
-
-  if (configRateLimiter.size > 1000) {
-    for (const [k, v] of configRateLimiter.entries()) {
-      if (now >= v.resetAt) configRateLimiter.delete(k);
-    }
-  }
-
-  return { allowed, retryAfter };
-}
+// 配置字段白名单
+const CONFIG_FIELDS = ["aiProvider", "aiModel", "aiBaseUrl", "aiApiKey", "aiMaxTokens", "aiSystemPrompt"];
 
 export async function handleConfig(request: Request, env: Env): Promise<Response> {
-  // GET - 读取配置（需要认证）
   if (request.method === "GET") {
     const v = await verifyAdmin(request, env);
     if (!v.ok) return json({ error: v.error }, 401);
 
-    // 使用缓存 - 避免每次都读 KV
     const result = await configCache.getOrLoad(CACHE_KEY, async () => {
       const configRaw = await env.CLAWBOT_KV.get(KV_CONFIG_KEY);
-      let kvConfig: Record<string, string> = {};
+      let kvConfig: Record<string, any> = {};
       try {
         if (configRaw) kvConfig = JSON.parse(configRaw);
-      } catch {
-        Logger.warn('[config] failed to parse cached config, using empty');
-      }
+      } catch {}
+
       return {
-        aiModel: env.AI_MODEL || kvConfig.aiModel || "",
-        aiSystemPrompt: env.AI_SYSTEM_PROMPT || kvConfig.aiSystemPrompt || "",
+        aiProvider: kvConfig.aiProvider || "cloudflare",
+        aiModel: kvConfig.aiModel || "",
+        aiBaseUrl: kvConfig.aiBaseUrl || "",
+        aiApiKey: kvConfig.aiApiKey ? maskKey(kvConfig.aiApiKey) : "",
+        aiMaxTokens: kvConfig.aiMaxTokens || 1024,
+        aiSystemPrompt: kvConfig.aiSystemPrompt || "",
         hasEnvOverride: !!(env.AI_MODEL || env.AI_SYSTEM_PROMPT),
       };
-    }, 10000); // 10 秒缓存
+    }, 10000);
 
     return json(result);
   }
 
-  // POST - 保存配置（需要认证 + 频率限制）
   if (request.method === "POST") {
     const v = await verifyAdmin(request, env);
     if (!v.ok) return json({ error: v.error }, 401);
 
-    const rl = checkConfigRateLimit(request);
-    if (!rl.allowed) {
-      Logger.warn('[config] POST rate limited');
-      return json({
-        error: "RATE_LIMITED",
-        message: "请求过于频繁，请稍后重试",
-        retryAfter: rl.retryAfter
-      }, 429);
-    }
-
-    Logger.info('[config] POST update requested');
+    Logger.info("[config] POST update requested");
 
     try {
-      const body = await request.json() as Record<string, unknown>;
-
-      // 验证 body 结构
-      const schemaCheck = validateObject(body, {
-        aiModel: { type: "string", maxLength: 128 },
-        aiSystemPrompt: { type: "string", maxLength: 4096 },
-      });
-      if (!schemaCheck.valid) {
-        return json({ error: "VALIDATION_ERROR", errors: schemaCheck.errors }, 400);
+      let body: any;
+      try {
+        body = await request.json();
+      } catch (e: any) {
+        return json({ error: "INVALID_JSON", message: "无效的 JSON 请求体" }, 400);
       }
 
-      // 逐项验证
-      const allErrors: string[] = [];
-      if (body.aiModel !== undefined && body.aiModel !== "") {
-        const r = validateModelName(String(body.aiModel));
-        if (!r.valid) allErrors.push(...r.errors);
-      }
-      if (body.aiSystemPrompt !== undefined && body.aiSystemPrompt !== "") {
-        const r = validatePrompt(String(body.aiSystemPrompt));
-        if (!r.valid) allErrors.push(...r.errors);
-      }
-      if (allErrors.length > 0) {
-        Logger.warn('[config] validation failed', { errors: allErrors });
-        return json({ error: "VALIDATION_ERROR", errors: allErrors }, 400);
+      if (typeof body !== "object" || body === null) {
+        return json({ error: "VALIDATION_ERROR", message: "请求体必须是 JSON 对象" }, 400);
       }
 
       // 读取当前配置
       const currentRaw = await env.CLAWBOT_KV.get(KV_CONFIG_KEY);
-      let current: Record<string, string> = {};
+      let current: Record<string, any> = {};
       try {
         if (currentRaw) current = JSON.parse(currentRaw);
-      } catch { /* ignore */ }
+      } catch {}
 
-      // 应用变更 - 空字符串视为清空该字段
-      const updated: Record<string, string> = {
-        ...current,
-        aiModel: typeof body.aiModel === "string" ? body.aiModel.trim() : current.aiModel,
-        aiSystemPrompt: typeof body.aiSystemPrompt === "string" ? body.aiSystemPrompt.trim() : current.aiSystemPrompt,
-      };
+      // 应用变更（只更新传入的字段）
+      const updated: Record<string, any> = { ...current };
 
-      // 移除空字段（让环境变量或默认值生效）
-      if (!updated.aiModel) delete updated.aiModel;
-      if (!updated.aiSystemPrompt) delete updated.aiSystemPrompt;
+      for (const field of CONFIG_FIELDS) {
+        if (field in body) {
+          const val = body[field];
+          if (typeof val === "string") {
+            updated[field] = val.trim();
+          } else if (typeof val === "number") {
+            updated[field] = val;
+          }
+        }
+      }
+
+      // 验证 aiProvider
+      if (updated.aiProvider && !["cloudflare", "openai"].includes(updated.aiProvider)) {
+        return json({ error: "VALIDATION_ERROR", message: "aiProvider 必须是 cloudflare 或 openai" }, 400);
+      }
+
+      // 验证 aiBaseUrl（OpenAI 模式必填）
+      if (updated.aiProvider === "openai" && !updated.aiBaseUrl) {
+        return json({ error: "VALIDATION_ERROR", message: "使用 OpenAI 兼容 API 时，API 地址为必填" }, 400);
+      }
+
+      // 验证 aiApiKey（OpenAI 模式必填）
+      if (updated.aiProvider === "openai" && !updated.aiApiKey) {
+        return json({ error: "VALIDATION_ERROR", message: "使用 OpenAI 兼容 API 时，API 密钥为必填" }, 400);
+      }
+
+      // 验证 max_tokens
+      if (updated.aiMaxTokens !== undefined) {
+        const n = Number(updated.aiMaxTokens);
+        if (isNaN(n) || n < 1 || n > 32000) {
+          return json({ error: "VALIDATION_ERROR", message: "max_tokens 必须在 1-32000 之间" }, 400);
+        }
+        updated.aiMaxTokens = n;
+      }
+
+      // 如果前端传的是掩码，不覆盖原密钥
+      if (updated.aiApiKey && updated.aiApiKey.includes("***")) {
+        updated.aiApiKey = current.aiApiKey || "";
+      }
+
+      // 清理空字段
+      for (const field of CONFIG_FIELDS) {
+        if (updated[field] === "" || updated[field] === undefined) {
+          if (field !== "aiProvider" && field !== "aiMaxTokens") {
+            delete updated[field];
+          }
+        }
+      }
 
       await env.CLAWBOT_KV.put(KV_CONFIG_KEY, JSON.stringify(updated));
-
-      // 清空缓存
       configCache.invalidate(CACHE_KEY);
 
-      Logger.info('[config] updated', {
-        hasAiModel: !!updated.aiModel,
-        hasPrompt: !!updated.aiSystemPrompt,
-      });
+      Logger.info("[config] updated", { provider: updated.aiProvider, model: updated.aiModel });
 
       return json({
         ok: true,
-        config: updated,
-        message: "配置已保存，将在下次消息处理时生效",
+        message: "配置已保存",
       });
     } catch (e: any) {
-      // JSON 解析错误等非预期情况
       const msg = e?.message || String(e);
-      if (msg.includes("JSON")) {
-        return json({ error: "INVALID_JSON", message: "无效的 JSON 请求体" }, 400);
-      }
-      Logger.error('[config] update error', { error: msg });
-      return json({ error: String(e) }, 500);
+      Logger.error("[config] update error", { error: msg });
+      return json({ error: msg }, 500);
     }
   }
 
   return json({ error: "Method Not Allowed" }, 405);
+}
+
+function maskKey(key: string): string {
+  if (key.length <= 8) return "***";
+  return key.slice(0, 4) + "***" + key.slice(-4);
 }
