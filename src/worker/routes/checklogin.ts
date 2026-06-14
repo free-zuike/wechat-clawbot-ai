@@ -11,6 +11,7 @@ export async function handleCheckLogin(request: Request, env: Env): Promise<Resp
     let tokenHealth: string = "unknown";
     let loginAgeText: string | undefined;
 
+    // 1. KV 凭证
     const credsRaw = await env.CLAWBOT_KV.get("clawbot:credentials");
     if (credsRaw) {
       loggedIn = true;
@@ -22,6 +23,20 @@ export async function handleCheckLogin(request: Request, env: Env): Promise<Resp
           const mins = Math.floor(hours * 60);
           loginAgeText = mins < 60 ? `已登录 ${mins} 分钟` : `已登录 ${Math.floor(hours)} 小时`;
           tokenHealth = hours < 6 ? "valid" : hours < 12 ? "expiring" : "expired";
+        }
+      } catch {}
+    }
+
+    // 2. DO 存储兜底（KV配额耗尽时的备用）
+    if (!loggedIn) {
+      try {
+        const doId = env.ILINK_CONNECTION.idFromName("main");
+        const doStub = env.ILINK_CONNECTION.get(doId);
+        const resp = await doStub.fetch(new Request("http://localhost/status"), { signal: AbortSignal.timeout(5000) });
+        const data = await resp.json() as any;
+        if (data.hasCredentials) {
+          loggedIn = true;
+          tokenHealth = "valid";
         }
       } catch {}
     }
