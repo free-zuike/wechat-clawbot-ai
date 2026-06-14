@@ -81,9 +81,9 @@ export class Router {
 
   private registerRoutes(): void {
     this.routes = [
-      { path: "/api/check-login", method: "GET", handler: handleCheckLogin, rateLimit: true, rateLimitMax: 60, rateLimitWindowMs: 60000 },
-      { path: "/api/qrcode", method: "GET", handler: handleQRCode, rateLimit: true, rateLimitMax: 5, rateLimitWindowMs: 60000 },
-      { path: "/api/qrcode-status", method: "GET", handler: handleQRCodeStatus, rateLimit: true, rateLimitMax: 20, rateLimitWindowMs: 60000 },
+      { path: "/api/check-login", method: "GET", handler: handleCheckLogin, rateLimit: true, rateLimitMax: 120, rateLimitWindowMs: 60000 },
+      { path: "/api/qrcode", method: "GET", handler: handleQRCode, rateLimit: true, rateLimitMax: 20, rateLimitWindowMs: 60000 },
+      { path: "/api/qrcode-status", method: "GET", handler: handleQRCodeStatus, rateLimit: true, rateLimitMax: 60, rateLimitWindowMs: 60000 },
       { path: "/api/status", handler: handleStatus, requireAuth: true, rateLimit: true, rateLimitMax: 30, rateLimitWindowMs: 60000 },
       { path: "/api/chat", method: "POST", handler: handleChat, requireAuth: true, rateLimit: true, rateLimitMax: 15, rateLimitWindowMs: 60000 },
       { path: "/api/trigger-poll", method: "POST", handler: handleTriggerPoll, requireAuth: true, rateLimit: true, rateLimitMax: 5, rateLimitWindowMs: 60000 },
