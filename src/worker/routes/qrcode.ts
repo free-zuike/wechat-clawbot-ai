@@ -67,32 +67,22 @@ export async function handleQRCodeStatus(request: Request, env: Env): Promise<Re
         Logger.warn("[qrcode-status] KV put credentials failed", { error: e.message });
       }
 
-      // 保存凭证到 DO SQLite（不依赖KV，核心存储）
-      let sessionToken = "";
-      try {
-        const doId = env.ILINK_CONNECTION.idFromName("main");
-        const doStub = env.ILINK_CONNECTION.get(doId);
-        const resp = await doStub.fetch(new Request("http://localhost/save-creds", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(creds),
-        }));
-        const result = await resp.json() as any;
-        sessionToken = result.sessionToken || "";
-        Logger.info("[qrcode-status] DO credentials saved", { accountId: status.ilink_bot_id });
-      } catch (e: any) {
-        Logger.warn("[qrcode-status] DO save-creds failed", { error: e.message });
-      }
+      // 保存凭证到 DO（fire-and-forget，不阻塞响应）
+      const doId = env.ILINK_CONNECTION.idFromName("main");
+      const doStub = env.ILINK_CONNECTION.get(doId);
+      doStub.fetch(new Request("http://localhost/save-creds", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(creds),
+      })).catch((e: any) => Logger.warn("[qrcode-status] DO save-creds failed", { error: e.message }));
 
-      // 同时触发 DO 启动轮询
-      try {
-        const doId = env.ILINK_CONNECTION.idFromName("main");
-        const doStub = env.ILINK_CONNECTION.get(doId);
-        await doStub.fetch(new Request("http://localhost/poll"));
-      } catch (_) {}
+      // 触发 DO 启动轮询（fire-and-forget，不阻塞响应）
+      const pollDoId = env.ILINK_CONNECTION.idFromName("main");
+      const pollDoStub = env.ILINK_CONNECTION.get(pollDoId);
+      pollDoStub.fetch(new Request("http://localhost/poll")).catch(() => {});
 
       // 存session到KV（失败不阻塞）
-      if (!sessionToken) sessionToken = generateSessionToken();
+      const sessionToken = generateSessionToken();
       try {
         await env.CLAWBOT_KV.put(`clawbot:session:${sessionToken}`, "valid", { expirationTtl: 24 * 60 * 60 });
       } catch (_) {}
