@@ -209,49 +209,55 @@ export class ILinkConnectionDO implements DurableObject {
     }
   }
 
-  // ========== 长轮询：阻塞直到有新消息 ==========
+  // ========== 拉取消息（立即返回，不长轮询）==========
 
   private async handleLongPoll(): Promise<Response> {
-    Logger.info("[DO] Starting long poll");
+    Logger.info("[DO] Poll triggered");
 
     // 确保轮询循环在运行
+    if (!this.ilinkCreds) {
+      return new Response(JSON.stringify({
+        success: true,
+        pulled: 0,
+        handled: 0,
+        skipped: 0,
+        error: "未登录",
+        latencyMs: 0,
+      }), { headers: { "Content-Type": "application/json" } });
+    }
+
     if (!this.pollLoopRunning) {
       this.pollLoopRunning = true;
-      // 异步启动轮询循环（不阻塞）
       this.runPollLoop().catch((e) => {
         Logger.error("[DO] Poll loop error", { error: e.message });
         this.pollLoopRunning = false;
       });
     }
 
-    // 等待新消息到达或超时
-    const deadline = Date.now() + 60000; // 最多等 60 秒
-
+    // 等最多5秒让当前轮询完成，立即返回
+    const deadline = Date.now() + 5000;
     while (Date.now() < deadline) {
       if (this.state.pendingMessages.length > 0) {
-        // 有待处理的消息
         const msg = this.state.pendingMessages.shift()!;
         return new Response(JSON.stringify({
           success: true,
+          pulled: 1,
+          handled: 1,
+          skipped: 0,
           message: msg,
-          queueLength: this.state.pendingMessages.length,
-        }), {
-          headers: { "Content-Type": "application/json" },
-        });
+          latencyMs: Date.now() - deadline + 5000,
+        }), { headers: { "Content-Type": "application/json" } });
       }
-
-      // 等待一小段时间再检查
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await new Promise((r) => setTimeout(r, 200));
     }
 
-    // 超时，返回空
     return new Response(JSON.stringify({
       success: true,
-      message: null,
-      queueLength: this.state.pendingMessages.length,
-    }), {
-      headers: { "Content-Type": "application/json" },
-    });
+      pulled: 0,
+      handled: 0,
+      skipped: 0,
+      latencyMs: 5000,
+    }), { headers: { "Content-Type": "application/json" } });
   }
 
   // ========== 检查 session 是否有效（DO SQLite）==========
