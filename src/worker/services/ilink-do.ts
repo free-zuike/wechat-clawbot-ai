@@ -423,20 +423,14 @@ export class ILinkConnectionDO implements DurableObject {
       } catch (e: any) {
         Logger.error("[DO] Poll error", { error: e.message });
 
-        // ILINK_SESSION_TIMEOUT：微信凭证过期，标记需要重新扫码
-        // （其它错误继续计数，连错太多时暂停轮询）
+        // ILINK_SESSION_TIMEOUT：微信凭证过期，停止轮询但保留 KV 凭证
+        // 前端通过 check-login 的 tokenHealth 检测过期状态
         if (e.code === "ILINK_SESSION_TIMEOUT" || e.message?.includes("ILINK_SESSION_TIMEOUT")) {
-          Logger.error("[DO] Token expired — clearing credentials, user needs to re-scan");
+          Logger.error("[DO] Token expired — stopping poll, user needs to re-scan");
           this.ilinkCreds = null;
           this.cache.credentials = null;
           this.pollLoopRunning = false;
-          // 同时清空 DO SQLite 和 KV，确保下次扫码走全新登录流程
-          try {
-            await this.state.storage.sql.exec("DELETE FROM credentials WHERE id = 1");
-          } catch (_) {}
-          try {
-            await this.kv?.delete("clawbot:credentials");
-          } catch (_) {}
+          // 不删除 KV 中的凭证，前端通过 check-login 检测 tokenHealth: "expired"
           await this.saveState();
           return;
         }
