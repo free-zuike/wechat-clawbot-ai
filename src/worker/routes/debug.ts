@@ -10,7 +10,19 @@ export async function handleDebugLogin(request: Request, env: Env): Promise<Resp
 
   Logger.info('[debug-login] diagnostic request');
 
-  const credsRaw = await env.CLAWBOT_KV.get("clawbot:credentials");
+  // 先查KV，再查DO storage
+  let credsRaw = await env.CLAWBOT_KV.get("clawbot:credentials");
+  if (!credsRaw && env.ILINK_CONNECTION) {
+    try {
+      const doId = env.ILINK_CONNECTION.idFromName("main");
+      const doStub = env.ILINK_CONNECTION.get(doId);
+      const resp = await doStub.fetch(new Request("http://localhost/status"));
+      const data = await resp.json() as any;
+      if (data.hasCredentials) {
+        credsRaw = '{"note":"凭证存储在DO中"}';
+      }
+    } catch {}
+  }
   if (!credsRaw) return json({ ok: false, error: "未登录，没有凭证" });
 
   let creds: any;
