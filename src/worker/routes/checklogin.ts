@@ -9,40 +9,38 @@ export async function handleCheckLogin(request: Request, env: Env): Promise<Resp
     let loggedIn = false;
     let accountId: string | undefined;
     let tokenHealth: string = "unknown";
-    let loginAgeText: string | undefined;
 
-    // 1. KV 凭证
-    const credsRaw = await env.CLAWBOT_KV.get("clawbot:credentials");
-    if (credsRaw) {
-      loggedIn = true;
-      try {
-        const creds = JSON.parse(credsRaw);
-        accountId = creds.accountId;
-        if (creds.createdAt) {
-          const hours = (Date.now() - creds.createdAt) / 3600000;
-          const mins = Math.floor(hours * 60);
-          loginAgeText = mins < 60 ? `已登录 ${mins} 分钟` : `已登录 ${Math.floor(hours)} 小时`;
-          tokenHealth = hours < 6 ? "valid" : hours < 12 ? "expiring" : "expired";
-        }
-      } catch {}
-    }
+    // 1. 查 DO 状态（主存储）
+    try {
+      const doId = env.ILINK_CONNECTION.idFromName("main");
+      const doStub = env.ILINK_CONNECTION.get(doId);
+      const resp = await doStub.fetch(new Request("http://localhost/status"), { signal: AbortSignal.timeout(3000) });
+      const data = await resp.json() as any;
+      if (data.hasCredentials) {
+        loggedIn = true;
+        tokenHealth = "valid";
+        accountId = data.accountId;
+      }
+    } catch (_e) {}
 
-    // 2. DO 存储兜底（KV配额耗尽时的备用）
+    // 2. 兜底查 KV（遗留数据）
     if (!loggedIn) {
       try {
-        const doId = env.ILINK_CONNECTION.idFromName("main");
-        const doStub = env.ILINK_CONNECTION.get(doId);
-        const resp = await doStub.fetch(new Request("http://localhost/status"), { signal: AbortSignal.timeout(5000) });
-        const data = await resp.json() as any;
-        if (data.hasCredentials) {
+        const credsRaw = await env.CLAWBOT_KV.get("clawbot:credentials");
+        if (credsRaw) {
           loggedIn = true;
-          tokenHealth = "valid";
+          const creds = JSON.parse(credsRaw);
+          accountId = creds.accountId;
+          if (creds.createdAt) {
+            const hours = (Date.now() - creds.createdAt) / 3600000;
+            tokenHealth = hours < 6 ? "valid" : hours < 12 ? "expiring" : "expired";
+          }
         }
-      } catch {}
+      } catch (_e) {}
     }
 
     Logger.info("[check-login] result", { loggedIn });
-    return json({ loggedIn, tokenHealth, loginAgeText, hasCredentials: loggedIn, hasSession: loggedIn });
+    return json({ loggedIn, tokenHealth, hasCredentials: loggedIn, hasSession: loggedIn });
   } catch (e: any) {
     Logger.error("[check-login] error", { error: e?.message || String(e) });
     return json({ loggedIn: false, error: String(e) });

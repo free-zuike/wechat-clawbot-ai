@@ -20,62 +20,45 @@ export function html(body: string, status = 200): Response {
   });
 }
 
-// 生成随机 session token
 export function generateSessionToken(): string {
   return crypto.randomUUID().replace(/-/g, "");
 }
 
-// 创建 session cookie
 export function createSessionCookie(token: string): string {
   return `clawbot_session=${token}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${24 * 60 * 60}`;
 }
 
-// 清除 session cookie
 export function clearSessionCookie(): string {
   return "clawbot_session=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0";
 }
 
-// 验证管理员密码或 session
+// 验证管理员：DO凭证 → KV遗留 → 管理员密码
 export async function verifyAdmin(request: Request, env: any): Promise<{ ok: boolean; error?: string }> {
-  // 1. 检查 session cookie（从 KV 读）
-  const cookieHeader = request.headers.get("Cookie") || "";
-  const sessionMatch = cookieHeader.match(/clawbot_session=([^;]+)/);
-  if (sessionMatch) {
-    const sessionToken = sessionMatch[1];
-    const sessionValid = await env.CLAWBOT_KV?.get(`clawbot:session:${sessionToken}`);
-    if (sessionValid) {
-      return { ok: true };
-    }
-  }
-
-  // 2. 检查 KV 凭证
-  if (env.CLAWBOT_KV) {
-    const credsRaw = await env.CLAWBOT_KV.get("clawbot:credentials");
-    if (credsRaw) {
-      return { ok: true };
-    }
-  }
-
-  // 3. 检查 DO 存储凭证（KV配额耗尽时的兜底）
+  // 1. 查 DO 凭证（主存储）
   if (env.ILINK_CONNECTION) {
     try {
       const doId = env.ILINK_CONNECTION.idFromName("main");
       const doStub = env.ILINK_CONNECTION.get(doId);
       const resp = await doStub.fetch(new Request("http://localhost/status"), { signal: AbortSignal.timeout(3000) });
       const data = await resp.json() as any;
-      if (data.hasCredentials) {
-        return { ok: true };
-      }
-    } catch {}
+      if (data.hasCredentials) return { ok: true };
+    } catch (_e) {}
   }
 
-  // 4. 检查管理员密码（兼容旧方式和初始登录）
+  // 2. 兜底查 KV（遗留数据）
+  if (env.CLAWBOT_KV) {
+    try {
+      const credsRaw = await env.CLAWBOT_KV.get("clawbot:credentials");
+      if (credsRaw) return { ok: true };
+    } catch (_e) {}
+  }
+
+  // 3. 管理员密码
   if (!env.ADMIN_PASSWORD || env.ADMIN_PASSWORD.length < 3) {
-    return { ok: false, error: "请先配置 ADMIN_PASSWORD（wrangler secret put ADMIN_PASSWORD）" };
+    return { ok: false, error: "请先配置 ADMIN_PASSWORD" };
   }
   const url = new URL(request.url);
   const queryPwd = url.searchParams.get("pwd") || "";
-
   const authHeader = request.headers.get("Authorization") || "";
   let headerOk = false;
   const m = authHeader.match(/^Basic\s+(.+)$/i);
@@ -85,16 +68,12 @@ export async function verifyAdmin(request: Request, env: any): Promise<{ ok: boo
       const colon = decoded.indexOf(":");
       const pass = colon >= 0 ? decoded.slice(colon + 1) : decoded;
       headerOk = pass === env.ADMIN_PASSWORD;
-    } catch {}
+    } catch (_e) {}
   }
-
-  if (queryPwd === env.ADMIN_PASSWORD || headerOk) {
-    return { ok: true };
-  }
+  if (queryPwd === env.ADMIN_PASSWORD || headerOk) return { ok: true };
   return { ok: false, error: "管理员密码不正确" };
 }
 
-// 从请求中提取密码（用于前端传递）
 export function extractPassword(request: Request): string {
   const url = new URL(request.url);
   return url.searchParams.get("pwd") || "";
