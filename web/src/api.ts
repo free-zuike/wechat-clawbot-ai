@@ -205,8 +205,7 @@ export async function chat(message: string): Promise<{ reply: string; source?: s
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ message }),
-    timeout: 45000, // AI 调用可能较慢
-    cancelable: "chat",
+    timeout: 45000,
   });
 }
 
