@@ -18,7 +18,11 @@
         </div>
       </nav>
 
-      <div style="margin-top:12px;padding:10px 12px;background:#fff7ed;border-radius:10px;font-size:12px;color:#c2410c;line-height:1.6">
+      <button class="theme-toggle" @click="toggleTheme">
+        {{ isDark ? '☀️ 亮色模式' : '🌙 暗色模式' }}
+      </button>
+
+      <div style="margin-top:12px;padding:10px 12px;background:rgba(255,255,255,0.15);border-radius:10px;font-size:12px;color:rgba(255,255,255,0.9);line-height:1.6">
         💡 微信 iLink Token 有效期较短，提示未登录时请重新扫码
       </div>
 
@@ -53,10 +57,10 @@
               <div class="stat-item" v-if="status.tokenHealth && status.tokenHealth !== 'unknown'">
                 <div class="stat-label">Token 状态</div>
                 <div class="stat-value">
-                  <span v-if="status.tokenHealth === 'valid'" style="color:#16a34a">有效</span>
-                  <span v-else-if="status.tokenHealth === 'expired'" style="color:#dc2626">已过期</span>
-                  <span v-else-if="status.tokenHealth === 'error'" style="color:#d97706">检查失败</span>
-                  <span v-else style="color:#6b7280">未检测</span>
+                  <span v-if="status.tokenHealth === 'valid'" style="color:var(--success)">有效</span>
+                  <span v-else-if="status.tokenHealth === 'expired'" style="color:var(--error)">已过期</span>
+                  <span v-else-if="status.tokenHealth === 'error'" style="color:var(--warning)">检查失败</span>
+                  <span v-else style="color:var(--text-muted)">未检测</span>
                 </div>
               </div>
 
@@ -93,10 +97,10 @@
               </div>
             </div>
 
-            <div style="margin-top: 16px; font-size: 13px; color: #888">
+            <div style="margin-top: 16px; font-size: 13px; color: var(--text-secondary)">
               最后更新: {{ healthData.timestamp || status.lastPollAt || '—' }}
             </div>
-            <div v-if="status.tokenHealth === 'expired'" style="margin-top:12px;padding:10px 14px;background:#fef2f2;border-radius:8px;font-size:13px;color:#b91c1c">
+            <div v-if="status.tokenHealth === 'expired'" style="margin-top:12px;padding:10px 14px;background:var(--alert-error-bg);border-radius:8px;font-size:13px;color:var(--error)">
               ⚠️ Token 已过期，需要重新扫码登录
             </div>
           </template>
@@ -124,7 +128,7 @@
             <button class="btn" :disabled="isPolling" @click="handleTriggerPoll">
               {{ isPolling ? "轮询中..." : "🔄 立即拉取消息" }}
             </button>
-            <span :style="{ color: wsConnected ? '#16a34a' : '#dc2626', fontSize: '13px' }">
+            <span :style="{ color: wsConnected ? 'var(--success)' : 'var(--error)', fontSize: '13px' }">
               {{ wsConnected ? '🟢 实时连接已建立' : '🔴 未连接' }}
             </span>
           </div>
@@ -133,18 +137,18 @@
           <!-- 实时消息列表 -->
           <div v-if="wsMessages.length > 0" style="margin-top: 20px">
             <h3 style="font-size: 14px; margin-bottom: 8px">📡 实时消息 ({{ wsMessages.length }})</h3>
-            <div style="max-height: 400px; overflow-y: auto; border: 1px solid #e5e7eb; border-radius: 8px">
+            <div style="max-height: 400px; overflow-y: auto; border: 1px solid var(--border-light); border-radius: 8px">
               <div
                 v-for="(msg, i) in wsMessages"
                 :key="i"
-                style="padding: 10px 14px; border-bottom: 1px solid #f3f4f6; font-size: 13px"
+                style="padding: 10px 14px; border-bottom: 1px solid var(--bg-alert-error); font-size: 13px"
               >
                 <div style="display: flex; justify-content: space-between; margin-bottom: 4px">
-                  <span style="font-weight: 600; color: #2563eb">📩 {{ msg.data?.fromUserId || '未知' }}</span>
-                  <span style="color: #9ca3af; font-size: 12px">{{ msg.data?.timestamp || '' }}</span>
+                  <span style="font-weight: 600; color: var(--link)">📩 {{ msg.data?.fromUserId || '未知' }}</span>
+                  <span style="color: var(--text-dim); font-size: 12px">{{ msg.data?.timestamp || '' }}</span>
                 </div>
-                <div style="color: #374151">{{ msg.data?.content || msg.data }}</div>
-                <div v-if="msg.data?.replyContent" style="color: #16a34a; margin-top: 4px; padding: 6px 8px; background: #f0fdf4; border-radius: 4px">
+                <div style="color: var(--text-primary)">{{ msg.data?.content || msg.data }}</div>
+                <div v-if="msg.data?.replyContent" style="color: var(--success); margin-top: 4px; padding: 6px 8px; background: var(--alert-success-bg); border-radius: 4px">
                   💬 {{ msg.data.replyContent }}
                 </div>
               </div>
@@ -179,7 +183,7 @@
               class="input"
               :placeholder="config.aiProvider === 'openai' ? 'deepseek-chat / qwen-turbo / glm-4-flash' : '@cf/meta/llama-3-8b-instruct'"
             />
-            <div style="font-size: 12px; color: #888; margin-top: 6px">
+            <div style="font-size: 12px; color: var(--text-secondary); margin-top: 6px">
               {{ config.aiProvider === 'openai' ? '填写对应平台的模型名称' : '留空使用默认模型 @cf/meta/llama-3.2-3b-instruct' }}
             </div>
           </div>
@@ -192,7 +196,7 @@
                 class="input"
                 placeholder="https://api.deepseek.com"
               />
-              <div style="font-size: 12px; color: #888; margin-top: 6px">
+              <div style="font-size: 12px; color: var(--text-secondary); margin-top: 6px">
                 OpenAI 兼容接口地址，不要加 /v1/chat/completions 后缀
               </div>
             </div>
@@ -205,7 +209,7 @@
                 type="password"
                 placeholder="sk-..."
               />
-              <div style="font-size: 12px; color: #888; margin-top: 6px">
+              <div style="font-size: 12px; color: var(--text-secondary); margin-top: 6px">
                 已有密钥时留空不修改，填写新密钥则覆盖
               </div>
             </div>
@@ -231,7 +235,7 @@
               placeholder="你是爪爪，一个友好的 AI 助手..."
               rows="8"
             ></textarea>
-            <div style="font-size: 12px; color: #888; margin-top: 6px">
+            <div style="font-size: 12px; color: var(--text-secondary); margin-top: 6px">
               定义机器人的性格和行为。留空使用默认人设
             </div>
           </div>
@@ -257,7 +261,7 @@
           <div class="chat-box">
             <div
               v-if="chatMessages.length === 0"
-              style="text-align: center; color: #aaa; padding: 40px 20px"
+              style="text-align: center; color: var(--text-dim); padding: 40px 20px"
             >
               👋 开始输入你的问题吧...
             </div>
@@ -307,21 +311,21 @@
                 <div class="stat-label">总报警</div>
                 <div class="stat-value">{{ alertSummary.total }}</div>
               </div>
-              <div class="stat-item" style="color:#dc2626">
+              <div class="stat-item" style="color:var(--error)">
                 <div class="stat-label">严重</div>
                 <div class="stat-value">{{ alertSummary.byLevel?.critical || 0 }}</div>
               </div>
-              <div class="stat-item" style="color:#d97706">
+              <div class="stat-item" style="color:var(--warning)">
                 <div class="stat-label">错误</div>
                 <div class="stat-value">{{ alertSummary.byLevel?.error || 0 }}</div>
               </div>
-              <div class="stat-item" style="color:#ca8a04">
+              <div class="stat-item" style="color:var(--warning)">
                 <div class="stat-label">警告</div>
                 <div class="stat-value">{{ alertSummary.byLevel?.warning || 0 }}</div>
               </div>
               <div class="stat-item">
                 <div class="stat-label">未解决</div>
-                <div class="stat-value" :style="{color: alertSummary.unresolved > 0 ? '#dc2626' : '#16a34a'}">
+                <div class="stat-value" :style="{color: alertSummary.unresolved > 0 ? 'var(--error)' : 'var(--success)'}">
                   {{ alertSummary.unresolved }}
                 </div>
               </div>
@@ -486,6 +490,21 @@ import {
 } from "../api";
 
 const router = useRouter();
+
+// ===== 主题切换 =====
+const isDark = ref(localStorage.getItem("theme") === "dark");
+
+function applyTheme() {
+  document.documentElement.classList.toggle("dark", isDark.value);
+}
+
+function toggleTheme() {
+  isDark.value = !isDark.value;
+  localStorage.setItem("theme", isDark.value ? "dark" : "light");
+  applyTheme();
+}
+
+applyTheme();
 
 const navItems = [
   { key: "status", label: "状态监控", icon: "📊" },
@@ -942,16 +961,17 @@ onUnmounted(() => {
 
 <style scoped>
 .alert-item {
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--border-alert);
   border-radius: 8px;
   padding: 12px;
   margin-bottom: 8px;
-  background: #fff;
+  background: var(--bg-card);
+  transition: background 0.3s;
 }
 
 .alert-item.resolved {
   opacity: 0.6;
-  background: #f9fafb;
+  background: var(--alert-resolved-bg);
 }
 
 .alert-header {
@@ -969,26 +989,26 @@ onUnmounted(() => {
   font-weight: 600;
 }
 
-.alert-level.info { background: #dbeafe; color: #1e40af; }
-.alert-level.warning { background: #fef3c7; color: #92400e; }
-.alert-level.error { background: #fee2e2; color: #991b1b; }
-.alert-level.critical { background: #991b1b; color: #fff; }
+.alert-level.info { background: var(--alert-info-bg); color: var(--alert-info-text); }
+.alert-level.warning { background: var(--alert-warn-bg); color: var(--alert-warn-text); }
+.alert-level.error { background: var(--alert-error-bg); color: var(--alert-error-text); }
+.alert-level.critical { background: var(--alert-critical-bg); color: #fff; }
 
-.alert-time { color: #6b7280; font-size: 12px; }
-.alert-count { color: #6b7280; font-size: 12px; font-weight: 600; }
-.alert-resolved { color: #16a34a; font-size: 12px; margin-left: auto; }
+.alert-time { color: var(--text-muted); font-size: 12px; }
+.alert-count { color: var(--text-muted); font-size: 12px; font-weight: 600; }
+.alert-resolved { color: var(--success); font-size: 12px; margin-left: auto; }
 
 .alert-message {
   font-size: 14px;
-  color: #111827;
+  color: var(--text-primary);
   margin-bottom: 4px;
 }
 
 .alert-error {
   font-size: 12px;
-  color: #6b7280;
+  color: var(--text-muted);
   font-family: monospace;
-  background: #f3f4f6;
+  background: var(--bg-alert-error);
   padding: 6px;
   border-radius: 4px;
   margin-bottom: 4px;
@@ -996,22 +1016,23 @@ onUnmounted(() => {
 
 .alert-meta {
   font-size: 11px;
-  color: #9ca3af;
+  color: var(--text-dim);
   display: flex;
   gap: 12px;
 }
 
 .session-item {
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--border-light);
   border-radius: 8px;
   padding: 10px 12px;
   margin-bottom: 6px;
-  background: #fff;
+  background: var(--bg-card);
+  transition: background 0.3s;
 }
 
 .session-user {
   font-weight: 600;
-  color: #111827;
+  color: var(--text-primary);
   font-size: 14px;
   margin-bottom: 4px;
   word-break: break-all;
@@ -1019,19 +1040,15 @@ onUnmounted(() => {
 
 .session-info {
   font-size: 12px;
-  color: #6b7280;
+  color: var(--text-muted);
   display: flex;
   gap: 16px;
 }
 
-.stat-item.success .stat-value { color: #16a34a; }
-.stat-item.warning .stat-value { color: #d97706; }
-.stat-item.error .stat-value { color: #dc2626; }
-
 .btn-link {
   background: none;
   border: none;
-  color: #2563eb;
+  color: var(--link);
   cursor: pointer;
   font-size: 12px;
   padding: 2px 6px;
@@ -1053,7 +1070,7 @@ onUnmounted(() => {
   align-items: center;
   gap: 6px;
   font-size: 13px;
-  color: #4b5563;
+  color: var(--text-checkbox);
   cursor: pointer;
 }
 
@@ -1076,20 +1093,20 @@ onUnmounted(() => {
   gap: 15px;
   margin-top: 16px;
   font-size: 13px;
-  color: #6b7280;
+  color: var(--text-muted);
 }
 
 .empty-state {
   text-align: center;
   padding: 40px;
-  color: #aaa;
+  color: var(--text-dim);
   font-size: 14px;
 }
 
 .result-box.success {
-  background: #ecfdf5;
-  color: #065f46;
-  border-color: #a7f3d0;
+  background: var(--alert-success-bg);
+  color: var(--alert-success-text);
+  border-color: var(--alert-success-text);
 }
 
 /* 骨架屏样式 */
@@ -1101,7 +1118,7 @@ onUnmounted(() => {
 
 .skeleton-item {
   height: 60px;
-  background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+  background: linear-gradient(90deg, var(--bg-skeleton-1) 25%, var(--bg-skeleton-2) 50%, var(--bg-skeleton-1) 75%);
   background-size: 200% 100%;
   animation: skeleton-loading 1.5s infinite;
   border-radius: 8px;

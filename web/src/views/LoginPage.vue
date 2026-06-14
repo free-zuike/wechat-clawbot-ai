@@ -63,8 +63,10 @@ const loggedIn = ref(false);
 let pollTimer: number | null = null;
 
 onMounted(() => {
-  // 不再自动跳转，用户在登录页就让他登录
-  // 路由守卫已处理 / 页面的登录验证
+  // 应用主题
+  if (localStorage.getItem("theme") === "dark") {
+    document.documentElement.classList.add("dark");
+  }
 });
 
 async function startLogin() {
