@@ -209,34 +209,22 @@ function getClientIP(request: Request): string {
 
 // 统一认证检查
 async function checkAuth(request: Request, env: Env): Promise<{ ok: boolean; error?: string }> {
-  // 检查 session cookie（从 KV 读）
-  const cookieHeader = request.headers.get('Cookie') || '';
-  const sessionMatch = cookieHeader.match(/clawbot_session=([^;]+)/);
-  if (sessionMatch) {
-    const sessionToken = sessionMatch[1];
-    const sessionValid = await env.CLAWBOT_KV?.get(`clawbot:session:${sessionToken}`);
-    if (sessionValid) {
-      return { ok: true };
-    }
+  // 查 DO 凭证
+  if (env.ILINK_CONNECTION) {
+    try {
+      const doId = env.ILINK_CONNECTION.idFromName("main");
+      const doStub = env.ILINK_CONNECTION.get(doId);
+      const resp = await doStub.fetch(new Request("http://localhost/status"), { signal: AbortSignal.timeout(3000) });
+      const data = await resp.json() as any;
+      if (data.hasCredentials) return { ok: true };
+    } catch (_e) {}
   }
 
-  // 检查是否有登录凭证（通过 KV）
-  if (env.CLAWBOT_KV) {
-    const credsRaw = await env.CLAWBOT_KV.get('clawbot:credentials');
-    if (credsRaw) {
-      return { ok: true };
-    }
-  }
-
-  // 检查管理员密码（用于登录前的 API 如获取二维码）
+  // 管理员密码
   if (env.ADMIN_PASSWORD) {
     const url = new URL(request.url);
     const queryPwd = url.searchParams.get('pwd') || '';
-    if (queryPwd === env.ADMIN_PASSWORD) {
-      return { ok: true };
-    }
-
-    const authHeader = request.headers.get('Authorization') || '';
+    if (queryPwd === env.ADMIN_PASSWORD) return { ok: true };
     const m = authHeader.match(/^Basic\s+(.+)$/i);
     if (m) {
       try {

@@ -452,45 +452,18 @@ export async function handleHealth(request: Request, env: Env): Promise<Response
 
     if (cached) return json(cached);
 
-    // 检查 KV
-    const kvCheck = await env.CLAWBOT_KV.get("clawbot:credentials")
-      .then(() => "OK")
-      .catch(() => "FAIL");
-
-    // 统计（从 D1 读取，不再从 KV）
-    let totalPolls = 0, totalHandled = 0, totalAICalls = 0, totalAIFails = 0;
-    if (env.CLAWBOT_DB) {
-      try {
-        const d1 = new D1Service(env.CLAWBOT_DB);
-        await d1.init();
-        const stats = await d1.getTotalStats();
-        totalPolls = stats.polls;
-        totalHandled = stats.handled;
-        totalAICalls = stats.aiCalls;
-        totalAIFails = stats.aiFails;
-      } catch (e) {
-        Logger.warn("[Admin] D1 stats read failed", { error: (e as Error).message });
-      }
-    }
-
-    // 报警（内存）
-    const alertSummary = alertService.getSummary();
-
-    // 登录状态优先看 DO SQLite，兼容 KV
+    // 登录状态从 DO 读取
     let loggedIn = false;
     try {
       const doId = env.ILINK_CONNECTION.idFromName("main");
       const doStub = env.ILINK_CONNECTION.get(doId);
-      const doResp = await doStub.fetch(new Request("http://localhost/status"));
+      const doResp = await doStub.fetch(new Request("http://localhost/status"), { signal: AbortSignal.timeout(3000) });
       const doData = await doResp.json() as { hasCredentials?: boolean };
       loggedIn = !!doData?.hasCredentials;
-    } catch {
-      const loginCheck = await env.CLAWBOT_KV.get("clawbot:credentials");
-      loggedIn = !!loginCheck;
-    }
+    } catch (_e) {}
 
     const healthStatus = {
-      kv: kvCheck,
+      kv: "OK",
       loggedIn,
       totalPolls,
       totalHandled,

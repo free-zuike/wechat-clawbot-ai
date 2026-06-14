@@ -620,11 +620,11 @@ export class ILinkConnectionDO implements DurableObject {
     let aiApiKey = "";
     let aiMaxTokens = 1024;
 
-    // 从 KV 读配置
-    const configRaw = await this.kv?.get("clawbot:config");
+    // 从 DO storage 读配置
     try {
-      if (configRaw) {
-        const kvConfig = JSON.parse(configRaw);
+      const stored = await this.state.storage.get<string>("app_config");
+      if (stored) {
+        const kvConfig = JSON.parse(stored);
         aiSystemPrompt = aiSystemPrompt || kvConfig.aiSystemPrompt || "";
         aiModel = aiModel || kvConfig.aiModel || "";
         aiProvider = kvConfig.aiProvider || "cloudflare";
@@ -632,7 +632,7 @@ export class ILinkConnectionDO implements DurableObject {
         aiApiKey = kvConfig.aiApiKey || "";
         aiMaxTokens = kvConfig.aiMaxTokens || 1024;
       }
-    } catch {}
+    } catch (_e) {}
 
     const cfg = { aiSystemPrompt, aiModel, aiProvider, aiBaseUrl, aiApiKey, aiMaxTokens };
     this.cache.config = cfg;
@@ -837,44 +837,12 @@ export class ILinkConnectionDO implements DurableObject {
           return;
         }
       }
-    } catch {}
+    } catch (_e) {}
 
-    // 4) 兜底：从 KV 读取（兼容旧数据）
-    const credsRaw = await this.kv?.get("clawbot:credentials");
-    if (!credsRaw) {
-      this.ilinkCreds = null;
-      this.cache.credentials = null;
-      this.cache.credentialsLoadedAt = now;
-      return;
-    }
-
-    try {
-      const creds = JSON.parse(credsRaw);
-      this.cache.credentials = {
-        botToken: creds.botToken,
-        accountId: creds.accountId,
-        baseUrl: creds.baseUrl || "https://ilinkai.weixin.qq.com",
-        userId: creds.userId,
-        syncBuf: creds.syncBuf || "",
-      };
-      this.cache.credentialsLoadedAt = now;
-      this.ilinkCreds = {
-        botToken: creds.botToken,
-        accountId: creds.accountId,
-        baseUrl: creds.baseUrl || "https://ilinkai.weixin.qq.com",
-        userId: creds.userId,
-      };
-      this.state.syncBuf = creds.syncBuf || "";
-
-      // 同步到 SQLite（下次就从 SQLite 读了）
-      await this.saveCredentialsToSQLite();
-    } catch (e) {
-      Logger.error("[DO] Invalid credentials", { error: (e as Error).message });
-      this.ilinkCreds = null;
-      this.cache.credentials = null;
-      this.cache.credentialsLoadedAt = now;
-    }
-    // D1 初始化已移到 fetch() 开头独立调用（initD1()），这里不再重复
+    // 无凭证可用
+    this.ilinkCreds = null;
+    this.cache.credentials = null;
+    this.cache.credentialsLoadedAt = now;
   }
 
   // 保存 credentials 到 DO SQLite（替代 KV 写）

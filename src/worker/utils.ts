@@ -2,22 +2,12 @@
 export function json(data: any, status = 200, headers: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(data, null, 2), {
     status,
-    headers: {
-      "Content-Type": "application/json; charset=utf-8",
-      "Cache-Control": "no-store",
-      ...headers,
-    },
+    headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", ...headers },
   });
 }
 
 export function html(body: string, status = 200): Response {
-  return new Response(body, {
-    status,
-    headers: {
-      "Content-Type": "text/html; charset=utf-8",
-      "Cache-Control": "no-store",
-    },
-  });
+  return new Response(body, { status, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
 }
 
 export function generateSessionToken(): string {
@@ -32,9 +22,8 @@ export function clearSessionCookie(): string {
   return "clawbot_session=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0";
 }
 
-// 验证管理员：DO凭证 → KV遗留 → 管理员密码
+// 验证管理员：DO凭证 → 管理员密码
 export async function verifyAdmin(request: Request, env: any): Promise<{ ok: boolean; error?: string }> {
-  // 1. 查 DO 凭证（主存储）
   if (env.ILINK_CONNECTION) {
     try {
       const doId = env.ILINK_CONNECTION.idFromName("main");
@@ -45,15 +34,6 @@ export async function verifyAdmin(request: Request, env: any): Promise<{ ok: boo
     } catch (_e) {}
   }
 
-  // 2. 兜底查 KV（遗留数据）
-  if (env.CLAWBOT_KV) {
-    try {
-      const credsRaw = await env.CLAWBOT_KV.get("clawbot:credentials");
-      if (credsRaw) return { ok: true };
-    } catch (_e) {}
-  }
-
-  // 3. 管理员密码
   if (!env.ADMIN_PASSWORD || env.ADMIN_PASSWORD.length < 3) {
     return { ok: false, error: "请先配置 ADMIN_PASSWORD" };
   }
@@ -66,8 +46,7 @@ export async function verifyAdmin(request: Request, env: any): Promise<{ ok: boo
     try {
       const decoded = atob(m[1]);
       const colon = decoded.indexOf(":");
-      const pass = colon >= 0 ? decoded.slice(colon + 1) : decoded;
-      headerOk = pass === env.ADMIN_PASSWORD;
+      headerOk = (colon >= 0 ? decoded.slice(colon + 1) : decoded) === env.ADMIN_PASSWORD;
     } catch (_e) {}
   }
   if (queryPwd === env.ADMIN_PASSWORD || headerOk) return { ok: true };
@@ -75,6 +54,5 @@ export async function verifyAdmin(request: Request, env: any): Promise<{ ok: boo
 }
 
 export function extractPassword(request: Request): string {
-  const url = new URL(request.url);
-  return url.searchParams.get("pwd") || "";
+  return new URL(request.url).searchParams.get("pwd") || "";
 }

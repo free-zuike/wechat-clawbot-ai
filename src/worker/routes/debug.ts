@@ -3,89 +3,52 @@ import { Logger } from "../utils/error";
 import { getUpdates } from "../services/ilink";
 import type { Env } from "../index";
 
-// 诊断登录状态
 export async function handleDebugLogin(request: Request, env: Env): Promise<Response> {
   const v = await verifyAdmin(request, env);
   if (!v.ok) return json({ error: v.error }, 401);
 
-  Logger.info('[debug-login] diagnostic request');
+  Logger.info("[debug-login] diagnostic request");
 
-  // 先查KV，再查DO storage
-  let credsRaw = await env.CLAWBOT_KV.get("clawbot:credentials");
-  if (!credsRaw && env.ILINK_CONNECTION) {
-    try {
-      const doId = env.ILINK_CONNECTION.idFromName("main");
-      const doStub = env.ILINK_CONNECTION.get(doId);
-      const resp = await doStub.fetch(new Request("http://localhost/status"));
-      const data = await resp.json() as any;
-      if (data.creds) {
-        credsRaw = data.creds;
-      }
-    } catch {}
-  }
+  // 从 DO 读凭证
+  let credsRaw: string | null = null;
+  try {
+    const doId = env.ILINK_CONNECTION.idFromName("main");
+    const doStub = env.ILINK_CONNECTION.get(doId);
+    const resp = await doStub.fetch(new Request("http://localhost/status"));
+    const data = await resp.json() as any;
+    if (data.creds) credsRaw = data.creds;
+    else if (data.hasCredentials) return json({ ok: true, message: "DO有凭证但无法导出详细信息" });
+  } catch (_e) {}
   if (!credsRaw) return json({ ok: false, error: "未登录，没有凭证" });
 
   let creds: any;
   try { creds = JSON.parse(credsRaw); } catch (e) { return json({ ok: false, error: "凭证格式错误: " + e }); }
 
-  const savedInfo = {
-    botTokenPrefix: creds.botToken ? creds.botToken.slice(0, 20) + "..." : null,
-    botTokenLen: creds.botToken?.length || 0,
-    baseUrl: creds.baseUrl,
-    accountId: creds.accountId,
-    userId: creds.userId,
-    syncBuf: creds.syncBuf ? (creds.syncBuf.slice(0, 40) + "...") : "(empty)",
-    loginAgeMs: creds.createdAt ? Date.now() - creds.createdAt : null,
-    rawResponseKeys: creds.rawLoginResponse ? Object.keys(creds.rawLoginResponse) : null,
-  };
-
   if (!creds.botToken || !creds.accountId) {
-    return json({ ok: false, error: "凭证缺少 botToken 或 accountId", savedInfo });
+    return json({ ok: false, error: "凭证缺少 botToken 或 accountId" });
   }
 
-  const ilinkCreds = {
-    botToken: creds.botToken,
-    accountId: creds.accountId,
-    baseUrl: creds.baseUrl || "https://ilinkai.weixin.qq.com",
-    userId: creds.userId,
-  };
+  const ilinkCreds = { botToken: creds.botToken, accountId: creds.accountId, baseUrl: creds.baseUrl || "https://ilinkai.weixin.qq.com", userId: creds.userId };
 
-  // 1. 网络连通性测试（快速 GET）
   let networkOk = false;
   try {
     const ctrl = new AbortController();
     setTimeout(() => ctrl.abort(), 5000);
     const r = await fetch(ilinkCreds.baseUrl, { signal: ctrl.signal });
     networkOk = r.status < 500;
-  } catch {}
+  } catch (_e) {}
 
-  // 2. 调用 getupdates（使用新协议实现）
   let getUpdatesResult: any = { error: "未执行" };
   try {
     const updates = await getUpdates(ilinkCreds, creds.syncBuf || "");
     getUpdatesResult = {
-      ret: updates.ret,
-      errcode: updates.errcode,
-      errmsg: updates.errmsg,
-      msgsCount: updates.msgs?.length || 0,
-      gotNewBuf: !!updates.get_updates_buf,
+      ret: updates.ret, errcode: updates.errcode, errmsg: updates.errmsg,
+      msgsCount: updates.msgs?.length || 0, gotNewBuf: !!updates.get_updates_buf,
       success: updates.ret === 0 || updates.errcode === 0 || updates.ret === undefined,
     };
   } catch (e: any) {
     getUpdatesResult = { error: e.message };
   }
 
-  Logger.info('[debug-login] diagnostic result', {
-    networkOk,
-    getUpdatesSuccess: getUpdatesResult.success || false,
-    msgsCount: getUpdatesResult.msgsCount || 0,
-  });
-
-  return json({
-    ok: getUpdatesResult.success || false,
-    savedInfo,
-    networkTest: networkOk,
-    getUpdatesResult,
-    serverTime: new Date().toISOString(),
-  });
+  return json({ ok: getUpdatesResult.success || false, networkTest: networkOk, getUpdatesResult, serverTime: new Date().toISOString() });
 }

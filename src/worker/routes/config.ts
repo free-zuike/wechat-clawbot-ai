@@ -19,7 +19,6 @@ export async function handleConfig(request: Request, env: Env): Promise<Response
     const result = await configCache.getOrLoad(CACHE_KEY, async () => {
       let kvConfig: Record<string, any> = {};
 
-      // 从 DO storage 读配置
       if (env.ILINK_CONNECTION) {
         try {
           const doId = env.ILINK_CONNECTION.idFromName("main");
@@ -27,15 +26,7 @@ export async function handleConfig(request: Request, env: Env): Promise<Response
           const resp = await doStub.fetch(new Request("http://localhost/get-config"), { signal: AbortSignal.timeout(3000) });
           const data = await resp.json() as any;
           if (data.config) kvConfig = data.config;
-        } catch {}
-      }
-
-      // 兜底：从 KV 读（兼容旧数据）
-      if (!kvConfig.aiProvider) {
-        const configRaw = await env.CLAWBOT_KV.get(KV_CONFIG_KEY);
-        try {
-          if (configRaw) kvConfig = JSON.parse(configRaw);
-        } catch {}
+        } catch (_e) {}
       }
 
       return {
@@ -70,12 +61,17 @@ export async function handleConfig(request: Request, env: Env): Promise<Response
         return json({ error: "VALIDATION_ERROR", message: "请求体必须是 JSON 对象" }, 400);
       }
 
-      // 读取当前配置
-      const currentRaw = await env.CLAWBOT_KV.get(KV_CONFIG_KEY);
+      // 读取当前配置（从 DO）
       let current: Record<string, any> = {};
-      try {
-        if (currentRaw) current = JSON.parse(currentRaw);
-      } catch {}
+      if (env.ILINK_CONNECTION) {
+        try {
+          const doId = env.ILINK_CONNECTION.idFromName("main");
+          const doStub = env.ILINK_CONNECTION.get(doId);
+          const resp = await doStub.fetch(new Request("http://localhost/get-config"), { signal: AbortSignal.timeout(3000) });
+          const data = await resp.json() as any;
+          if (data.config) current = data.config;
+        } catch (_e) {}
+      }
 
       // 应用变更（只更新传入的字段）
       const updated: Record<string, any> = { ...current };

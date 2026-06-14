@@ -141,43 +141,19 @@ export async function runHealthChecks(env: Env): Promise<HealthCheckResult> {
   const startTime = Date.now();
   const checks: HealthCheckResult['checks'] = [];
   
-  // KV 检查
-  const kvStart = Date.now();
-  try {
-    await env.CLAWBOT_KV.get('clawbot:credentials');
-    checks.push({
-      name: 'KV Storage',
-      status: 'pass',
-      durationMs: Date.now() - kvStart
-    });
-  } catch (error) {
-    checks.push({
-      name: 'KV Storage',
-      status: 'fail',
-      message: (error as Error).message,
-      durationMs: Date.now() - kvStart
-    });
-  }
-
-  // 凭证检查
+  // DO 凭证检查
   const credsStart = Date.now();
   try {
-    const creds = await env.CLAWBOT_KV.get('clawbot:credentials');
-    if (creds) {
-      checks.push({
-        name: 'Credentials',
-        status: 'pass',
-        message: 'Credentials found',
-        durationMs: Date.now() - credsStart
-      });
-    } else {
-      checks.push({
-        name: 'Credentials',
-        status: 'warn',
-        message: 'No credentials found - not logged in',
-        durationMs: Date.now() - credsStart
-      });
-    }
+    const doId = env.ILINK_CONNECTION.idFromName("main");
+    const doStub = env.ILINK_CONNECTION.get(doId);
+    const resp = await doStub.fetch(new Request("http://localhost/status"), { signal: AbortSignal.timeout(3000) });
+    const data = await resp.json() as any;
+    checks.push({
+      name: 'Credentials',
+      status: data.hasCredentials ? 'pass' : 'warn',
+      message: data.hasCredentials ? 'Credentials found in DO' : 'No credentials - not logged in',
+      durationMs: Date.now() - credsStart
+    });
   } catch (error) {
     checks.push({
       name: 'Credentials',
