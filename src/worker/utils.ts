@@ -37,7 +37,7 @@ export function clearSessionCookie(): string {
 
 // 验证管理员密码或 session
 export async function verifyAdmin(request: Request, env: any): Promise<{ ok: boolean; error?: string }> {
-  // 先检查 session cookie（从 KV 读）
+  // 1. 检查 session cookie（从 KV 读）
   const cookieHeader = request.headers.get("Cookie") || "";
   const sessionMatch = cookieHeader.match(/clawbot_session=([^;]+)/);
   if (sessionMatch) {
@@ -48,8 +48,7 @@ export async function verifyAdmin(request: Request, env: any): Promise<{ ok: boo
     }
   }
 
-  // 检查是否有登录凭证（已通过微信扫码登录）
-  // 优先从 DO SQLite 读（代码已迁移），兜底从 KV 读
+  // 2. 检查 KV 凭证
   if (env.CLAWBOT_KV) {
     const credsRaw = await env.CLAWBOT_KV.get("clawbot:credentials");
     if (credsRaw) {
@@ -57,7 +56,20 @@ export async function verifyAdmin(request: Request, env: any): Promise<{ ok: boo
     }
   }
 
-  // 再检查管理员密码（兼容旧方式和初始登录）
+  // 3. 检查 DO 存储凭证（KV配额耗尽时的兜底）
+  if (env.ILINK_CONNECTION) {
+    try {
+      const doId = env.ILINK_CONNECTION.idFromName("main");
+      const doStub = env.ILINK_CONNECTION.get(doId);
+      const resp = await doStub.fetch(new Request("http://localhost/status"), { signal: AbortSignal.timeout(3000) });
+      const data = await resp.json() as any;
+      if (data.hasCredentials) {
+        return { ok: true };
+      }
+    } catch {}
+  }
+
+  // 4. 检查管理员密码（兼容旧方式和初始登录）
   if (!env.ADMIN_PASSWORD || env.ADMIN_PASSWORD.length < 3) {
     return { ok: false, error: "请先配置 ADMIN_PASSWORD（wrangler secret put ADMIN_PASSWORD）" };
   }
