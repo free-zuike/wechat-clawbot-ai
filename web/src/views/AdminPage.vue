@@ -669,6 +669,7 @@ async function handleLogout() {
   try {
     await logout();
   } catch {}
+  localStorage.removeItem("clawbot_auth");
   router.push("/login");
 }
 

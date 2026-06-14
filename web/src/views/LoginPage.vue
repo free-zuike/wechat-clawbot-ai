@@ -66,6 +66,7 @@ onMounted(async () => {
   try {
     const data = await checkLogin();
     if (data.loggedIn) {
+      localStorage.setItem("clawbot_auth", "ok");
       window.location.replace("/");
     }
   } catch {
@@ -135,6 +136,7 @@ async function pollStatus() {
     if (data.ok || data.status === "confirmed") {
       qrStatus.value = "登录成功！正在跳转...";
       loggedIn.value = true;
+      localStorage.setItem("clawbot_auth", "ok");
       window.location.href = "/";
       return;
     }
