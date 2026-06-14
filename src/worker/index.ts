@@ -26,13 +26,14 @@ export interface Env {
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
-    // 初始化（延迟初始化）
     if (!metrics.getCounters()['init']) {
       metrics.init();
       errorTracker.init();
-      router.init(env);
       metrics.incr('init');
     }
+
+    // 路由始终初始化（确保 routes 数组不为空）
+    router.init();
 
     return router.route(request, env);
   },
