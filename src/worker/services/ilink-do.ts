@@ -162,12 +162,15 @@ export class ILinkConnectionDO implements DurableObject {
       });
     }
 
-    // /status 和 /qr-poll：不检查凭证（qr-poll 在登录前触发）
+    // /status、/qr-poll、/save-creds：不检查凭证（登录前触发）
     if (url.pathname === "/status") {
       return this.handleStatus();
     }
     if (url.pathname === "/qr-poll") {
       return this.handleQRPoll(url);
+    }
+    if (url.pathname === "/save-creds") {
+      return this.handleSaveCreds(request);
     }
 
     // 其它路径：必须已登录
@@ -188,6 +191,10 @@ export class ILinkConnectionDO implements DurableObject {
         return this.handleStatus();
       case "/flush":
         return this.handleFlush();
+      case "/qr-poll":
+        return this.handleQRPoll(url);
+      case "/save-creds":
+        return this.handleSaveCreds(request);
       default:
         return new Response(JSON.stringify({ error: "Unknown endpoint" }), {
           status: 404,
@@ -239,6 +246,64 @@ export class ILinkConnectionDO implements DurableObject {
     }), {
       headers: { "Content-Type": "application/json" },
     });
+  }
+
+  // ========== 保存凭证（登录确认时调用，绕过KV）==========
+
+  private async handleSaveCreds(request: Request): Promise<Response> {
+    try {
+      const body = await request.json();
+      const { botToken, accountId, userId, baseUrl, syncBuf, createdAt } = body;
+      if (!botToken || !accountId) {
+        return new Response(JSON.stringify({ error: "缺少凭证" }), {
+          status: 400,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      await this.initSQLite();
+
+      const now = Date.now();
+      await this.state.storage.sql.exec(
+        `INSERT INTO credentials (id, bot_token, account_id, base_url, user_id, sync_buf, created_at, updated_at)
+         VALUES (1, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           bot_token = excluded.bot_token,
+           account_id = excluded.account_id,
+           base_url = excluded.base_url,
+           user_id = excluded.user_id,
+           sync_buf = excluded.sync_buf,
+           updated_at = excluded.updated_at`,
+        [botToken, accountId, baseUrl || "https://ilinkai.weixin.qq.com", userId || "", syncBuf || "", createdAt || now, now]
+      );
+
+      // 同步到内存
+      this.ilinkCreds = { botToken, accountId, baseUrl: baseUrl || "https://ilinkai.weixin.qq.com", userId: userId || "" };
+      this.cache.credentials = { ...body };
+
+      // 生成 session token 并保存到 SQLite
+      const sessionToken = generateSessionToken();
+      try {
+        await this.state.storage.sql.exec(
+          `CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, created_at INTEGER NOT NULL)`
+        );
+        await this.state.storage.sql.exec(
+          `INSERT INTO sessions (token, created_at) VALUES (?, ?)`,
+          [sessionToken, now]
+        );
+      } catch (_) {}
+
+      Logger.info("[DO] Credentials saved via /save-creds", { accountId });
+      return new Response(JSON.stringify({ ok: true, sessionToken }), {
+        headers: { "Content-Type": "application/json" },
+      });
+    } catch (e: any) {
+      Logger.error("[DO] /save-creds error", { error: e.message });
+      return new Response(JSON.stringify({ error: e.message }), {
+        status: 500,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
   }
 
   // ========== QR码状态轮询 ==========

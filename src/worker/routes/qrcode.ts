@@ -67,23 +67,35 @@ export async function handleQRCodeStatus(request: Request, env: Env): Promise<Re
         Logger.warn("[qrcode-status] KV put credentials failed", { error: e.message });
       }
 
-      // 同时保存凭证到 DO（备份，不依赖KV）
+      // 保存凭证到 DO SQLite（不依赖KV，核心存储）
+      let sessionToken = "";
+      try {
+        const doId = env.ILINK_CONNECTION.idFromName("main");
+        const doStub = env.ILINK_CONNECTION.get(doId);
+        const resp = await doStub.fetch(new Request("http://localhost/save-creds", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(creds),
+        }));
+        const result = await resp.json() as any;
+        sessionToken = result.sessionToken || "";
+        Logger.info("[qrcode-status] DO credentials saved", { accountId: status.ilink_bot_id });
+      } catch (e: any) {
+        Logger.warn("[qrcode-status] DO save-creds failed", { error: e.message });
+      }
+
+      // 同时触发 DO 启动轮询
       try {
         const doId = env.ILINK_CONNECTION.idFromName("main");
         const doStub = env.ILINK_CONNECTION.get(doId);
         await doStub.fetch(new Request("http://localhost/poll"));
-        Logger.info("[qrcode-status] DO triggered successfully");
-      } catch (e: any) {
-        Logger.warn("[qrcode-status] DO trigger failed", { error: e.message });
-      }
+      } catch (_) {}
 
-      // 生成 session cookie 并存到 KV（失败不阻塞）
-      const sessionToken = generateSessionToken();
+      // 存session到KV（失败不阻塞）
+      if (!sessionToken) sessionToken = generateSessionToken();
       try {
         await env.CLAWBOT_KV.put(`clawbot:session:${sessionToken}`, "valid", { expirationTtl: 24 * 60 * 60 });
-      } catch (e: any) {
-        Logger.warn("[qrcode-status] KV put session failed", { error: e.message });
-      }
+      } catch (_) {}
 
       // 清理 qrcode_key（失败忽略）
       await env.CLAWBOT_KV.delete("clawbot:qrcode_key").catch(() => {});

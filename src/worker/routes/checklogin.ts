@@ -13,34 +13,7 @@ export async function handleCheckLogin(request: Request, env: Env): Promise<Resp
     let loginAgeText: string | undefined;
     let hasSession = false;
 
-    // 检查凭证（从 KV 读）
-    const credsRaw = await env.CLAWBOT_KV.get("clawbot:credentials");
-    if (credsRaw) {
-      loggedIn = true;
-      try {
-        const creds = JSON.parse(credsRaw);
-        accountId = creds.accountId;
-        if (creds.createdAt) {
-          const age = Date.now() - creds.createdAt;
-          const mins = Math.floor(age / 60000);
-          if (mins < 60) {
-            loginAgeText = `已登录 ${mins} 分钟`;
-          } else {
-            const hours = Math.floor(mins / 60);
-            loginAgeText = `已登录 ${hours} 小时`;
-          }
-        }
-        if (creds.createdAt) {
-          const age = Date.now() - creds.createdAt;
-          const hours = age / 3600000;
-          tokenHealth = hours < 6 ? "valid" : hours < 12 ? "expiring" : "expired";
-        }
-      } catch {
-        // ignore
-      }
-    }
-
-    // 检查 session cookie（从 KV 读）
+    // 1. 检查 session cookie（优先）
     const cookieHeader = request.headers.get("Cookie") || "";
     const sessionMatch = cookieHeader.match(/clawbot_session=([^;]+)/);
     if (sessionMatch) {
@@ -52,6 +25,40 @@ export async function handleCheckLogin(request: Request, env: Env): Promise<Resp
       }
     }
 
+    // 2. 检查 KV 凭证
+    const credsRaw = await env.CLAWBOT_KV.get("clawbot:credentials");
+    if (credsRaw) {
+      loggedIn = true;
+      try {
+        const creds = JSON.parse(credsRaw);
+        accountId = creds.accountId;
+        if (creds.createdAt) {
+          const age = Date.now() - creds.createdAt;
+          const mins = Math.floor(age / 60000);
+          loginAgeText = mins < 60 ? `已登录 ${mins} 分钟` : `已登录 ${Math.floor(mins / 60)} 小时`;
+        }
+        if (creds.createdAt) {
+          const hours = (Date.now() - creds.createdAt) / 3600000;
+          tokenHealth = hours < 6 ? "valid" : hours < 12 ? "expiring" : "expired";
+        }
+      } catch {}
+    }
+
+    // 3. KV 无凭证时，检查 DO SQLite（兜底）
+    if (!loggedIn) {
+      try {
+        const doId = env.ILINK_CONNECTION.idFromName("main");
+        const doStub = env.ILINK_CONNECTION.get(doId);
+        const resp = await doStub.fetch(new Request("http://localhost/status"));
+        const data = await resp.json() as any;
+        if (data.hasCredentials) {
+          loggedIn = true;
+          tokenHealth = "valid";
+          accountId = data.accountId;
+        }
+      } catch {}
+    }
+
     Logger.info("[check-login] status", { loggedIn, hasAccountId: !!accountId, tokenHealth, hasSession });
 
     return json({
@@ -59,7 +66,7 @@ export async function handleCheckLogin(request: Request, env: Env): Promise<Resp
       accountId,
       tokenHealth,
       loginAgeText,
-      hasCredentials: !!credsRaw,
+      hasCredentials: loggedIn,
       hasSession,
     });
   } catch (e: any) {
