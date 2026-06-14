@@ -144,6 +144,8 @@ export async function handleConfig(request: Request, env: Env): Promise<Response
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(updated),
           }));
+          // 尝试删除 KV 旧数据，避免 GET 读到旧配置
+          try { await env.CLAWBOT_KV.delete(KV_CONFIG_KEY); } catch {}
         } catch (e: any) {
           Logger.error("[config] DO save also failed", { error: e.message });
           return json({ error: "KV 和 DO 保存均失败: " + e.message }, 500);
