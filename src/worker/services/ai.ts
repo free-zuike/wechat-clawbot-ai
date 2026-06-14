@@ -115,7 +115,7 @@ export async function callAIWithContext(
     reply = typeof response === "string" ? response : response?.response || "";
   } catch (e: any) {
     Logger.error(`[ai] AI call failed for ${userId}`, { error: e?.message || String(e) });
-    return "抱歉，我刚刚脑子卡了一下 😅 能换个说法再问一遍吗？";
+    return `AI调用失败: ${e?.message || String(e)}`;
   }
 
   // —— 保存上下文 ——
