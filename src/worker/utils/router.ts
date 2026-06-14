@@ -53,7 +53,8 @@ export class Router {
 
   async route(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
-    const { pathname: path, method } = url;
+    const path = url.pathname;
+    const method = request.method;
 
     if (path === "/healthz") {
       const health = await runHealthChecks(env);
