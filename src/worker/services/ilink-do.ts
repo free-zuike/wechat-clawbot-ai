@@ -4,7 +4,7 @@
 
 import { Logger } from "../utils/error";
 import { generateSessionToken } from "../utils";
-import { getUpdates, sendTextMessage, extractMessageText, MessageType } from "./ilink";
+import { getUpdates, sendTextMessage, extractMessageText, getQRCodeStatus, MessageType } from "./ilink";
 import { callAIWithContext } from "./ai";
 import { D1Service } from "./d1";
 import type { ILinkCredentials, WeixinMessage } from "../types";
@@ -162,9 +162,12 @@ export class ILinkConnectionDO implements DurableObject {
       });
     }
 
-    // /status：不检查凭证，允许返回 needsReLogin 状态（供管理面板判断）
+    // /status 和 /qr-poll：不检查凭证（qr-poll 在登录前触发）
     if (url.pathname === "/status") {
       return this.handleStatus();
+    }
+    if (url.pathname === "/qr-poll") {
+      return this.handleQRPoll(url);
     }
 
     // 其它路径：必须已登录
@@ -185,8 +188,6 @@ export class ILinkConnectionDO implements DurableObject {
         return this.handleStatus();
       case "/flush":
         return this.handleFlush();
-      case "/qr-poll":
-        return this.handleQRPoll(url);
       default:
         return new Response(JSON.stringify({ error: "Unknown endpoint" }), {
           status: 404,
@@ -256,7 +257,6 @@ export class ILinkConnectionDO implements DurableObject {
     // 轮询 iLink API（最多30次，每次间隔3秒 = 90秒）
     for (let i = 0; i < 30; i++) {
       try {
-        const { getQRCodeStatus } = await import("./ilink");
         const status = await getQRCodeStatus(qrcodeKey);
         Logger.info("[DO] QR poll check", { status: status.status, attempt: i + 1 });
 
