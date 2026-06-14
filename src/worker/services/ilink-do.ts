@@ -3,6 +3,7 @@
 // 优化：credentials 和 context 从 KV 迁移到 DO SQLite，彻底消除 KV 读写
 
 import { Logger } from "../utils/error";
+import { generateSessionToken } from "../utils";
 import { getUpdates, sendTextMessage, extractMessageText, MessageType } from "./ilink";
 import { callAIWithContext } from "./ai";
 import { D1Service } from "./d1";
@@ -184,6 +185,8 @@ export class ILinkConnectionDO implements DurableObject {
         return this.handleStatus();
       case "/flush":
         return this.handleFlush();
+      case "/qr-poll":
+        return this.handleQRPoll(url);
       default:
         return new Response(JSON.stringify({ error: "Unknown endpoint" }), {
           status: 404,
@@ -233,6 +236,72 @@ export class ILinkConnectionDO implements DurableObject {
       message: null,
       queueLength: this.state.pendingMessages.length,
     }), {
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  // ========== QR码状态轮询 ==========
+
+  private async handleQRPoll(url: URL): Promise<Response> {
+    const qrcodeKey = url.searchParams.get("qrcode");
+    if (!qrcodeKey) {
+      return new Response(JSON.stringify({ error: "缺少 qrcode 参数" }), {
+        status: 400,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    Logger.info("[DO] QR poll started", { qrcode: qrcodeKey.slice(0, 8) + "..." });
+
+    // 轮询 iLink API（最多30次，每次间隔3秒 = 90秒）
+    for (let i = 0; i < 30; i++) {
+      try {
+        const { getQRCodeStatus } = await import("./ilink");
+        const status = await getQRCodeStatus(qrcodeKey);
+        Logger.info("[DO] QR poll check", { status: status.status, attempt: i + 1 });
+
+        if (status.status === "confirmed" && status.bot_token && status.ilink_bot_id) {
+          // 保存凭证到 KV
+          const creds = {
+            botToken: status.bot_token,
+            accountId: status.ilink_bot_id,
+            userId: status.ilink_user_id,
+            baseUrl: status.baseurl || "https://ilinkai.weixin.qq.com",
+            syncBuf: "",
+            rawLoginResponse: status.raw,
+            createdAt: Date.now(),
+          };
+          await this.kv!.put("clawbot:credentials", JSON.stringify(creds));
+
+          // session cookie
+          const sessionToken = generateSessionToken();
+          await this.kv!.put(`clawbot:session:${sessionToken}`, "valid", { expirationTtl: 24 * 60 * 60 });
+
+          // 删除 qrcode_key
+          await this.kv!.delete("clawbot:qrcode_key");
+
+          Logger.info("[DO] QR login confirmed", { accountId: status.ilink_bot_id });
+          return new Response(JSON.stringify({ status: "confirmed", ok: true }), {
+            headers: { "Content-Type": "application/json" },
+            "Set-Cookie": `clawbot_session=${sessionToken}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${24 * 60 * 60}`,
+          });
+        }
+
+        if (status.status === "expired") {
+          return new Response(JSON.stringify({ status: "expired" }), {
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+
+        // 等待3秒再轮询
+        await new Promise((r) => setTimeout(r, 3000));
+      } catch (e: any) {
+        Logger.error("[DO] QR poll error", { error: e.message });
+        await new Promise((r) => setTimeout(r, 3000));
+      }
+    }
+
+    return new Response(JSON.stringify({ status: "timeout" }), {
       headers: { "Content-Type": "application/json" },
     });
   }
