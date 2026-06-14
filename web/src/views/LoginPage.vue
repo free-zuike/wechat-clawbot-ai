@@ -67,7 +67,7 @@ onMounted(async () => {
     const data = await checkLogin();
     if (data.loggedIn) {
       localStorage.setItem("clawbot_auth", "ok");
-      window.location.replace("/");
+      router.push("/");
     }
   } catch {
     // 忽略错误，继续显示登录页面
@@ -126,7 +126,8 @@ async function pollStatus() {
     const loginCheck = await checkLogin();
     if (loginCheck.loggedIn) {
       loggedIn.value = true;
-      window.location.href = "/";
+      localStorage.setItem("clawbot_auth", "ok");
+      router.push("/");
       return;
     }
 
@@ -137,7 +138,7 @@ async function pollStatus() {
       qrStatus.value = "登录成功！正在跳转...";
       loggedIn.value = true;
       localStorage.setItem("clawbot_auth", "ok");
-      window.location.href = "/";
+      router.push("/");
       return;
     }
     if (data.status === "scaned") {
@@ -156,7 +157,8 @@ async function pollStatus() {
       const loginCheck = await checkLogin();
       if (loginCheck.loggedIn) {
         loggedIn.value = true;
-        window.location.href = "/";
+        localStorage.setItem("clawbot_auth", "ok");
+        router.push("/");
         return;
       }
     } catch {}
