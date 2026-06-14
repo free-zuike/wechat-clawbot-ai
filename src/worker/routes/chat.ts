@@ -24,19 +24,11 @@ export async function handleChat(request: Request, env: Env): Promise<Response> 
     }
     const rawMessage = body?.message;
 
-    // 验证消息
-    if (typeof rawMessage !== "string") {
-      return json({ error: "VALIDATION_ERROR", message: `message 必须是字符串，收到: ${typeof rawMessage} (${JSON.stringify(rawMessage)})`, body_keys: Object.keys(body || {}) }, 400);
+    if (!rawMessage || typeof rawMessage !== "string" || !rawMessage.trim()) {
+      return json({ error: "VALIDATION_ERROR", message: "请输入消息内容" }, 400);
     }
 
     const trimmed = rawMessage.trim();
-    const validation = validateChatMessage(trimmed);
-    if (!validation.valid) {
-      return json(
-        { error: "VALIDATION_ERROR", message: "消息无效", errors: validation.errors },
-        400
-      );
-    }
 
     Logger.info(`[chat][${requestId}] message received`, {
       length: trimmed.length,
