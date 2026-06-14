@@ -1,4 +1,4 @@
-// 检查登录状态 - 前端通过此接口判断是否已扫码登录
+// 检查登录状态
 
 import { json } from "../utils";
 import { Logger } from "../utils/error";
@@ -11,7 +11,6 @@ export async function handleCheckLogin(request: Request, env: Env): Promise<Resp
     let tokenHealth: string = "unknown";
     let loginAgeText: string | undefined;
 
-    // 1. KV 凭证检查
     const credsRaw = await env.CLAWBOT_KV.get("clawbot:credentials");
     if (credsRaw) {
       loggedIn = true;
@@ -20,27 +19,11 @@ export async function handleCheckLogin(request: Request, env: Env): Promise<Resp
         accountId = creds.accountId;
         if (creds.createdAt) {
           const hours = (Date.now() - creds.createdAt) / 3600000;
-          const mins = Math.floor((Date.now() - creds.createdAt) / 60000);
+          const mins = Math.floor(hours * 60);
           loginAgeText = mins < 60 ? `已登录 ${mins} 分钟` : `已登录 ${Math.floor(hours)} 小时`;
           tokenHealth = hours < 6 ? "valid" : hours < 12 ? "expiring" : "expired";
         }
       } catch {}
-    }
-
-    // 2. DO 凭证检查（KV 无凭证时的兜底，也用于 KV 配额耗尽的场景）
-    if (!loggedIn) {
-      try {
-        const doId = env.ILINK_CONNECTION.idFromName("main");
-        const doStub = env.ILINK_CONNECTION.get(doId);
-        const resp = await doStub.fetch(new Request("http://localhost/status"));
-        const data = await resp.json() as any;
-        if (data.hasCredentials) {
-          loggedIn = true;
-          tokenHealth = "valid";
-        }
-      } catch (e: any) {
-        Logger.warn("[check-login] DO status check failed", { error: e.message });
-      }
     }
 
     Logger.info("[check-login] result", { loggedIn });
