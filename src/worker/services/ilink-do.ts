@@ -291,37 +291,20 @@ export class ILinkConnectionDO implements DurableObject {
         });
       }
 
-      await this.initSQLite();
+      // 直接存到 DO KV storage（最可靠，不依赖外部 KV 配额）
+      await this.state.storage.put("credentials", JSON.stringify({
+        botToken, accountId, userId: userId || "",
+        baseUrl: baseUrl || "https://ilinkai.weixin.qq.com",
+        syncBuf: syncBuf || "", createdAt: createdAt || Date.now(),
+      }));
 
-      const now = Date.now();
-      await this.state.storage.sql.exec(
-        `INSERT INTO credentials (id, bot_token, account_id, base_url, user_id, sync_buf, created_at, updated_at)
-         VALUES (1, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(id) DO UPDATE SET
-           bot_token = excluded.bot_token,
-           account_id = excluded.account_id,
-           base_url = excluded.base_url,
-           user_id = excluded.user_id,
-           sync_buf = excluded.sync_buf,
-           updated_at = excluded.updated_at`,
-        [botToken, accountId, baseUrl || "https://ilinkai.weixin.qq.com", userId || "", syncBuf || "", createdAt || now, now]
-      );
+      // 同时存 session token（用独立 key 避免和 DO state 冲突）
+      const sessionToken = generateSessionToken();
+      await this.state.storage.put("login_session", sessionToken);
 
       // 同步到内存
       this.ilinkCreds = { botToken, accountId, baseUrl: baseUrl || "https://ilinkai.weixin.qq.com", userId: userId || "" };
       this.cache.credentials = { ...body };
-
-      // 生成 session token 并保存到 SQLite
-      const sessionToken = generateSessionToken();
-      try {
-        await this.state.storage.sql.exec(
-          `CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, created_at INTEGER NOT NULL)`
-        );
-        await this.state.storage.sql.exec(
-          `INSERT INTO sessions (token, created_at) VALUES (?, ?)`,
-          [sessionToken, now]
-        );
-      } catch (_) {}
 
       Logger.info("[DO] Credentials saved via /save-creds", { accountId });
       return new Response(JSON.stringify({ ok: true, sessionToken }), {
@@ -439,6 +422,17 @@ export class ILinkConnectionDO implements DurableObject {
   // ========== 查询状态 ==========
 
   private async handleStatus(): Promise<Response> {
+    // 如果内存中没有凭证，尝试从 DO storage 恢复
+    if (!this.ilinkCreds) {
+      try {
+        const stored = await this.state.storage.get<string>("credentials");
+        if (stored) {
+          const creds = JSON.parse(stored);
+          this.ilinkCreds = { botToken: creds.botToken, accountId: creds.accountId, baseUrl: creds.baseUrl, userId: creds.userId };
+        }
+      } catch {}
+    }
+
     return new Response(JSON.stringify({
       success: true,
       isRunning: this.pollLoopRunning,
@@ -447,7 +441,7 @@ export class ILinkConnectionDO implements DurableObject {
       consecutiveErrors: this.state.consecutiveErrors,
       pendingMessages: this.state.pendingMessages.length,
       hasCredentials: !!this.ilinkCreds,
-      needsReLogin: !this.ilinkCreds,  // true = 需要重新扫码
+      needsReLogin: !this.ilinkCreds,
     }), {
       headers: { "Content-Type": "application/json" },
     });
