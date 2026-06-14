@@ -1,4 +1,4 @@
-// 诊断路由
+// 诊断路由 — 只查 DO
 
 import { json, verifyAdmin } from "../utils";
 import { Logger } from "../utils/error";
@@ -21,17 +21,21 @@ export async function handleDebugLogin(request: Request, env: Env): Promise<Resp
 
   let credsRaw: string | null = null;
   try {
-    credsRaw = await env.CLAWBOT_KV.get("clawbot:credentials");
+    const doId = env.ILINK_CONNECTION.idFromName("main");
+    const doStub = env.ILINK_CONNECTION.get(doId);
+    const resp = await doStub.fetch(new Request("http://localhost/status"));
+    const data = await resp.json() as any;
+    if (data.creds) credsRaw = data.creds;
+    else if (data.hasCredentials) return json({ ok: true, message: "DO有凭证但无法导出详细信息", serverTime: new Date().toISOString() } satisfies DebugResult);
   } catch (e) {
-    Logger.warn("[debug] KV read failed", { error: (e as Error).message });
+    Logger.warn("[debug] DO status check failed", { error: (e as Error).message });
   }
-
   if (!credsRaw) return json({ ok: false, error: "未登录，没有凭证", serverTime: new Date().toISOString() } satisfies DebugResult);
 
   let creds: Record<string, unknown>;
   try {
     creds = JSON.parse(credsRaw);
-  } catch (e) {
+  } catch {
     return json({ ok: false, error: "凭证格式错误", serverTime: new Date().toISOString() } satisfies DebugResult);
   }
 

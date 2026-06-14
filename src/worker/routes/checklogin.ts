@@ -1,4 +1,4 @@
-// 检查登录状态
+// 检查登录状态 — 只查 DO
 
 import { json } from "../utils";
 import { Logger } from "../utils/error";
@@ -16,17 +16,16 @@ export async function handleCheckLogin(request: Request, env: Env): Promise<Resp
   let tokenHealth = "unknown";
 
   try {
-    const credsRaw = await env.CLAWBOT_KV.get("clawbot:credentials");
-    if (credsRaw) {
+    const doId = env.ILINK_CONNECTION.idFromName("main");
+    const doStub = env.ILINK_CONNECTION.get(doId);
+    const resp = await doStub.fetch(new Request("http://localhost/status"), { signal: AbortSignal.timeout(3000) });
+    const data = await resp.json() as any;
+    if (data.hasCredentials) {
       loggedIn = true;
-      const creds = JSON.parse(credsRaw);
-      if (creds.createdAt) {
-        const hours = (Date.now() - creds.createdAt) / 3600000;
-        tokenHealth = hours < 6 ? "valid" : hours < 12 ? "expiring" : "expired";
-      }
+      tokenHealth = "valid";
     }
   } catch (e) {
-    Logger.warn("[check-login] KV read failed", { error: (e as Error).message });
+    Logger.warn("[check-login] DO status check failed", { error: (e as Error).message });
   }
 
   Logger.info("[check-login] result", { loggedIn });
