@@ -98,7 +98,10 @@ export async function fetchQRCode(baseUrl = DEFAULT_BASE): Promise<{ qrcode: str
   const url = `${base}ilink/bot/get_bot_qrcode?bot_type=3`;
   
   Logger.debug(`[iLink] Fetching QR code`, { url });
-  const r = await fetch(url);
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 15000);
+  const r = await fetch(url, { signal: ctrl.signal });
+  clearTimeout(timer);
   
   if (!r.ok) {
     Logger.error(`[iLink] Failed to fetch QR code`, { status: r.status });
