@@ -23,37 +23,33 @@ type Handler = (request: Request, env: Env) => Promise<Response>;
 interface Route { path: string; method?: string; handler: Handler; rateLimit?: boolean; rateLimitMax?: number }
 
 export class Router {
-  private routes: Route[] = [];
-
-  init(): void {
-    this.routes = [
-      { path: "/api/check-login", method: "GET", handler: handleCheckLogin, rateLimit: true, rateLimitMax: 120 },
-      { path: "/api/qrcode", method: "GET", handler: handleQRCode, rateLimit: true, rateLimitMax: 20 },
-      { path: "/api/qrcode-status", method: "GET", handler: handleQRCodeStatus, rateLimit: true, rateLimitMax: 60 },
-      { path: "/api/status", handler: handleStatus, rateLimit: true, rateLimitMax: 30 },
-      { path: "/api/chat", method: "POST", handler: handleChat, rateLimit: true, rateLimitMax: 15 },
-      { path: "/api/trigger-poll", method: "POST", handler: handleTriggerPoll, rateLimit: true, rateLimitMax: 5 },
-      { path: "/api/logout", method: "POST", handler: handleLogout },
-      { path: "/api/config", handler: handleConfig, rateLimit: true, rateLimitMax: 10 },
-      { path: "/api/debug-login", method: "GET", handler: handleDebugLogin },
-      { path: "/api/admin/messages", method: "GET", handler: handleRecentMessages, rateLimit: true, rateLimitMax: 30 },
-      { path: "/api/admin/sessions", method: "GET", handler: handleSessions, rateLimit: true, rateLimitMax: 30 },
-      { path: "/api/admin/alerts", method: "GET", handler: handleAlerts, rateLimit: true, rateLimitMax: 30 },
-      { path: "/api/admin/alerts/resolve", method: "POST", handler: handleResolveAlert, rateLimit: true, rateLimitMax: 20 },
-      { path: "/api/admin/alerts/resolve-all", method: "POST", handler: handleResolveAllAlerts, rateLimit: true, rateLimitMax: 5 },
-      { path: "/api/admin/stats", method: "GET", handler: handleStats, rateLimit: true, rateLimitMax: 30 },
-      { path: "/api/admin/health", method: "GET", handler: handleHealth, rateLimit: true, rateLimitMax: 60 },
-      { path: "/api/admin/d1/messages", method: "GET", handler: handleD1Messages, rateLimit: true, rateLimitMax: 30 },
-      { path: "/api/admin/d1/sessions", method: "GET", handler: handleD1Sessions, rateLimit: true, rateLimitMax: 30 },
-      { path: "/api/admin/d1/stats", method: "GET", handler: handleD1Stats, rateLimit: true, rateLimitMax: 30 },
-      { path: "/api/admin/d1/summary", method: "GET", handler: handleD1Summary, rateLimit: true, rateLimitMax: 60 },
-      { path: "/api/do/poll", method: "GET", handler: handleDOPoll, rateLimit: true, rateLimitMax: 60 },
-      { path: "/api/do/send", method: "POST", handler: handleDOSend, rateLimit: true, rateLimitMax: 30 },
-      { path: "/api/do/status", method: "GET", handler: handleDOStatus, rateLimit: true, rateLimitMax: 60 },
-      { path: "/api/do/flush", method: "POST", handler: handleDOFlush, rateLimit: true, rateLimitMax: 10 },
-      { path: "/api/ws", handler: handleWebSocket },
-    ];
-  }
+  private routes: Route[] = [
+    { path: "/api/check-login", method: "GET", handler: handleCheckLogin, rateLimit: true, rateLimitMax: 120 },
+    { path: "/api/qrcode", method: "GET", handler: handleQRCode, rateLimit: true, rateLimitMax: 20 },
+    { path: "/api/qrcode-status", method: "GET", handler: handleQRCodeStatus, rateLimit: true, rateLimitMax: 60 },
+    { path: "/api/status", handler: handleStatus, rateLimit: true, rateLimitMax: 30 },
+    { path: "/api/chat", method: "POST", handler: handleChat, rateLimit: true, rateLimitMax: 15 },
+    { path: "/api/trigger-poll", method: "POST", handler: handleTriggerPoll, rateLimit: true, rateLimitMax: 5 },
+    { path: "/api/logout", method: "POST", handler: handleLogout },
+    { path: "/api/config", handler: handleConfig, rateLimit: true, rateLimitMax: 10 },
+    { path: "/api/debug-login", method: "GET", handler: handleDebugLogin },
+    { path: "/api/admin/messages", method: "GET", handler: handleRecentMessages, rateLimit: true, rateLimitMax: 30 },
+    { path: "/api/admin/sessions", method: "GET", handler: handleSessions, rateLimit: true, rateLimitMax: 30 },
+    { path: "/api/admin/alerts", method: "GET", handler: handleAlerts, rateLimit: true, rateLimitMax: 30 },
+    { path: "/api/admin/alerts/resolve", method: "POST", handler: handleResolveAlert, rateLimit: true, rateLimitMax: 20 },
+    { path: "/api/admin/alerts/resolve-all", method: "POST", handler: handleResolveAllAlerts, rateLimit: true, rateLimitMax: 5 },
+    { path: "/api/admin/stats", method: "GET", handler: handleStats, rateLimit: true, rateLimitMax: 30 },
+    { path: "/api/admin/health", method: "GET", handler: handleHealth, rateLimit: true, rateLimitMax: 60 },
+    { path: "/api/admin/d1/messages", method: "GET", handler: handleD1Messages, rateLimit: true, rateLimitMax: 30 },
+    { path: "/api/admin/d1/sessions", method: "GET", handler: handleD1Sessions, rateLimit: true, rateLimitMax: 30 },
+    { path: "/api/admin/d1/stats", method: "GET", handler: handleD1Stats, rateLimit: true, rateLimitMax: 30 },
+    { path: "/api/admin/d1/summary", method: "GET", handler: handleD1Summary, rateLimit: true, rateLimitMax: 60 },
+    { path: "/api/do/poll", method: "GET", handler: handleDOPoll, rateLimit: true, rateLimitMax: 60 },
+    { path: "/api/do/send", method: "POST", handler: handleDOSend, rateLimit: true, rateLimitMax: 30 },
+    { path: "/api/do/status", method: "GET", handler: handleDOStatus, rateLimit: true, rateLimitMax: 60 },
+    { path: "/api/do/flush", method: "POST", handler: handleDOFlush, rateLimit: true, rateLimitMax: 10 },
+    { path: "/api/ws", handler: handleWebSocket },
+  ];
 
   async route(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);

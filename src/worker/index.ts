@@ -32,9 +32,6 @@ export default {
       metrics.incr('init');
     }
 
-    // 路由始终初始化（确保 routes 数组不为空）
-    router.init();
-
     return router.route(request, env);
   },
 
