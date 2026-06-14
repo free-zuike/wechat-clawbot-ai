@@ -18,8 +18,8 @@ export async function handleDebugLogin(request: Request, env: Env): Promise<Resp
       const doStub = env.ILINK_CONNECTION.get(doId);
       const resp = await doStub.fetch(new Request("http://localhost/status"));
       const data = await resp.json() as any;
-      if (data.hasCredentials) {
-        credsRaw = '{"note":"凭证存储在DO中"}';
+      if (data.creds) {
+        credsRaw = data.creds;
       }
     } catch {}
   }

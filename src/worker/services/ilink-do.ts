@@ -453,6 +453,17 @@ export class ILinkConnectionDO implements DurableObject {
       } catch {}
     }
 
+    // 准备凭证字符串（供诊断使用）
+    let credsStr: string | undefined;
+    if (this.ilinkCreds) {
+      try {
+        const stored = await this.state.storage.get<string>("credentials");
+        credsStr = stored || JSON.stringify(this.ilinkCreds);
+      } catch {
+        credsStr = JSON.stringify(this.ilinkCreds);
+      }
+    }
+
     return new Response(JSON.stringify({
       success: true,
       isRunning: this.pollLoopRunning,
@@ -462,6 +473,7 @@ export class ILinkConnectionDO implements DurableObject {
       pendingMessages: this.state.pendingMessages.length,
       hasCredentials: !!this.ilinkCreds,
       needsReLogin: !this.ilinkCreds,
+      creds: credsStr,
     }), {
       headers: { "Content-Type": "application/json" },
     });
