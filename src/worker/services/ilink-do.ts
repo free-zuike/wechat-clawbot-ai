@@ -626,6 +626,9 @@ export class ILinkConnectionDO implements DurableObject {
           await this.processMessages(result.msgs);
         }
 
+        // 持久化运行时统计到 DO storage
+        this.state.storage.put("runtime_stats", this.runtimeStats);
+
         // saveState 写 DO storage，轻量，保留
         await this.saveState();
 
