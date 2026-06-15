@@ -178,6 +178,9 @@ export class ILinkConnectionDO implements DurableObject {
     if (url.pathname === "/get-creds") {
       return this.handleGetCreds();
     }
+    if (url.pathname === "/clear-creds") {
+      return this.handleClearCreds();
+    }
 
     // 其它路径：必须已登录
     if (!this.ilinkCreds) {
@@ -438,6 +441,28 @@ export class ILinkConnectionDO implements DurableObject {
     return new Response(JSON.stringify({ creds: credsRaw }), {
       headers: { "Content-Type": "application/json" },
     });
+  }
+
+  // ========== 清除凭证（解绑微信）==========
+
+  private async handleClearCreds(): Promise<Response> {
+    try {
+      await this.state.storage.delete("credentials");
+      this.ilinkCreds = null;
+      this.cache.credentials = null;
+      this.pollLoopRunning = false;
+
+      Logger.info("[DO] Credentials cleared (WeChat unbound)");
+      return new Response(JSON.stringify({ ok: true }), {
+        headers: { "Content-Type": "application/json" },
+      });
+    } catch (e: any) {
+      Logger.error("[DO] /clear-creds error", { error: e.message });
+      return new Response(JSON.stringify({ error: e.message }), {
+        status: 500,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
   }
 
   // ========== 保存凭证（登录确认时调用，绕过KV）==========
@@ -963,10 +988,11 @@ export class ILinkConnectionDO implements DurableObject {
       Logger.warn("[DO] Failed to read credentials from DO storage", { error: (e as Error).message });
     }
 
-    // 无凭证可用
-    this.ilinkCreds = null;
-    this.cache.credentials = null;
-    this.cache.credentialsLoadedAt = now;
+    // 无凭证可用 — 但如果内存中已有凭证，保留不变（避免缓存过期后误清除）
+    if (!this.ilinkCreds) {
+      this.cache.credentials = null;
+      this.cache.credentialsLoadedAt = now;
+    }
   }
 
   // 保存 credentials 到 DO SQLite（替代 KV 写）

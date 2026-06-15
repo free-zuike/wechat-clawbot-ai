@@ -139,8 +139,9 @@
               <button class="btn secondary" style="width:100%; margin-top:12px" @click="resetQR">重新获取</button>
             </template>
           </div>
-          <div v-else style="padding:12px; background:var(--alert-success-bg); border-radius:8px; color:var(--success)">
-            ✅ 微信已绑定
+          <div v-else style="padding:12px; background:var(--alert-success-bg); border-radius:8px; color:var(--success); display:flex; justify-content:space-between; align-items:center">
+            <span>✅ 微信已绑定</span>
+            <button class="btn secondary small" @click="handleUnbindWeChat">解绑</button>
           </div>
         </div>
 
@@ -624,6 +625,18 @@ const qrImage = ref("");
 const qrStatus = ref("");
 const qrLoading = ref(false);
 const qrCodeBound = ref(false);
+
+async function handleUnbindWeChat() {
+  if (!confirm("确定要解绑微信吗？解绑后需要重新扫码绑定。")) return;
+  try {
+    await fetch("/api/unbind-wechat", { method: "POST" });
+    qrCodeBound.value = false;
+    qrCode.value = "";
+    qrImage.value = "";
+  } catch (e: any) {
+    alert("解绑失败: " + (e.message || "未知错误"));
+  }
+}
 
 // ===== WebSocket 实时消息 =====
 const wsConnected = ref(false);
