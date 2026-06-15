@@ -632,14 +632,31 @@ export class ILinkConnectionDO implements DurableObject {
       } catch (e: any) {
         Logger.error("[DO] Poll error", { error: e.message });
 
-        // ILINK_SESSION_TIMEOUT：微信凭证过期，停止轮询但保留 KV 凭证
-        // 前端通过 check-login 的 tokenHealth 检测过期状态
+        // ILINK_SESSION_TIMEOUT：会话连接断开，尝试重新获取 bot_token
+        // 账号绑定是持久的，不需要重新扫码
         if (e.code === "ILINK_SESSION_TIMEOUT" || e.message?.includes("ILINK_SESSION_TIMEOUT")) {
-          Logger.error("[DO] Token expired — stopping poll, user needs to re-scan");
-          this.ilinkCreds = null;
-          this.cache.credentials = null;
+          Logger.warn("[DO] Session timeout — attempting token refresh");
+          this.state.consecutiveErrors++;
+
+          // 尝试通过 get_qrcode_status 刷新 bot_token（账号已绑定）
+          try {
+            const refreshResult = await getQRCodeStatus(this.ilinkCreds!.accountId);
+            if (refreshResult.status === "confirmed" && refreshResult.bot_token) {
+              // 刷新成功，更新凭证
+              this.ilinkCreds!.botToken = refreshResult.bot_token;
+              this.state.syncBuf = "";
+              Logger.info("[DO] Token refreshed successfully");
+              this.state.consecutiveErrors = 0;
+              await this.saveCredentials();
+              await this.saveState();
+              continue; // 继续轮询
+            }
+          } catch (refreshErr: any) {
+            Logger.warn("[DO] Token refresh failed", { error: refreshErr.message });
+          }
+
+          // 刷新失败，暂停轮询等待重试（不清除凭证）
           this.pollLoopRunning = false;
-          // 不删除 KV 中的凭证，前端通过 check-login 检测 tokenHealth: "expired"
           await this.saveState();
           return;
         }
