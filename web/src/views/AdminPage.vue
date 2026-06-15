@@ -555,14 +555,8 @@ let wsRetryCount = 0;
 
 function connectWebSocket() {
   if (ws && ws.readyState === WebSocket.OPEN) return;
-  // 只在 Worker 直接域名下连接 WebSocket（Pages 不支持）
-  const host = location.hostname;
-  if (host !== "wechat-clawbot-ai.freezuike.workers.dev") {
-    wsConnected.value = false;
-    return;
-  }
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
-  ws = new WebSocket(`${proto}//${host}/api/ws`);
+  ws = new WebSocket(`${proto}//${location.host}/api/ws`);
   ws.onopen = () => { wsConnected.value = true; wsRetryCount = 0; };
   ws.onclose = () => {
     wsConnected.value = false;
