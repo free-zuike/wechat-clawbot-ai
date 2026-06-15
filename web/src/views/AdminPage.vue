@@ -32,7 +32,6 @@
           :debug-loading="debugLoading"
           @debug="handleDebug"
         />
-        <HealthDashboard />
       </section>
 
       <section v-if="activeSection === 'control'">
@@ -150,7 +149,6 @@ import ChatPanel from "../components/admin/ChatPanel.vue";
 import AlertsPanel from "../components/admin/AlertsPanel.vue";
 import SessionsPanel from "../components/admin/SessionsPanel.vue";
 import TemplatesPanel from "../components/admin/TemplatesPanel.vue";
-import HealthDashboard from "../components/admin/HealthDashboard.vue";
 import TaskPanel from "../components/admin/TaskPanel.vue";
 
 const router = useRouter();

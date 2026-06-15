@@ -47,7 +47,6 @@ export class ILinkConnectionDO implements DurableObject {
   private kv: KVNamespace | null = null;
   private websockets: Set<WebSocket> = new Set();
   private runtimeStats = { polls: 0, handled: 0, aiCalls: 0, aiFails: 0, lastLatencyMs: 0 };
-  private statsHistory: Array<{ ts: string; polls: number; handled: number; aiCalls: number; aiFails: number }> = [];
   private cache: RuntimeCache = {
     credentials: null,
     credentialsLoadedAt: 0,
@@ -55,7 +54,6 @@ export class ILinkConnectionDO implements DurableObject {
     configLoadedAt: 0,
   };
   private sqliteInitialized = false;
-  private statsRestored = false;
 
   constructor(state: DurableObjectState, env: any) {
     this.state = state;
@@ -73,13 +71,10 @@ export class ILinkConnectionDO implements DurableObject {
       ...this.state,
     };
 
-    // 恢复统计历史和累计统计
-    Promise.all([
-      state.storage.get<Array<{ ts: string; polls: number; handled: number; aiCalls: number; aiFails: number }>>("stats_history")
-        .then((h) => { if (h) this.statsHistory = h; }).catch(() => {}),
-      state.storage.get<typeof this.runtimeStats>("runtime_stats")
-        .then((s) => { if (s) this.runtimeStats = { ...this.runtimeStats, ...s }; }).catch(() => {}),
-    ]).then(() => { this.statsRestored = true; });
+    // 恢复运行时统计
+    state.storage.get<typeof this.runtimeStats>("runtime_stats")
+      .then((s) => { if (s) this.runtimeStats = { ...this.runtimeStats, ...s }; })
+      .catch(() => {});
   }
 
   // ========== SQLite 初始化 ==========
@@ -210,8 +205,6 @@ export class ILinkConnectionDO implements DurableObject {
         return this.handleSend(request);
       case "/status":
         return this.handleStatus();
-      case "/stats-history":
-        return this.handleStatsHistory();
       case "/flush":
         return this.handleFlush();
       case "/qr-poll":
@@ -589,38 +582,6 @@ export class ILinkConnectionDO implements DurableObject {
     }
   }
 
-  // ========== 统计历史 ==========
-
-  private async handleStatsHistory(): Promise<Response> {
-    return new Response(JSON.stringify({
-      success: true,
-      history: this.statsHistory,
-      runtimeStats: this.runtimeStats,
-      statsRestored: this.statsRestored,
-      historyLen: this.statsHistory.length,
-    }), {
-      headers: { "Content-Type": "application/json" },
-    });
-  }
-
-  private async saveStatsSnapshot(): Promise<void> {
-    if (!this.statsRestored) return;
-    const now = new Date();
-    const ts = now.toISOString();
-
-    // 读取上次保存的快照作为基准，确保值单调递增
-    const lastSnapshot = this.statsHistory.length > 0 ? this.statsHistory[this.statsHistory.length - 1] : null;
-    const polls = Math.max(this.runtimeStats.polls, lastSnapshot?.polls || 0);
-    const handled = Math.max(this.runtimeStats.handled, lastSnapshot?.handled || 0);
-    const aiCalls = Math.max(this.runtimeStats.aiCalls, lastSnapshot?.aiCalls || 0);
-    const aiFails = Math.max(this.runtimeStats.aiFails, lastSnapshot?.aiFails || 0);
-
-    this.statsHistory.push({ ts, polls, handled, aiCalls, aiFails });
-    if (this.statsHistory.length > 48) this.statsHistory = this.statsHistory.slice(-48);
-    await this.state.storage.put("stats_history", this.statsHistory);
-    await this.state.storage.put("runtime_stats", { polls, handled, aiCalls, aiFails, lastLatencyMs: this.runtimeStats.lastLatencyMs });
-  }
-
   // ========== 清空待处理消息队列 ==========
 
   private async handleFlush(): Promise<Response> {
@@ -664,9 +625,6 @@ export class ILinkConnectionDO implements DurableObject {
           Logger.info("[DO] Received messages", { count: result.msgs.length });
           await this.processMessages(result.msgs);
         }
-
-        // 保存统计快照
-        await this.saveStatsSnapshot();
 
         // saveState 写 DO storage，轻量，保留
         await this.saveState();
