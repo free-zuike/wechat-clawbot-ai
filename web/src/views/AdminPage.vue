@@ -659,6 +659,7 @@ function connectWebSocket() {
   ws.onmessage = (e) => {
     try {
       const msg = JSON.parse(e.data);
+      if (msg.type === "connected") return;
       wsMessages.value.push(msg);
       if (wsMessages.value.length > 200) wsMessages.value.shift();
     } catch {}
