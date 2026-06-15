@@ -13,6 +13,7 @@ import { handleRecentMessages, handleSessions, handleAlerts, handleResolveAlert,
 import { handleD1Messages, handleD1Sessions, handleD1Stats, handleD1Summary } from "../routes/d1";
 import { handleDOPoll, handleDOSend, handleDOStatus, handleDOFlush } from "../routes/do";
 import { handleWebSocket } from "../routes/websocket";
+import { handleTemplates } from "../routes/templates";
 import { json } from "../utils";
 import { metrics, runHealthChecks, errorTracker } from "../utils/metrics";
 import { applyRateLimit } from "../utils/security";
@@ -50,6 +51,7 @@ export class Router {
     { path: "/api/do/status", method: "GET", handler: handleDOStatus, rateLimit: true, rateLimitMax: 60 },
     { path: "/api/do/flush", method: "POST", handler: handleDOFlush, rateLimit: true, rateLimitMax: 10 },
     { path: "/api/ws", handler: handleWebSocket },
+    { path: "/api/templates", handler: handleTemplates, rateLimit: true, rateLimitMax: 30 },
   ];
 
   async route(request: Request, env: Env): Promise<Response> {

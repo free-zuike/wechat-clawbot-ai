@@ -333,3 +333,29 @@ export interface StatsData {
 export async function fetchStats(): Promise<StatsData & { success: boolean }> {
   return apiFetch("/api/admin/stats", { cancelable: "stats" });
 }
+
+// ===== 消息模板 =====
+export interface Template {
+  id: string;
+  name: string;
+  content: string;
+  category: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export async function fetchTemplates(): Promise<{ templates: Template[] }> {
+  return apiFetch("/api/templates", { cancelable: "templates" });
+}
+
+export async function createTemplate(data: { name: string; content: string; category?: string }): Promise<{ ok: boolean; template: Template }> {
+  return apiFetch("/api/templates", { method: "POST", body: JSON.stringify(data) });
+}
+
+export async function updateTemplate(data: { id: string; name?: string; content?: string; category?: string }): Promise<{ ok: boolean; template: Template }> {
+  return apiFetch("/api/templates", { method: "PUT", body: JSON.stringify(data) });
+}
+
+export async function deleteTemplate(id: string): Promise<{ ok: boolean }> {
+  return apiFetch(`/api/templates?id=${id}`, { method: "DELETE" });
+}

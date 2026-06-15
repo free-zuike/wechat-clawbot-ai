@@ -105,6 +105,10 @@
           @update:search="(v: string) => { sessionsSearch = v; sessionsPage = 1; }"
         />
       </section>
+
+      <section v-if="activeSection === 'templates'">
+        <TemplatesPanel @send="(content: string) => { activeSection = 'chat'; chatInput = content; }" />
+      </section>
     </main>
   </div>
 </template>
@@ -124,6 +128,7 @@ import ConfigPanel from "../components/admin/ConfigPanel.vue";
 import ChatPanel from "../components/admin/ChatPanel.vue";
 import AlertsPanel from "../components/admin/AlertsPanel.vue";
 import SessionsPanel from "../components/admin/SessionsPanel.vue";
+import TemplatesPanel from "../components/admin/TemplatesPanel.vue";
 
 const router = useRouter();
 
@@ -141,6 +146,7 @@ const navItems = [
   { key: "chat", label: "AI 测试", icon: "🤖" },
   { key: "alerts", label: "报警中心", icon: "🚨" },
   { key: "sessions", label: "用户会话", icon: "💬" },
+  { key: "templates", label: "消息模板", icon: "📋" },
 ];
 const activeSection = ref("status");
 let isFirstRefresh = true;
