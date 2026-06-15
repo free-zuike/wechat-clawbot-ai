@@ -71,9 +71,12 @@ export class ILinkConnectionDO implements DurableObject {
       ...this.state,
     };
 
-    // 恢复统计历史
+    // 恢复统计历史和累计统计
     state.storage.get<Array<{ ts: string; polls: number; handled: number; aiCalls: number; aiFails: number }>>("stats_history")
       .then((h) => { if (h) this.statsHistory = h; })
+      .catch(() => {});
+    state.storage.get<typeof this.runtimeStats>("runtime_stats")
+      .then((s) => { if (s) this.runtimeStats = { ...this.runtimeStats, ...s }; })
       .catch(() => {});
   }
 
@@ -603,6 +606,7 @@ export class ILinkConnectionDO implements DurableObject {
     // 保留最近 48 条（约 48 小时）
     if (this.statsHistory.length > 48) this.statsHistory = this.statsHistory.slice(-48);
     this.state.storage.put("stats_history", this.statsHistory).catch(() => {});
+    this.state.storage.put("runtime_stats", this.runtimeStats).catch(() => {});
   }
 
   // ========== 清空待处理消息队列 ==========
