@@ -62,7 +62,12 @@ export async function handleQRCodeStatus(request: Request, env: Env): Promise<Re
       const doStub = env.ILINK_CONNECTION.get(doId);
       doStub.fetch(new Request("http://localhost/poll")).catch(() => {});
 
+      // 生成并存储 admin session（与 bot_token 完全独立）
       const sessionToken = generateSessionToken();
+      try {
+        await env.CLAWBOT_KV.put(`clawbot:session:${sessionToken}`, "valid", { expirationTtl: 24 * 60 * 60 });
+      } catch (_e) {}
+
       Logger.info("[qrcode-status] login confirmed", { accountId: status.ilink_bot_id });
 
       return json({ status: "confirmed", ok: true, accountId: status.ilink_bot_id }, 200, {
