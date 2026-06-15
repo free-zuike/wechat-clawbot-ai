@@ -9,7 +9,7 @@ import { handleTriggerPoll } from "../routes/trigger";
 import { handleLogout } from "../routes/logout";
 import { handleConfig } from "../routes/config";
 import { handleDebugLogin } from "../routes/debug";
-import { handleRecentMessages, handleSessions, handleAlerts, handleResolveAlert, handleResolveAllAlerts, handleStats, handleHealth } from "../routes/admin";
+import { handleRecentMessages, handleSessions, handleAlerts, handleResolveAlert, handleResolveAllAlerts, handleStats, handleHealth, handleStatsHistory } from "../routes/admin";
 import { handleD1Messages, handleD1Sessions, handleD1Stats, handleD1Summary } from "../routes/d1";
 import { handleDOPoll, handleDOSend, handleDOStatus, handleDOFlush } from "../routes/do";
 import { handleWebSocket } from "../routes/websocket";
@@ -42,6 +42,7 @@ export class Router {
     { path: "/api/admin/alerts/resolve-all", method: "POST", handler: handleResolveAllAlerts, rateLimit: true, rateLimitMax: 5 },
     { path: "/api/admin/stats", method: "GET", handler: handleStats, rateLimit: true, rateLimitMax: 30 },
     { path: "/api/admin/health", method: "GET", handler: handleHealth, rateLimit: true, rateLimitMax: 60 },
+    { path: "/api/admin/stats-history", method: "GET", handler: handleStatsHistory, rateLimit: true, rateLimitMax: 30 },
     { path: "/api/admin/d1/messages", method: "GET", handler: handleD1Messages, rateLimit: true, rateLimitMax: 30 },
     { path: "/api/admin/d1/sessions", method: "GET", handler: handleD1Sessions, rateLimit: true, rateLimitMax: 30 },
     { path: "/api/admin/d1/stats", method: "GET", handler: handleD1Stats, rateLimit: true, rateLimitMax: 30 },

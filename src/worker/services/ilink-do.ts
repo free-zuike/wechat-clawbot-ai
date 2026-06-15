@@ -46,6 +46,7 @@ export class ILinkConnectionDO implements DurableObject {
   private kv: KVNamespace | null = null;
   private websockets: Set<WebSocket> = new Set();
   private runtimeStats = { polls: 0, handled: 0, aiCalls: 0, aiFails: 0, lastLatencyMs: 0 };
+  private statsHistory: Array<{ ts: string; polls: number; handled: number; aiCalls: number; aiFails: number }> = [];
   private cache: RuntimeCache = {
     credentials: null,
     credentialsLoadedAt: 0,
@@ -59,7 +60,7 @@ export class ILinkConnectionDO implements DurableObject {
     this.env = env;
     this.kv = env.CLAWBOT_KV;
 
-    // 从 Durable Object 存储恢复状态
+    // 从 DO storage 恢复状态
     const stored = state.storage.get<ILINKSessionState>("session").catch(() => null);
     this.state = {
       syncBuf: "",
@@ -69,6 +70,11 @@ export class ILinkConnectionDO implements DurableObject {
       pendingMessages: [],
       ...this.state,
     };
+
+    // 恢复统计历史
+    state.storage.get<Array<{ ts: string; polls: number; handled: number; aiCalls: number; aiFails: number }>>("stats_history")
+      .then((h) => { if (h) this.statsHistory = h; })
+      .catch(() => {});
   }
 
   // ========== SQLite 初始化 ==========
@@ -199,6 +205,8 @@ export class ILinkConnectionDO implements DurableObject {
         return this.handleSend(request);
       case "/status":
         return this.handleStatus();
+      case "/stats-history":
+        return this.handleStatsHistory();
       case "/flush":
         return this.handleFlush();
       case "/qr-poll":
@@ -574,6 +582,29 @@ export class ILinkConnectionDO implements DurableObject {
     }
   }
 
+  // ========== 统计历史 ==========
+
+  private async handleStatsHistory(): Promise<Response> {
+    return new Response(JSON.stringify({ success: true, history: this.statsHistory }), {
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  private saveStatsSnapshot(): void {
+    const now = new Date();
+    const ts = now.toISOString();
+    this.statsHistory.push({
+      ts,
+      polls: this.runtimeStats.polls,
+      handled: this.runtimeStats.handled,
+      aiCalls: this.runtimeStats.aiCalls,
+      aiFails: this.runtimeStats.aiFails,
+    });
+    // 保留最近 48 条（约 48 小时）
+    if (this.statsHistory.length > 48) this.statsHistory = this.statsHistory.slice(-48);
+    this.state.storage.put("stats_history", this.statsHistory).catch(() => {});
+  }
+
   // ========== 清空待处理消息队列 ==========
 
   private async handleFlush(): Promise<Response> {
@@ -615,6 +646,9 @@ export class ILinkConnectionDO implements DurableObject {
           Logger.info("[DO] Received messages", { count: result.msgs.length });
           await this.processMessages(result.msgs);
         }
+
+        // 保存统计快照
+        this.saveStatsSnapshot();
 
         // saveState 写 DO storage，轻量，保留
         await this.saveState();

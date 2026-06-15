@@ -359,3 +359,16 @@ export async function updateTemplate(data: { id: string; name?: string; content?
 export async function deleteTemplate(id: string): Promise<{ ok: boolean }> {
   return apiFetch(`/api/templates?id=${id}`, { method: "DELETE" });
 }
+
+// ===== 统计历史 =====
+export interface StatsSnapshot {
+  ts: string;
+  polls: number;
+  handled: number;
+  aiCalls: number;
+  aiFails: number;
+}
+
+export async function fetchStatsHistory(): Promise<{ success: boolean; history: StatsSnapshot[] }> {
+  return apiFetch("/api/admin/stats-history", { cancelable: "stats-history" });
+}

@@ -431,6 +431,23 @@ export async function handleStats(request: Request, env: Env): Promise<Response>
   }
 }
 
+// ============ 统计历史 ============
+
+export async function handleStatsHistory(request: Request, env: Env): Promise<Response> {
+  const v = await verifyAdmin(request, env);
+  if (!v.ok) return json({ error: v.error }, 401);
+
+  try {
+    const doId = env.ILINK_CONNECTION.idFromName("main");
+    const doStub = env.ILINK_CONNECTION.get(doId);
+    const resp = await doStub.fetch(new Request("http://localhost/stats-history"), { signal: AbortSignal.timeout(3000) });
+    return resp;
+  } catch (e: any) {
+    Logger.warn("[Admin] stats-history query failed", { error: e.message });
+    return json({ success: true, history: [] });
+  }
+}
+
 // ============ 健康检查 ============
 
 export async function handleHealth(request: Request, env: Env): Promise<Response> {

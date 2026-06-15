@@ -109,6 +109,10 @@
       <section v-if="activeSection === 'templates'">
         <TemplatesPanel @send="(content: string) => { activeSection = 'chat'; chatInput = content; }" />
       </section>
+
+      <section v-if="activeSection === 'health'">
+        <HealthDashboard />
+      </section>
     </main>
   </div>
 </template>
@@ -129,6 +133,7 @@ import ChatPanel from "../components/admin/ChatPanel.vue";
 import AlertsPanel from "../components/admin/AlertsPanel.vue";
 import SessionsPanel from "../components/admin/SessionsPanel.vue";
 import TemplatesPanel from "../components/admin/TemplatesPanel.vue";
+import HealthDashboard from "../components/admin/HealthDashboard.vue";
 
 const router = useRouter();
 
@@ -147,6 +152,7 @@ const navItems = [
   { key: "alerts", label: "报警中心", icon: "🚨" },
   { key: "sessions", label: "用户会话", icon: "💬" },
   { key: "templates", label: "消息模板", icon: "📋" },
+  { key: "health", label: "健康仪表盘", icon: "📈" },
 ];
 const activeSection = ref("status");
 let isFirstRefresh = true;
