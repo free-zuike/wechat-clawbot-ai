@@ -563,8 +563,6 @@ export class ILinkConnectionDO implements DurableObject {
       accountId: this.ilinkCreds?.accountId,
       needsReLogin: !this.ilinkCreds,
       stats: this.runtimeStats,
-      statsHistoryLen: this.statsHistory.length,
-      lastSnapshot: this.statsHistory.length > 0 ? this.statsHistory[this.statsHistory.length - 1] : null,
     }), {
       headers: { "Content-Type": "application/json" },
     });
