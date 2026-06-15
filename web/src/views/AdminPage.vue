@@ -54,6 +54,28 @@
         />
       </section>
 
+      <section v-if="activeSection === 'tasks'">
+        <TaskPanel
+          :status="status"
+          :bound="qrCodeBound"
+          :account-id="''"
+          :is-polling="isPolling"
+          :ws-connected="wsConnected"
+          :ws-messages="wsMessages"
+          :template-count="templateCount"
+          :config-provider="config.aiProvider"
+          :qr-code="qrCode"
+          :qr-loading="qrLoading"
+          @trigger-poll="handleTriggerPoll"
+          @get-q-r="handleGetQRCode"
+          @unbind="handleUnbindWeChat"
+          @clear-messages="wsMessages = []"
+          @open-chat="activeSection = 'chat'"
+          @open-templates="activeSection = 'templates'"
+          @open-config="activeSection = 'config'"
+        />
+      </section>
+
       <section v-if="activeSection === 'config'">
         <ConfigPanel
           :config="config"
@@ -120,7 +142,7 @@ import { useRouter } from "vue-router";
 import {
   fetchStatus, fetchConfig, saveConfig, triggerPoll, logout, chat,
   checkLogin, debugLogin, fetchAlerts, resolveAlert, resolveAllAlerts,
-  fetchSessions, fetchHealth, getQRCode, getQRCodeStatus, ApiError,
+  fetchSessions, fetchHealth, getQRCode, getQRCodeStatus, fetchTemplates, ApiError,
 } from "../api";
 import QRCode from "qrcode";
 import StatusPanel from "../components/admin/StatusPanel.vue";
@@ -131,6 +153,7 @@ import AlertsPanel from "../components/admin/AlertsPanel.vue";
 import SessionsPanel from "../components/admin/SessionsPanel.vue";
 import TemplatesPanel from "../components/admin/TemplatesPanel.vue";
 import HealthDashboard from "../components/admin/HealthDashboard.vue";
+import TaskPanel from "../components/admin/TaskPanel.vue";
 
 const router = useRouter();
 
@@ -144,6 +167,7 @@ applyTheme();
 const navItems = [
   { key: "status", label: "状态监控", icon: "📊" },
   { key: "control", label: "消息控制", icon: "🎮" },
+  { key: "tasks", label: "任务面板", icon: "🎯" },
   { key: "config", label: "系统配置", icon: "⚙️" },
   { key: "chat", label: "AI 测试", icon: "🤖" },
   { key: "alerts", label: "报警中心", icon: "🚨" },
@@ -204,6 +228,9 @@ const healthData = reactive({
   kv: "—", loggedIn: false, totalPolls: 0, totalHandled: 0, totalAICalls: 0, totalAIFails: 0,
   unresolvedAlerts: 0, criticalAlerts: 0, errorAlerts: 0, warningAlerts: 0, timestamp: "",
 });
+
+// ===== Templates =====
+const templateCount = ref(0);
 
 // ===== Error handling =====
 function handleApiError(error: unknown, defaultMessage: string): string {
@@ -366,6 +393,7 @@ onMounted(async () => {
     if (!loginOk) { router.push("/login"); return; }
   }
   handleRefreshStatus(); handleLoadConfig(); handleRefreshAlerts(); handleRefreshSessions(); connectWebSocket();
+  fetchTemplates().then((d) => { templateCount.value = (d.templates || []).length; }).catch(() => {});
   async function tick() { try { await handleRefreshStatus(); if (activeSection.value === "alerts") await handleRefreshAlerts(); } finally { refreshTimer = window.setTimeout(tick, 30000); } }
   refreshTimer = window.setTimeout(tick, 30000);
 });
