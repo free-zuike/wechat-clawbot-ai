@@ -45,6 +45,7 @@ export class ILinkConnectionDO implements DurableObject {
   private pollLoopRunning = false;
   private kv: KVNamespace | null = null;
   private websockets: Set<WebSocket> = new Set();
+  private runtimeStats = { polls: 0, handled: 0, aiCalls: 0, aiFails: 0, lastLatencyMs: 0 };
   private cache: RuntimeCache = {
     credentials: null,
     credentialsLoadedAt: 0,
@@ -584,6 +585,7 @@ export class ILinkConnectionDO implements DurableObject {
       hasCredentials: !!this.ilinkCreds,
       accountId: this.ilinkCreds?.accountId,
       needsReLogin: !this.ilinkCreds,
+      stats: this.runtimeStats,
     }), {
       headers: { "Content-Type": "application/json" },
     });
@@ -635,6 +637,7 @@ export class ILinkConnectionDO implements DurableObject {
         // 重置错误计数
         this.state.consecutiveErrors = 0;
         this.state.lastPollAt = new Date().toISOString();
+        this.runtimeStats.polls++;
 
         // 处理消息
         if (result.msgs && result.msgs.length > 0) {
@@ -836,6 +839,11 @@ export class ILinkConnectionDO implements DurableObject {
         this.broadcastToWebSockets({ type: "message", data: pendingMsg });
       }
     }
+
+    // 更新运行时统计
+    this.runtimeStats.handled += processedCount;
+    this.runtimeStats.aiCalls += aiSuccessCount;
+    this.runtimeStats.aiFails += aiFailCount;
 
     // 批量更新一次统计
     if (msgs.length > 0 || processedCount > 0) {
