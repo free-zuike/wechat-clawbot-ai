@@ -118,11 +118,8 @@ export async function getContextFromSQLite(sql: SqlStorage, userId: string): Pro
   }
 
   try {
-    const result = await sql.exec(
-      `SELECT messages, last_updated FROM contexts WHERE user_id = ?`,
-      [userId]
-    );
-    const row = result.next().value;
+    const stmt = sql.prepare(`SELECT messages, last_updated FROM contexts WHERE user_id = ?`).bind(userId);
+    const row = stmt.first<{ messages: string; last_updated: number }>();
 
     if (row) {
       try {
@@ -133,15 +130,14 @@ export async function getContextFromSQLite(sql: SqlStorage, userId: string): Pro
         const expireMs = CONTEXT_EXPIRE_HOURS * 60 * 60 * 1000;
         if (Date.now() - lastUpdated > expireMs) {
           Logger.info(`[Context] SQLite context expired for user ${userId}, resetting`);
-          await sql.exec(`DELETE FROM contexts WHERE user_id = ?`, [userId]);
+          sql.prepare(`DELETE FROM contexts WHERE user_id = ?`).bind(userId).run();
           return { userId, messages: [], lastUpdated: Date.now() };
         }
 
         return { userId, messages, lastUpdated };
       } catch (parseError) {
-        // JSON 解析失败，说明数据损坏，清除并重建
         Logger.warn(`[Context] Corrupt context data for ${userId}, resetting`, { error: (parseError as Error).message });
-        await sql.exec(`DELETE FROM contexts WHERE user_id = ?`, [userId]);
+        sql.prepare(`DELETE FROM contexts WHERE user_id = ?`).bind(userId).run();
       }
     }
   } catch (error) {
@@ -173,14 +169,13 @@ export async function saveContextToSQLite(sql: SqlStorage, userId: string, conte
   }
 
   try {
-    await sql.exec(
+    sql.prepare(
       `INSERT INTO contexts (user_id, messages, last_updated)
        VALUES (?, ?, ?)
        ON CONFLICT(user_id) DO UPDATE SET
          messages = excluded.messages,
-         last_updated = excluded.last_updated`,
-      [userId, JSON.stringify(context.messages), context.lastUpdated]
-    );
+         last_updated = excluded.last_updated`
+    ).bind(userId, JSON.stringify(context.messages), context.lastUpdated).run();
     Logger.debug(`[Context] Saved SQLite context for ${userId}`, { messageCount: context.messages.length });
   } catch (error) {
     Logger.error(`[Context] Error saving SQLite context for ${userId}`, { error: (error as Error).message });
@@ -190,7 +185,7 @@ export async function saveContextToSQLite(sql: SqlStorage, userId: string, conte
 // 清空 DO SQLite 中的上下文
 export async function clearContextSQLite(sql: SqlStorage, userId: string): Promise<void> {
   try {
-    await sql.exec(`DELETE FROM contexts WHERE user_id = ?`, [userId]);
+    sql.prepare(`DELETE FROM contexts WHERE user_id = ?`).bind(userId).run();
     Logger.info(`[Context] Cleared SQLite context for ${userId}`);
   } catch (error) {
     Logger.error(`[Context] Error clearing SQLite context for ${userId}`, { error: (error as Error).message });
