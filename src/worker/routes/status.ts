@@ -19,6 +19,10 @@ export async function handleStatus(request: Request, env: Env): Promise<Response
   const v = await verifyAdmin(request, env);
   if (!v.ok) return json({ error: v.error }, 401);
 
+  // 通过 verifyAdmin 判断管理面板登录状态
+  const adminAuth = await verifyAdmin(request, env);
+
+  // 通过 DO 判断 bot 凭证状态
   let doStatus: Record<string, unknown> | null = null;
   try {
     const doId = env.ILINK_CONNECTION.idFromName("main");
@@ -32,8 +36,7 @@ export async function handleStatus(request: Request, env: Env): Promise<Response
   const alertSummary = alertService.getSummary();
 
   const result: StatusResponse = {
-    loggedIn: !!doStatus?.hasCredentials,
-    accountId: doStatus?.accountId as string | undefined,
+    loggedIn: adminAuth.ok,
     doRunning: !!doStatus?.isRunning,
     consecutiveErrors: (doStatus?.consecutiveErrors as number) || 0,
     stats: { polls: 0, handled: 0, aiCalls: 0, aiFails: 0, lastPollAt: (doStatus?.lastPollAt as string) || "", lastLatencyMs: 0 },

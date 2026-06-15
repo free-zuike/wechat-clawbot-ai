@@ -121,6 +121,30 @@
 
       <!-- 消息控制 -->
       <section v-if="activeSection === 'control'">
+        <!-- 微信绑定 -->
+        <div class="card" style="margin-bottom: 16px">
+          <h2>🔗 绑定微信</h2>
+          <div class="desc">扫码绑定微信账号，绑定后可接收和回复消息</div>
+          <div v-if="!qrCodeBound">
+            <template v-if="!qrCode">
+              <button class="btn" @click="handleGetQRCode" :disabled="qrLoading">
+                {{ qrLoading ? "加载中..." : "📱 获取二维码" }}
+              </button>
+            </template>
+            <template v-else>
+              <div class="qr" v-if="qrImage">
+                <img :src="qrImage" alt="QR Code" />
+              </div>
+              <div v-if="qrStatus" class="badge wait">{{ qrStatus }}</div>
+              <button class="btn secondary" style="width:100%; margin-top:12px" @click="resetQR">重新获取</button>
+            </template>
+          </div>
+          <div v-else style="padding:12px; background:var(--alert-success-bg); border-radius:8px; color:var(--success)">
+            ✅ 微信已绑定
+          </div>
+        </div>
+
+        <!-- 消息控制 -->
         <div class="card">
           <h2>🎮 消息控制</h2>
           <div class="desc">手动触发消息拉取 + 实时消息推送</div>
@@ -543,9 +567,63 @@ const chatMessages = ref<Array<{ role: string; text: string }>>([]);
 const chatInput = ref("");
 const chatLoading = ref(false);
 
-// ===== 消息控制 =====
+// ===== QR码绑定 =====
+import { getQRCode, getQRCodeStatus } from "../api";
+import QRCode from "qrcode";
+
+async function handleGetQRCode() {
+  qrLoading.value = true;
+  try {
+    const data = await getQRCode("");
+    if (data.qrcode && data.qrcode_url) {
+      qrCode.value = data.qrcode;
+      qrImage.value = await QRCode.toDataURL(data.qrcode_url, { width: 200, margin: 2 });
+      qrStatus.value = "等待扫码...";
+      pollQRStatus();
+    }
+  } catch (e: any) {
+    qrStatus.value = "获取失败: " + (e.message || "未知错误");
+  } finally {
+    qrLoading.value = false;
+  }
+}
+
+let qrPollTimer: number | null = null;
+async function pollQRStatus() {
+  try {
+    const data = await getQRCodeStatus("", qrCode.value);
+    if (data.ok || data.status === "confirmed") {
+      qrStatus.value = "绑定成功！";
+      qrCodeBound.value = true;
+      return;
+    }
+    if (data.status === "expired") {
+      qrStatus.value = "二维码已过期，请重新获取";
+      return;
+    }
+    qrStatus.value = "等待扫码...";
+    qrPollTimer = window.setTimeout(pollQRStatus, 2000);
+  } catch (e: any) {
+    qrPollTimer = window.setTimeout(pollQRStatus, 3000);
+  }
+}
+
+function resetQR() {
+  if (qrPollTimer) clearTimeout(qrPollTimer);
+  qrCode.value = "";
+  qrImage.value = "";
+  qrStatus.value = "";
+  handleGetQRCode();
+}
 const pollResult = ref("");
 const isPolling = ref(false);
+
+// ===== QR码绑定 =====
+const qrCode = ref("");
+const qrImage = ref("");
+const qrStatus = ref("");
+const qrLoading = ref(false);
+const qrCodeBound = ref(false);
 
 // ===== WebSocket 实时消息 =====
 const wsConnected = ref(false);
