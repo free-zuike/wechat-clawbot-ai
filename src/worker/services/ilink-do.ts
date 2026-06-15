@@ -55,6 +55,7 @@ export class ILinkConnectionDO implements DurableObject {
     configLoadedAt: 0,
   };
   private sqliteInitialized = false;
+  private statsRestored = false;
 
   constructor(state: DurableObjectState, env: any) {
     this.state = state;
@@ -73,12 +74,12 @@ export class ILinkConnectionDO implements DurableObject {
     };
 
     // 恢复统计历史和累计统计
-    state.storage.get<Array<{ ts: string; polls: number; handled: number; aiCalls: number; aiFails: number }>>("stats_history")
-      .then((h) => { if (h) this.statsHistory = h; })
-      .catch(() => {});
-    state.storage.get<typeof this.runtimeStats>("runtime_stats")
-      .then((s) => { if (s) this.runtimeStats = { ...this.runtimeStats, ...s }; })
-      .catch(() => {});
+    Promise.all([
+      state.storage.get<Array<{ ts: string; polls: number; handled: number; aiCalls: number; aiFails: number }>>("stats_history")
+        .then((h) => { if (h) this.statsHistory = h; }).catch(() => {}),
+      state.storage.get<typeof this.runtimeStats>("runtime_stats")
+        .then((s) => { if (s) this.runtimeStats = { ...this.runtimeStats, ...s }; }).catch(() => {}),
+    ]).then(() => { this.statsRestored = true; });
   }
 
   // ========== SQLite 初始化 ==========
@@ -589,6 +590,7 @@ export class ILinkConnectionDO implements DurableObject {
   // ========== 统计历史 ==========
 
   private async handleStatsHistory(): Promise<Response> {
+    Logger.info("[DO] stats-history requested", { points: this.statsHistory.length, stats: this.runtimeStats });
     return new Response(JSON.stringify({ success: true, history: this.statsHistory }), {
       headers: { "Content-Type": "application/json" },
     });
