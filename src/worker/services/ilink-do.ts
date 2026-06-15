@@ -596,7 +596,7 @@ export class ILinkConnectionDO implements DurableObject {
     });
   }
 
-  private saveStatsSnapshot(): void {
+  private async saveStatsSnapshot(): Promise<void> {
     if (!this.statsRestored) return;
     const now = new Date();
     const ts = now.toISOString();
@@ -608,9 +608,10 @@ export class ILinkConnectionDO implements DurableObject {
       aiFails: this.runtimeStats.aiFails,
     });
     if (this.statsHistory.length > 48) this.statsHistory = this.statsHistory.slice(-48);
-    // 同步写入 DO storage（不 await，但不用 .catch 吞错误）
-    this.state.storage.put("stats_history", this.statsHistory);
-    this.state.storage.put("runtime_stats", this.runtimeStats);
+    await Promise.all([
+      this.state.storage.put("stats_history", this.statsHistory),
+      this.state.storage.put("runtime_stats", this.runtimeStats),
+    ]);
   }
 
   // ========== 清空待处理消息队列 ==========
@@ -658,7 +659,7 @@ export class ILinkConnectionDO implements DurableObject {
         }
 
         // 保存统计快照
-        this.saveStatsSnapshot();
+        await this.saveStatsSnapshot();
 
         // saveState 写 DO storage，轻量，保留
         await this.saveState();
