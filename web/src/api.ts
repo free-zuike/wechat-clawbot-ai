@@ -196,7 +196,14 @@ export async function getQRCodeStatus(pwd: string, qrcode?: string): Promise<any
   return apiFetch(url, { timeout: 40000 });
 }
 
-export async function checkLogin(): Promise<any> {
+export async function checkLogin(pwd?: string): Promise<any> {
+  if (pwd) {
+    return apiFetch("/api/check-login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password: pwd }),
+    });
+  }
   return apiFetch("/api/check-login");
 }
 

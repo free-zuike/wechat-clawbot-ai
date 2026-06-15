@@ -37,9 +37,19 @@ export async function handleCheckLogin(request: Request, env: Env): Promise<Resp
 
   // 管理员密码验证
   if (!loggedIn && env.ADMIN_PASSWORD) {
-    const url = new URL(request.url);
-    const queryPwd = url.searchParams.get("pwd") || "";
+    let queryPwd = "";
     const authHeader = request.headers.get("Authorization") || "";
+
+    if (request.method === "POST") {
+      try {
+        const body = await request.json() as any;
+        queryPwd = body?.password || "";
+      } catch (_e) {}
+    } else {
+      const url = new URL(request.url);
+      queryPwd = url.searchParams.get("pwd") || "";
+    }
+
     let headerOk = false;
     const m = authHeader.match(/^Basic\s+(.+)$/i);
     if (m) {

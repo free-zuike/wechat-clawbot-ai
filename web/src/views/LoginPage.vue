@@ -49,10 +49,7 @@ async function doLogin() {
 
   loading.value = true;
   try {
-    // 验证密码：用密码调用 check-login（通过 pwd 参数）
-    const response = await fetch(`/api/check-login?pwd=${encodeURIComponent(password.value)}`);
-    const data = await response.json();
-
+    const data = await checkLogin(password.value);
     if (data.loggedIn) {
       localStorage.setItem("clawbot_auth", "ok");
       router.push("/");
