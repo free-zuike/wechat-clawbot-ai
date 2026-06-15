@@ -9,30 +9,6 @@
       </div>
 
       <template v-else>
-        <!-- 概览卡片 -->
-        <div class="stat-grid" style="margin-top: 16px">
-          <div class="stat-item">
-            <div class="stat-label">总轮询</div>
-            <div class="stat-value">{{ latest.polls }}</div>
-          </div>
-          <div class="stat-item">
-            <div class="stat-label">总处理</div>
-            <div class="stat-value">{{ latest.handled }}</div>
-          </div>
-          <div class="stat-item">
-            <div class="stat-label">AI 调用</div>
-            <div class="stat-value">{{ latest.aiCalls }}</div>
-          </div>
-          <div class="stat-item" :class="{ warning: latest.aiFails > 0 }">
-            <div class="stat-label">AI 失败</div>
-            <div class="stat-value">{{ latest.aiFails }}</div>
-          </div>
-          <div class="stat-item">
-            <div class="stat-label">数据点</div>
-            <div class="stat-value">{{ history.length }}</div>
-          </div>
-        </div>
-
         <!-- 轮询趋势图 -->
         <div class="chart-section">
           <h3>📊 轮询 / 处理趋势</h3>
@@ -103,11 +79,6 @@ import { fetchStatsHistory, type StatsSnapshot } from "../../api";
 
 const loading = ref(false);
 const history = ref<StatsSnapshot[]>([]);
-
-const latest = computed(() => {
-  if (history.value.length === 0) return { polls: 0, handled: 0, aiCalls: 0, aiFails: 0 };
-  return history.value[history.value.length - 1];
-});
 
 const chartData = computed(() => {
   const data = history.value;
