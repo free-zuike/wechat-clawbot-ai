@@ -738,6 +738,8 @@ async function handleRefreshStatus() {
         : "从未";
       status.lastLatencyMs = statusData.stats?.lastLatencyMs == null ? "—" : statusData.stats.lastLatencyMs + " ms";
 
+      qrCodeBound.value = !!statusData.hasBotCredentials;
+
       healthData.kv = statusData.kv || "—";
       healthData.loggedIn = statusData.loggedIn;
       healthData.totalPolls = statusData.stats?.polls || 0;

@@ -35,13 +35,14 @@ export async function handleStatus(request: Request, env: Env): Promise<Response
 
   const alertSummary = alertService.getSummary();
 
-  const result: StatusResponse = {
+  const result: StatusResponse & { hasBotCredentials: boolean } = {
     loggedIn: adminAuth.ok,
     doRunning: !!doStatus?.isRunning,
     consecutiveErrors: (doStatus?.consecutiveErrors as number) || 0,
     stats: { polls: 0, handled: 0, aiCalls: 0, aiFails: 0, lastPollAt: (doStatus?.lastPollAt as string) || "", lastLatencyMs: 0 },
     alerts: { unresolved: alertSummary.unresolved, critical: alertSummary.byLevel.critical, error: alertSummary.byLevel.error, warning: alertSummary.byLevel.warning },
     kv: "OK",
+    hasBotCredentials: !!doStatus?.hasCredentials,
     timestamp: new Date().toISOString(),
   };
 
