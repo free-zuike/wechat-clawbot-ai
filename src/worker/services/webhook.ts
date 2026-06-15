@@ -28,7 +28,7 @@ export async function sendWebhook(config: WebhookConfig, data: {
 
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (config.apiKey) {
-    headers["Authorization"] = `Bearer ${config.apiKey}`;
+    headers["X-API-Key"] = config.apiKey;
   }
 
   try {

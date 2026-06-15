@@ -73,9 +73,9 @@
         </div>
         <div class="field">
           <label>API 密钥</label>
-          <input v-model="config.webhookApiKey" class="input" type="password" placeholder="Bearer 认证的 API Key" />
+          <input v-model="config.webhookApiKey" class="input" type="password" placeholder="X-API-Key 认证的 API Key" />
           <div style="font-size: 12px; color: var(--text-secondary); margin-top: 6px">
-            已有密钥时留空不修改
+            已有密钥时留空不修改。从 bee-swarm 管理面板获取 API Key
           </div>
         </div>
         <div class="field">
