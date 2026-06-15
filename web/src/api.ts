@@ -192,7 +192,7 @@ export async function getQRCode(pwd: string): Promise<any> {
 
 export async function getQRCodeStatus(pwd: string, qrcode?: string): Promise<any> {
   let url = withPwd("/api/qrcode-status", pwd);
-  if (qrcode) url += "&qrcode=" + encodeURIComponent(qrcode);
+  if (qrcode) url += (url.includes("?") ? "&" : "?") + "qrcode=" + encodeURIComponent(qrcode);
   return apiFetch(url, { timeout: 40000 });
 }
 
