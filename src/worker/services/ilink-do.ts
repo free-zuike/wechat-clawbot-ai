@@ -758,6 +758,7 @@ export class ILinkConnectionDO implements DurableObject {
     const cfg = { aiSystemPrompt, aiModel, aiProvider, aiBaseUrl, aiApiKey, aiMaxTokens, webhook: { enabled: webhookEnabled, url: webhookUrl, title: webhookTitle, apiKey: webhookApiKey, channels: webhookChannels } };
     this.cache.config = cfg;
     this.cache.configLoadedAt = now;
+    Logger.info("[DO] Config loaded", { webhookEnabled, hasWebhookUrl: !!webhookUrl, provider: aiProvider });
     return cfg;
   }
 
@@ -865,9 +866,12 @@ export class ILinkConnectionDO implements DurableObject {
       // Webhook 推送（fire and forget）
       if (replyContent) {
         const webhookConfig = this.cache.config?.webhook;
-        Logger.debug("[DO] Webhook check", { enabled: webhookConfig?.enabled, hasUrl: !!webhookConfig?.url, replyLength: replyContent.length });
+        Logger.info("[DO] Webhook check", { enabled: webhookConfig?.enabled, hasUrl: !!webhookConfig?.url, url: webhookConfig?.url?.slice(0, 50), replyLength: replyContent.length });
         if (webhookConfig?.enabled && webhookConfig?.url) {
-          sendWebhook(webhookConfig, { fromUserId: from, content: text, replyContent, timestamp: createdAt }).catch(() => {});
+          Logger.info("[DO] Webhook sending", { to: from });
+          sendWebhook(webhookConfig, { fromUserId: from, content: text, replyContent, timestamp: createdAt }).catch((e) => {
+            Logger.error("[DO] Webhook failed", { error: (e as Error).message });
+          });
         }
       }
     }
