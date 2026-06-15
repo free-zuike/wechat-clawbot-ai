@@ -211,13 +211,18 @@ export async function sendTypingStatus(
   contextToken: string,
   typing: boolean,
 ): Promise<void> {
+  const msg: WeixinMessage = {
+    from_user_id: "",
+    to_user_id: toUserId,
+    client_id: generateClientId(),
+    message_type: MessageType.BOT,
+    message_state: typing ? 1 : 2,
+    context_token: contextToken,
+    item_list: [{ type: MessageItemType.TEXT, text_item: { text: typing ? "\u200B" : "" } }],
+  };
+
   try {
-    // iLink typing 状态通过 ilink/bot/set_typing_status 端点发送
-    await post(creds, "ilink/bot/set_typing_status", {
-      to_user_id: toUserId,
-      context_token: contextToken,
-      typing_status: typing ? 1 : 0,
-    }, DEFAULT_API_MS);
+    await post(creds, "ilink/bot/sendmessage", { msg }, DEFAULT_API_MS);
   } catch {
     // typing 状态失败不影响主流程
   }
