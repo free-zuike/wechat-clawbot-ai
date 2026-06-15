@@ -82,3 +82,20 @@ export async function handleQRCodeStatus(request: Request, env: Env): Promise<Re
     return json({ error: msg }, 500);
   }
 }
+
+export async function handleUnbindWechat(request: Request, env: Env): Promise<Response> {
+  const v = await verifyAdmin(request, env);
+  if (!v.ok) return json({ error: v.error }, 401);
+
+  try {
+    const doId = env.ILINK_CONNECTION.idFromName("main");
+    const doStub = env.ILINK_CONNECTION.get(doId);
+    await doStub.fetch(new Request("http://localhost/clear-creds", { method: "POST" }));
+    Logger.info("[unbind] WeChat unbound");
+    return json({ ok: true, message: "微信已解绑" });
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    Logger.error("[unbind] error", { error: msg });
+    return json({ error: msg }, 500);
+  }
+}

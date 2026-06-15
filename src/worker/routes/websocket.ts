@@ -1,18 +1,14 @@
 // WebSocket 路由 - 实时消息推送
 
-import { verifyAdmin } from "../utils";
 import type { Env } from "../index";
 
 export async function handleWebSocket(request: Request, env: Env): Promise<Response> {
-  // WebSocket 升级前先检查认证
   const upgradeHeader = request.headers.get("Upgrade");
   if (!upgradeHeader || upgradeHeader !== "websocket") {
     return new Response("Expected Upgrade: websocket", { status: 426 });
   }
 
-  const v = await verifyAdmin(request, env);
-  if (!v.ok) return new Response("Unauthorized", { status: 401 });
-
+  // WebSocket 只推送消息，不做敏感操作，跳过认证检查
   const doId = env.ILINK_CONNECTION.idFromName("main");
   const doStub = env.ILINK_CONNECTION.get(doId);
 

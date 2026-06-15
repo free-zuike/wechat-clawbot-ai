@@ -1,7 +1,7 @@
 // 路由模块
 
 import type { Env } from "../index";
-import { handleQRCode, handleQRCodeStatus } from "../routes/qrcode";
+import { handleQRCode, handleQRCodeStatus, handleUnbindWechat } from "../routes/qrcode";
 import { handleCheckLogin } from "../routes/checklogin";
 import { handleStatus } from "../routes/status";
 import { handleChat } from "../routes/chat";
@@ -33,6 +33,7 @@ export class Router {
     { path: "/api/logout", method: "POST", handler: handleLogout },
     { path: "/api/config", handler: handleConfig, rateLimit: true, rateLimitMax: 10 },
     { path: "/api/debug-login", method: "GET", handler: handleDebugLogin },
+    { path: "/api/unbind-wechat", method: "POST", handler: handleUnbindWechat },
     { path: "/api/admin/messages", method: "GET", handler: handleRecentMessages, rateLimit: true, rateLimitMax: 30 },
     { path: "/api/admin/sessions", method: "GET", handler: handleSessions, rateLimit: true, rateLimitMax: 30 },
     { path: "/api/admin/alerts", method: "GET", handler: handleAlerts, rateLimit: true, rateLimitMax: 30 },
