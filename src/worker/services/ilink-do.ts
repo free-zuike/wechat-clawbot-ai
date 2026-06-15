@@ -563,6 +563,7 @@ export class ILinkConnectionDO implements DurableObject {
       consecutiveErrors: this.state.consecutiveErrors,
       pendingMessages: this.state.pendingMessages.length,
       hasCredentials: !!this.ilinkCreds,
+      accountId: this.ilinkCreds?.accountId,
       needsReLogin: !this.ilinkCreds,
     }), {
       headers: { "Content-Type": "application/json" },
@@ -859,7 +860,7 @@ export class ILinkConnectionDO implements DurableObject {
       return;
     }
 
-    // 2) 从 KV 读取凭证（主存储）
+    // 2) 从 KV 读取凭证
     try {
       const credsRaw = await this.kv?.get("clawbot:credentials");
       if (credsRaw) {
@@ -885,6 +886,34 @@ export class ILinkConnectionDO implements DurableObject {
       }
     } catch (e) {
       Logger.warn("[DO] Failed to read credentials from KV", { error: (e as Error).message });
+    }
+
+    // 3) 从 DO storage 读取凭证（主存储）
+    try {
+      const credsRaw = await this.state.storage.get<string>("clawbot:credentials");
+      if (credsRaw) {
+        const creds = JSON.parse(credsRaw);
+        if (creds.botToken && creds.accountId) {
+          this.cache.credentials = {
+            botToken: creds.botToken,
+            accountId: creds.accountId,
+            baseUrl: creds.baseUrl || "https://ilinkai.weixin.qq.com",
+            userId: creds.userId || "",
+            syncBuf: creds.syncBuf || "",
+          };
+          this.cache.credentialsLoadedAt = now;
+          this.ilinkCreds = {
+            botToken: creds.botToken,
+            accountId: creds.accountId,
+            baseUrl: creds.baseUrl || "https://ilinkai.weixin.qq.com",
+            userId: creds.userId || "",
+          };
+          this.state.syncBuf = creds.syncBuf || "";
+          return;
+        }
+      }
+    } catch (e) {
+      Logger.warn("[DO] Failed to read credentials from DO storage", { error: (e as Error).message });
     }
 
     // 无凭证可用

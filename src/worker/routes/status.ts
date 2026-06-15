@@ -38,6 +38,7 @@ export async function handleStatus(request: Request, env: Env): Promise<Response
     consecutiveErrors: (doStatus?.consecutiveErrors as number) || 0,
     stats: { polls: 0, handled: 0, aiCalls: 0, aiFails: 0, lastPollAt: (doStatus?.lastPollAt as string) || "", lastLatencyMs: 0 },
     alerts: { unresolved: alertSummary.unresolved, critical: alertSummary.byLevel.critical, error: alertSummary.byLevel.error, warning: alertSummary.byLevel.warning },
+    kv: "OK",
     timestamp: new Date().toISOString(),
   };
 
