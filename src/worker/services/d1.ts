@@ -45,13 +45,13 @@ CREATE TABLE IF NOT EXISTS stats (
 );
 `;
 
-const CREATE_INDEXES = `
-CREATE INDEX IF NOT EXISTS idx_messages_from_user_id ON messages(from_user_id);
-CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at);
-CREATE INDEX IF NOT EXISTS idx_messages_processed ON messages(processed);
-CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
-CREATE INDEX IF NOT EXISTS idx_stats_date ON stats(date);
-`;
+const CREATE_INDEXES = [
+  `CREATE INDEX IF NOT EXISTS idx_messages_from_user_id ON messages(from_user_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at)`,
+  `CREATE INDEX IF NOT EXISTS idx_messages_processed ON messages(processed)`,
+  `CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_stats_date ON stats(date)`,
+];
 
 // 消息记录
 export interface DBMessage {
@@ -129,10 +129,12 @@ export class D1Service {
     if (this.initialized) return;
     
     try {
-      await this.db.exec(CREATE_MESSAGES_TABLE);
-      await this.db.exec(CREATE_SESSIONS_TABLE);
-      await this.db.exec(CREATE_STATS_TABLE);
-      await this.db.exec(CREATE_INDEXES);
+      await this.db.batch([
+        this.db.prepare(CREATE_MESSAGES_TABLE),
+        this.db.prepare(CREATE_SESSIONS_TABLE),
+        this.db.prepare(CREATE_STATS_TABLE),
+        ...CREATE_INDEXES.map(sql => this.db.prepare(sql)),
+      ]);
       this.initialized = true;
       Logger.info("[D1] Database initialized");
     } catch (error) {

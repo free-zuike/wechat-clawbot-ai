@@ -298,25 +298,6 @@ export class ILinkConnectionDO implements DurableObject {
     }
   }
 
-  // ========== 保存凭证到 DO 存储（KV 备份）==========
-
-  private async handleSaveCreds(request: Request): Promise<Response> {
-    try {
-      const creds = await request.json();
-      await this.state.storage.put("clawbot:credentials", JSON.stringify(creds));
-      Logger.info("[DO] Credentials saved to DO storage");
-      return new Response(JSON.stringify({ ok: true }), {
-        headers: { "Content-Type": "application/json" },
-      });
-    } catch (e: any) {
-      Logger.error("[DO] Failed to save credentials", { error: e.message });
-      return new Response(JSON.stringify({ error: e.message }), {
-        status: 500,
-        headers: { "Content-Type": "application/json" },
-      });
-    }
-  }
-
   // ========== 保存 session（admin登录时调用）==========
 
   private async handleSaveSession(request: Request): Promise<Response> {
@@ -371,23 +352,7 @@ export class ILinkConnectionDO implements DurableObject {
     }
   }
 
-  // ========== 清除凭证（退出登录时调用）==========
-
-  private async handleClearCreds(): Promise<Response> {
-    try {
-      await this.state.storage.delete("credentials");
-      this.ilinkCreds = null;
-      this.cache.credentials = null;
-      Logger.info("[DO] Credentials cleared");
-    } catch (e: any) {
-      Logger.error("[DO] /clear-creds error", { error: e.message });
-    }
-    return new Response(JSON.stringify({ ok: true }), {
-      headers: { "Content-Type": "application/json" },
-    });
-  }
-
-  // ========== 配置存储（DO storage 备用）==========
+  // ========== 清除凭证（解绑微信）==========
 
   private async handleSaveConfig(request: Request): Promise<Response> {
     try {
@@ -538,7 +503,7 @@ export class ILinkConnectionDO implements DurableObject {
             createdAt: Date.now(),
           };
           // KV写入失败不阻塞
-          try { await this.kv!.put("clawbot:credentials", JSON.stringify(creds)); } catch {}
+          try { await this.kv!.put("credentials", JSON.stringify(creds)); } catch {}
           try {
             const sessionToken = generateSessionToken();
             await this.kv!.put(`clawbot:session:${sessionToken}`, "valid", { expirationTtl: 24 * 60 * 60 });
@@ -934,7 +899,7 @@ export class ILinkConnectionDO implements DurableObject {
 
     // 2) 从 KV 读取凭证
     try {
-      const credsRaw = await this.kv?.get("clawbot:credentials");
+      const credsRaw = await this.kv?.get("credentials");
       if (credsRaw) {
         const creds = JSON.parse(credsRaw);
         if (creds.botToken && creds.accountId) {
@@ -962,7 +927,7 @@ export class ILinkConnectionDO implements DurableObject {
 
     // 3) 从 DO storage 读取凭证（主存储）
     try {
-      const credsRaw = await this.state.storage.get<string>("clawbot:credentials");
+      const credsRaw = await this.state.storage.get<string>("credentials");
       if (credsRaw) {
         const creds = JSON.parse(credsRaw);
         if (creds.botToken && creds.accountId) {
