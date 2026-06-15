@@ -551,15 +551,24 @@ const isPolling = ref(false);
 const wsConnected = ref(false);
 const wsMessages = ref<Array<{ type: string; data: any }>>([]);
 let ws: WebSocket | null = null;
+let wsRetryCount = 0;
 
 function connectWebSocket() {
   if (ws && ws.readyState === WebSocket.OPEN) return;
+  // 只在 Worker 直接域名下连接 WebSocket（Pages 不支持）
+  const host = location.hostname;
+  if (host !== "wechat-clawbot-ai.freezuike.workers.dev") {
+    wsConnected.value = false;
+    return;
+  }
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
-  ws = new WebSocket(`${proto}//${location.host}/api/ws`);
-  ws.onopen = () => { wsConnected.value = true; };
+  ws = new WebSocket(`${proto}//${host}/api/ws`);
+  ws.onopen = () => { wsConnected.value = true; wsRetryCount = 0; };
   ws.onclose = () => {
     wsConnected.value = false;
-    setTimeout(connectWebSocket, 3000);
+    wsRetryCount++;
+    const delay = Math.min(wsRetryCount * 3000, 30000);
+    setTimeout(connectWebSocket, delay);
   };
   ws.onerror = () => { ws.close(); };
   ws.onmessage = (e) => {

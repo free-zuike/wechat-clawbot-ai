@@ -23,12 +23,11 @@ export async function handleDebugLogin(request: Request, env: Env): Promise<Resp
   try {
     const doId = env.ILINK_CONNECTION.idFromName("main");
     const doStub = env.ILINK_CONNECTION.get(doId);
-    const resp = await doStub.fetch(new Request("http://localhost/status"));
+    const resp = await doStub.fetch(new Request("http://localhost/get-creds"));
     const data = await resp.json() as any;
     if (data.creds) credsRaw = data.creds;
-    else if (data.hasCredentials) return json({ ok: true, message: "DO有凭证但无法导出详细信息", serverTime: new Date().toISOString() } satisfies DebugResult);
   } catch (e) {
-    Logger.warn("[debug] DO status check failed", { error: (e as Error).message });
+    Logger.warn("[debug] DO get-creds failed", { error: (e as Error).message });
   }
   if (!credsRaw) return json({ ok: false, error: "未登录，没有凭证", serverTime: new Date().toISOString() } satisfies DebugResult);
 

@@ -159,7 +159,7 @@ export class ILinkConnectionDO implements DurableObject {
       return this.handleWebSocket(request);
     }
 
-    // /status、/qr-poll、/check-session、/save-creds：不检查凭证
+    // /status、/qr-poll、/check-session、/save-creds、/get-creds：不检查凭证
     if (url.pathname === "/status") {
       return this.handleStatus();
     }
@@ -171,6 +171,9 @@ export class ILinkConnectionDO implements DurableObject {
     }
     if (url.pathname === "/save-creds") {
       return this.handleSaveCreds(request);
+    }
+    if (url.pathname === "/get-creds") {
+      return this.handleGetCreds();
     }
 
     // 其它路径：必须已登录
@@ -380,6 +383,31 @@ export class ILinkConnectionDO implements DurableObject {
         headers: { "Content-Type": "application/json" },
       });
     }
+  }
+
+  // ========== 获取凭证详情（诊断用）==========
+
+  private async handleGetCreds(): Promise<Response> {
+    // 从 DO storage 读取凭证
+    let credsRaw: string | null = null;
+    try {
+      credsRaw = await this.state.storage.get<string>("credentials");
+    } catch (_e) {}
+
+    // 如果内存中有凭证，优先用内存的
+    if (!credsRaw && this.ilinkCreds) {
+      credsRaw = JSON.stringify(this.ilinkCreds);
+    }
+
+    if (!credsRaw) {
+      return new Response(JSON.stringify({ error: "未登录" }), {
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    return new Response(JSON.stringify({ creds: credsRaw }), {
+      headers: { "Content-Type": "application/json" },
+    });
   }
 
   // ========== 保存凭证（登录确认时调用，绕过KV）==========
