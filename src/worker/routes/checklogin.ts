@@ -69,5 +69,17 @@ export async function handleCheckLogin(request: Request, env: Env): Promise<Resp
   Logger.info("[check-login] result", { loggedIn });
 
   const result: CheckLoginResponse = { loggedIn, tokenHealth, hasCredentials: loggedIn, hasSession: loggedIn };
-  return json(result);
+  const response = json(result);
+
+  // 密码验证通过时设置 session cookie
+  if (loggedIn) {
+    const { generateSessionToken, createSessionCookie } = await import("../utils");
+    const token = generateSessionToken();
+    try {
+      await env.CLAWBOT_KV.put(`clawbot:session:${token}`, "valid", { expirationTtl: 24 * 60 * 60 });
+    } catch (_e) {}
+    response.headers.set("Set-Cookie", createSessionCookie(token));
+  }
+
+  return response;
 }
