@@ -7,6 +7,7 @@ import { generateSessionToken } from "../utils";
 import { getUpdates, sendTextMessage, extractMessageText, getQRCodeStatus, MessageType } from "./ilink";
 import { callAIWithContext } from "./ai";
 import { D1Service } from "./d1";
+import { sendWebhook } from "./webhook";
 import type { ILinkCredentials, WeixinMessage } from "../types";
 
 export interface ILINKSessionState {
@@ -729,6 +730,10 @@ export class ILinkConnectionDO implements DurableObject {
     let aiApiKey = "";
     let aiMaxTokens = 1024;
 
+    let webhookUrl = "";
+    let webhookEnabled = false;
+    let webhookTitle = "";
+
     // 从 KV 读配置
     const configRaw = await this.kv?.get("clawbot:config");
     try {
@@ -740,10 +745,13 @@ export class ILinkConnectionDO implements DurableObject {
         aiBaseUrl = kvConfig.aiBaseUrl || "";
         aiApiKey = kvConfig.aiApiKey || "";
         aiMaxTokens = kvConfig.aiMaxTokens || 1024;
+        webhookUrl = kvConfig.webhookUrl || "";
+        webhookEnabled = kvConfig.webhookEnabled || false;
+        webhookTitle = kvConfig.webhookTitle || "";
       }
     } catch (_e) {}
 
-    const cfg = { aiSystemPrompt, aiModel, aiProvider, aiBaseUrl, aiApiKey, aiMaxTokens };
+    const cfg = { aiSystemPrompt, aiModel, aiProvider, aiBaseUrl, aiApiKey, aiMaxTokens, webhook: { enabled: webhookEnabled, url: webhookUrl, title: webhookTitle } };
     this.cache.config = cfg;
     this.cache.configLoadedAt = now;
     return cfg;
@@ -848,6 +856,14 @@ export class ILinkConnectionDO implements DurableObject {
       // 广播到 WebSocket 客户端
       if (this.websockets.size > 0) {
         this.broadcastToWebSockets({ type: "message", data: pendingMsg });
+      }
+
+      // Webhook 推送（fire and forget）
+      if (replyContent) {
+        const webhookConfig = this.cache.config?.webhook;
+        if (webhookConfig?.enabled && webhookConfig?.url) {
+          sendWebhook(webhookConfig, { fromUserId: from, content: text, replyContent, timestamp: createdAt }).catch(() => {});
+        }
       }
     }
 

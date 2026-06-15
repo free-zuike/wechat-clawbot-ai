@@ -184,7 +184,7 @@ const statusLoading = ref(false);
 const firstLoadDone = ref(false);
 
 // ===== Config =====
-const config = reactive({ aiProvider: "cloudflare", aiModel: "", aiBaseUrl: "", aiApiKey: "", aiMaxTokens: 1024, aiSystemPrompt: "" });
+const config = reactive({ aiProvider: "cloudflare", aiModel: "", aiBaseUrl: "", aiApiKey: "", aiMaxTokens: 1024, aiSystemPrompt: "", webhookEnabled: false, webhookUrl: "", webhookTitle: "" });
 const configResult = ref("");
 const configSaving = ref(false);
 
@@ -282,7 +282,10 @@ async function handleLoadConfig() {
     const d = await fetchConfig(); if (d === null) return;
     config.aiProvider = d.aiProvider || "cloudflare"; config.aiModel = d.aiModel || "";
     config.aiBaseUrl = d.aiBaseUrl || ""; config.aiApiKey = d.aiApiKey || "";
-    config.aiMaxTokens = d.aiMaxTokens || 1024; config.aiSystemPrompt = d.aiSystemPrompt || "";
+    config.aiMaxTokens = d.aiMaxTokens || 1024;     config.aiSystemPrompt = d.aiSystemPrompt || "";
+    config.webhookEnabled = d.webhookEnabled || false;
+    config.webhookUrl = d.webhookUrl || "";
+    config.webhookTitle = d.webhookTitle || "";
     configResult.value = d.hasEnvOverride ? "✅ 已加载当前配置（注意：当前有环境变量覆盖）" : "✅ 已加载当前配置";
   } catch (e: any) { if (e instanceof ApiError && e.isCancelled) return; configResult.value = "❌ 加载失败: " + handleApiError(e, "加载失败"); }
 }

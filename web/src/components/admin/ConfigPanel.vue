@@ -54,6 +54,30 @@
       </div>
     </div>
 
+    <!-- Webhook 通知 -->
+    <div style="margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--border-light)">
+      <h3 style="margin-bottom: 12px; font-size: 14px">🔔 Webhook 通知</h3>
+      <div class="field">
+        <label>
+          <input type="checkbox" v-model="config.webhookEnabled" style="margin-right: 6px" />
+          启用消息推送通知
+        </label>
+      </div>
+      <template v-if="config.webhookEnabled">
+        <div class="field">
+          <label>推送地址</label>
+          <input v-model="config.webhookUrl" class="input" placeholder="https://your-bee-swarm.workers.dev/api/admin/push?password=xxx" />
+          <div style="font-size: 12px; color: var(--text-secondary); margin-top: 6px">
+            bee-swarm 的推送 API 地址，含 password 参数
+          </div>
+        </div>
+        <div class="field">
+          <label>通知标题</label>
+          <input v-model="config.webhookTitle" class="input" placeholder="🦞 ClawBot AI 消息" />
+        </div>
+      </template>
+    </div>
+
     <div style="display: flex; gap: 10px; margin-top: 16px">
       <button class="btn secondary" @click="$emit('load')">📥 加载当前配置</button>
       <button class="btn" :disabled="saving" @click="$emit('save')">
@@ -68,7 +92,7 @@
 
 <script setup lang="ts">
 defineProps<{
-  config: { aiProvider: string; aiModel: string; aiBaseUrl: string; aiApiKey: string; aiMaxTokens: number; aiSystemPrompt: string };
+  config: { aiProvider: string; aiModel: string; aiBaseUrl: string; aiApiKey: string; aiMaxTokens: number; aiSystemPrompt: string; webhookEnabled: boolean; webhookUrl: string; webhookTitle: string };
   result: string;
   saving: boolean;
 }>();

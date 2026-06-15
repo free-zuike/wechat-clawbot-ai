@@ -6,7 +6,7 @@ import { configCache } from "../utils/cache";
 import type { Env } from "../index";
 
 const KV_CONFIG_KEY = "clawbot:config";
-const CONFIG_FIELDS = ["aiProvider", "aiModel", "aiBaseUrl", "aiApiKey", "aiMaxTokens", "aiSystemPrompt"] as const;
+const CONFIG_FIELDS = ["aiProvider", "aiModel", "aiBaseUrl", "aiApiKey", "aiMaxTokens", "aiSystemPrompt", "webhookUrl", "webhookEnabled", "webhookTitle"] as const;
 type ConfigField = (typeof CONFIG_FIELDS)[number];
 
 function maskKey(key: string): string {
@@ -21,6 +21,9 @@ function getConfigResponse(kvConfig: Record<string, unknown>) {
     aiApiKey: typeof kvConfig.aiApiKey === "string" && kvConfig.aiApiKey ? maskKey(kvConfig.aiApiKey as string) : "",
     aiMaxTokens: (kvConfig.aiMaxTokens as number) || 1024,
     aiSystemPrompt: (kvConfig.aiSystemPrompt as string) || "",
+    webhookUrl: (kvConfig.webhookUrl as string) || "",
+    webhookEnabled: (kvConfig.webhookEnabled as boolean) || false,
+    webhookTitle: (kvConfig.webhookTitle as string) || "",
   };
 }
 
