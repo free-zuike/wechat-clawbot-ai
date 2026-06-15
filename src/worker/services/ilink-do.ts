@@ -733,6 +733,8 @@ export class ILinkConnectionDO implements DurableObject {
     let webhookUrl = "";
     let webhookEnabled = false;
     let webhookTitle = "";
+    let webhookApiKey = "";
+    let webhookChannels: string[] = [];
 
     // 从 KV 读配置
     const configRaw = await this.kv?.get("clawbot:config");
@@ -748,10 +750,12 @@ export class ILinkConnectionDO implements DurableObject {
         webhookUrl = kvConfig.webhookUrl || "";
         webhookEnabled = kvConfig.webhookEnabled || false;
         webhookTitle = kvConfig.webhookTitle || "";
+        webhookApiKey = kvConfig.webhookApiKey || "";
+        webhookChannels = kvConfig.webhookChannels || [];
       }
     } catch (_e) {}
 
-    const cfg = { aiSystemPrompt, aiModel, aiProvider, aiBaseUrl, aiApiKey, aiMaxTokens, webhook: { enabled: webhookEnabled, url: webhookUrl, title: webhookTitle } };
+    const cfg = { aiSystemPrompt, aiModel, aiProvider, aiBaseUrl, aiApiKey, aiMaxTokens, webhook: { enabled: webhookEnabled, url: webhookUrl, title: webhookTitle, apiKey: webhookApiKey, channels: webhookChannels } };
     this.cache.config = cfg;
     this.cache.configLoadedAt = now;
     return cfg;

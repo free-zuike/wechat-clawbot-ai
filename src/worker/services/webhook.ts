@@ -5,6 +5,8 @@ import { Logger } from "../utils/error";
 export interface WebhookConfig {
   enabled: boolean;
   url: string;
+  apiKey?: string;
+  channels?: string[];
   title?: string;
 }
 
@@ -17,22 +19,28 @@ export async function sendWebhook(config: WebhookConfig, data: {
   if (!config.enabled || !config.url) return;
 
   const title = config.title || "🦞 ClawBot AI 消息";
-  const body = [
+  const content = [
     `来自: ${data.fromUserId}`,
     `内容: ${data.content}`,
     data.replyContent ? `回复: ${data.replyContent}` : null,
     `时间: ${data.timestamp}`,
   ].filter(Boolean).join("\n");
 
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (config.apiKey) {
+    headers["Authorization"] = `Bearer ${config.apiKey}`;
+  }
+
   try {
     const resp = await fetch(config.url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title, body }),
+      headers,
+      body: JSON.stringify({ title, content, channels: config.channels || [] }),
       signal: AbortSignal.timeout(5000),
     });
     if (!resp.ok) {
-      Logger.warn("[Webhook] push failed", { status: resp.status });
+      const body = await resp.text().catch(() => "");
+      Logger.warn("[Webhook] push failed", { status: resp.status, body: body.slice(0, 200) });
     } else {
       Logger.info("[Webhook] push sent", { to: data.fromUserId });
     }

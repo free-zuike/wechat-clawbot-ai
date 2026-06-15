@@ -184,7 +184,7 @@ const statusLoading = ref(false);
 const firstLoadDone = ref(false);
 
 // ===== Config =====
-const config = reactive({ aiProvider: "cloudflare", aiModel: "", aiBaseUrl: "", aiApiKey: "", aiMaxTokens: 1024, aiSystemPrompt: "", webhookEnabled: false, webhookUrl: "", webhookTitle: "" });
+const config = reactive({ aiProvider: "cloudflare", aiModel: "", aiBaseUrl: "", aiApiKey: "", aiMaxTokens: 1024, aiSystemPrompt: "", webhookEnabled: false, webhookUrl: "", webhookTitle: "", webhookApiKey: "", webhookChannels: [] as string[] });
 const configResult = ref("");
 const configSaving = ref(false);
 
@@ -286,6 +286,8 @@ async function handleLoadConfig() {
     config.webhookEnabled = d.webhookEnabled || false;
     config.webhookUrl = d.webhookUrl || "";
     config.webhookTitle = d.webhookTitle || "";
+    config.webhookApiKey = d.webhookApiKey || "";
+    config.webhookChannels = d.webhookChannels || [];
     configResult.value = d.hasEnvOverride ? "✅ 已加载当前配置（注意：当前有环境变量覆盖）" : "✅ 已加载当前配置";
   } catch (e: any) { if (e instanceof ApiError && e.isCancelled) return; configResult.value = "❌ 加载失败: " + handleApiError(e, "加载失败"); }
 }

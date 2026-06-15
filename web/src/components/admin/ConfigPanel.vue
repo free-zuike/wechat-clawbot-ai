@@ -66,14 +66,28 @@
       <template v-if="config.webhookEnabled">
         <div class="field">
           <label>推送地址</label>
-          <input v-model="config.webhookUrl" class="input" placeholder="https://your-bee-swarm.workers.dev/api/admin/push?password=xxx" />
+          <input v-model="config.webhookUrl" class="input" placeholder="https://beeswarm.xxx.workers.dev/api/admin/webhook/push" />
           <div style="font-size: 12px; color: var(--text-secondary); margin-top: 6px">
-            bee-swarm 的推送 API 地址，含 password 参数
+            bee-swarm 的 Webhook 推送 API 地址
+          </div>
+        </div>
+        <div class="field">
+          <label>API 密钥</label>
+          <input v-model="config.webhookApiKey" class="input" type="password" placeholder="Bearer 认证的 API Key" />
+          <div style="font-size: 12px; color: var(--text-secondary); margin-top: 6px">
+            已有密钥时留空不修改
           </div>
         </div>
         <div class="field">
           <label>通知标题</label>
           <input v-model="config.webhookTitle" class="input" placeholder="🦞 ClawBot AI 消息" />
+        </div>
+        <div class="field">
+          <label>推送渠道</label>
+          <input v-model="webhookChannelsStr" class="input" placeholder="wework,dingtalk,telegram" />
+          <div style="font-size: 12px; color: var(--text-secondary); margin-top: 6px">
+            用逗号分隔，如: wework,dingtalk,feishu,telegram
+          </div>
         </div>
       </template>
     </div>
@@ -91,11 +105,18 @@
 </template>
 
 <script setup lang="ts">
-defineProps<{
-  config: { aiProvider: string; aiModel: string; aiBaseUrl: string; aiApiKey: string; aiMaxTokens: number; aiSystemPrompt: string; webhookEnabled: boolean; webhookUrl: string; webhookTitle: string };
+import { computed } from "vue";
+
+const props = defineProps<{
+  config: { aiProvider: string; aiModel: string; aiBaseUrl: string; aiApiKey: string; aiMaxTokens: number; aiSystemPrompt: string; webhookEnabled: boolean; webhookUrl: string; webhookTitle: string; webhookApiKey: string; webhookChannels: string[] };
   result: string;
   saving: boolean;
 }>();
 
 defineEmits(["load", "save"]);
+
+const webhookChannelsStr = computed({
+  get: () => (props.config.webhookChannels || []).join(","),
+  set: (val: string) => { props.config.webhookChannels = val.split(",").map(s => s.trim()).filter(Boolean); },
+});
 </script>
