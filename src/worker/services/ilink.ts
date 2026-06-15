@@ -216,15 +216,16 @@ export async function sendTypingStatus(
     to_user_id: toUserId,
     client_id: generateClientId(),
     message_type: MessageType.BOT,
-    message_state: typing ? 1 : 2,
+    message_state: typing ? TypingStatus.TYPING : TypingStatus.CANCEL,
     context_token: contextToken,
-    item_list: [{ type: MessageItemType.TEXT, text_item: { text: typing ? "\u200B" : "" } }],
+    item_list: [{ type: MessageItemType.TEXT, text_item: { text: "" } }],
   };
 
   try {
-    await post(creds, "ilink/bot/sendmessage", { msg }, DEFAULT_API_MS);
-  } catch {
-    // typing 状态失败不影响主流程
+    const resp = await post(creds, "ilink/bot/sendmessage", { msg }, DEFAULT_API_MS);
+    Logger.debug(`[iLink] Typing status sent`, { typing, resp });
+  } catch (e) {
+    Logger.warn(`[iLink] Typing status failed`, { error: (e as Error).message });
   }
 }
 
