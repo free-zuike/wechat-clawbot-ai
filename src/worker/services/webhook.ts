@@ -18,15 +18,15 @@ export async function sendWebhook(config: WebhookConfig, data: {
 }): Promise<void> {
   if (!config.enabled || !config.url) return;
 
-  const title = config.title || "🦞 ClawBot AI 消息";
+  const title = config.title || "ClawBot AI";
   const content = [
-    `来自: ${data.fromUserId}`,
-    `内容: ${data.content}`,
-    data.replyContent ? `回复: ${data.replyContent}` : null,
-    `时间: ${data.timestamp}`,
+    `From: ${data.fromUserId}`,
+    `Content: ${data.content}`,
+    data.replyContent ? `Reply: ${data.replyContent}` : null,
+    `Time: ${data.timestamp}`,
   ].filter(Boolean).join("\n");
 
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  const headers: Record<string, string> = { "Content-Type": "application/json; charset=utf-8" };
   if (config.apiKey) {
     headers["X-API-Key"] = config.apiKey;
   }
