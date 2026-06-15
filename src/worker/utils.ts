@@ -15,11 +15,11 @@ export function generateSessionToken(): string {
 }
 
 export function createSessionCookie(token: string): string {
-  return `clawbot_session=${token}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${24 * 60 * 60}`;
+  return `clawbot_session=${token}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${24 * 60 * 60}`;
 }
 
 export function clearSessionCookie(): string {
-  return "clawbot_session=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0";
+  return "clawbot_session=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0";
 }
 
 // 验证管理员：session cookie → DO session → 管理员密码（与 bot_token 完全独立）
