@@ -337,9 +337,10 @@ export class ILinkConnectionDO implements DurableObject {
 
     try {
       await this.initSQLite();
-      const row = this.state.storage.sql.prepare(
-        `SELECT token FROM sessions WHERE token = ?`
-      ).bind(token).first();
+      const row = this.state.storage.sql.exec(
+        `SELECT token FROM sessions WHERE token = ?`,
+        token
+      ).one();
       return new Response(JSON.stringify({ valid: !!row }), {
         headers: { "Content-Type": "application/json" },
       });
@@ -967,13 +968,12 @@ export class ILinkConnectionDO implements DurableObject {
     if (!syncBufChanged) return;
 
     try {
-      this.state.storage.sql.prepare(
+      this.state.storage.sql.exec(
         `INSERT INTO credentials (id, bot_token, account_id, base_url, user_id, sync_buf, created_at, updated_at)
          VALUES (1, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            sync_buf = excluded.sync_buf,
-           updated_at = excluded.updated_at`
-      ).bind(
+           updated_at = excluded.updated_at`,
         this.ilinkCreds.botToken,
         this.ilinkCreds.accountId,
         this.ilinkCreds.baseUrl,
@@ -981,7 +981,7 @@ export class ILinkConnectionDO implements DurableObject {
         this.state.syncBuf,
         now,
         now,
-      ).run();
+      );
 
       if (this.cache.credentials) {
         this.cache.credentials.syncBuf = this.state.syncBuf;
@@ -998,7 +998,7 @@ export class ILinkConnectionDO implements DurableObject {
 
     const now = Date.now();
     try {
-      this.state.storage.sql.prepare(
+      this.state.storage.sql.exec(
         `INSERT INTO credentials (id, bot_token, account_id, base_url, user_id, sync_buf, created_at, updated_at)
          VALUES (1, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
@@ -1007,8 +1007,7 @@ export class ILinkConnectionDO implements DurableObject {
            base_url = excluded.base_url,
            user_id = excluded.user_id,
            sync_buf = excluded.sync_buf,
-           updated_at = excluded.updated_at`
-      ).bind(
+           updated_at = excluded.updated_at`,
         this.ilinkCreds.botToken,
         this.ilinkCreds.accountId,
         this.ilinkCreds.baseUrl,
@@ -1016,7 +1015,7 @@ export class ILinkConnectionDO implements DurableObject {
         this.state.syncBuf,
         now,
         now,
-      ).run();
+      );
       Logger.info("[DO] Credentials migrated from KV to SQLite");
     } catch (e) {
       Logger.error("[DO] Failed to migrate credentials to SQLite", { error: (e as Error).message });
@@ -1051,9 +1050,10 @@ export class ILinkConnectionDO implements DurableObject {
 
   private async hasProcessedMessage(messageId: string): Promise<boolean> {
     try {
-      const row = this.state.storage.sql.prepare(
-        `SELECT 1 as found FROM processed_messages WHERE message_id = ? LIMIT 1`
-      ).bind(messageId).first();
+      const row = this.state.storage.sql.exec(
+        `SELECT 1 as found FROM processed_messages WHERE message_id = ? LIMIT 1`,
+        messageId
+      ).one();
       return !!row;
     } catch (e) {
       Logger.warn("[DO] Failed to query processed_messages", { error: (e as Error).message, messageId });
@@ -1063,9 +1063,10 @@ export class ILinkConnectionDO implements DurableObject {
 
   private async markMessageProcessed(messageId: string): Promise<void> {
     try {
-      this.state.storage.sql.prepare(
-        `INSERT OR IGNORE INTO processed_messages (message_id, created_at) VALUES (?, ?)`
-      ).bind(messageId, Date.now()).run();
+      this.state.storage.sql.exec(
+        `INSERT OR IGNORE INTO processed_messages (message_id, created_at) VALUES (?, ?)`,
+        messageId, Date.now()
+      );
     } catch (e) {
       Logger.warn("[DO] Failed to mark message processed", { error: (e as Error).message, messageId });
     }
