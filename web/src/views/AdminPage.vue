@@ -32,6 +32,7 @@
           :debug-loading="debugLoading"
           @debug="handleDebug"
         />
+        <HealthDashboard />
       </section>
 
       <section v-if="activeSection === 'control'">
@@ -109,10 +110,6 @@
       <section v-if="activeSection === 'templates'">
         <TemplatesPanel @send="(content: string) => { activeSection = 'chat'; chatInput = content; }" />
       </section>
-
-      <section v-if="activeSection === 'health'">
-        <HealthDashboard />
-      </section>
     </main>
   </div>
 </template>
@@ -152,7 +149,6 @@ const navItems = [
   { key: "alerts", label: "报警中心", icon: "🚨" },
   { key: "sessions", label: "用户会话", icon: "💬" },
   { key: "templates", label: "消息模板", icon: "📋" },
-  { key: "health", label: "健康仪表盘", icon: "📈" },
 ];
 const activeSection = ref("status");
 let isFirstRefresh = true;
