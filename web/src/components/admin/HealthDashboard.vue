@@ -74,7 +74,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from "vue";
+import { ref, computed, onMounted, onUnmounted } from "vue";
 import { fetchStatsHistory, type StatsSnapshot } from "../../api";
 
 const loading = ref(false);
@@ -127,7 +127,16 @@ onMounted(async () => {
     const d = await fetchStatsHistory();
     history.value = d.history || [];
   } catch {} finally { loading.value = false; }
+  refreshTimer = window.setInterval(async () => {
+    try {
+      const d = await fetchStatsHistory();
+      history.value = d.history || [];
+    } catch {}
+  }, 30000);
 });
+
+let refreshTimer: number | null = null;
+onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer); });
 </script>
 
 <style scoped>
