@@ -24,7 +24,7 @@ interface Route { path: string; method?: string; handler: Handler; rateLimit?: b
 
 export class Router {
   private routes: Route[] = [
-    { path: "/api/check-login", method: "GET", handler: handleCheckLogin, rateLimit: true, rateLimitMax: 120 },
+    { path: "/api/check-login", handler: handleCheckLogin, rateLimit: true, rateLimitMax: 120 },
     { path: "/api/qrcode", method: "GET", handler: handleQRCode, rateLimit: true, rateLimitMax: 20 },
     { path: "/api/qrcode-status", method: "GET", handler: handleQRCodeStatus, rateLimit: true, rateLimitMax: 60 },
     { path: "/api/status", handler: handleStatus, rateLimit: true, rateLimitMax: 30 },
