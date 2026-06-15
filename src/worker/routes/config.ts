@@ -103,6 +103,9 @@ export async function handleConfig(request: Request, env: Env): Promise<Response
       if (typeof updated.aiApiKey === "string" && updated.aiApiKey.includes("***")) {
         updated.aiApiKey = current.aiApiKey || "";
       }
+      if (typeof updated.webhookApiKey === "string" && updated.webhookApiKey.includes("***")) {
+        updated.webhookApiKey = current.webhookApiKey || "";
+      }
 
       for (const field of CONFIG_FIELDS) {
         if (updated[field] === undefined && field !== "aiProvider" && field !== "aiMaxTokens") {
