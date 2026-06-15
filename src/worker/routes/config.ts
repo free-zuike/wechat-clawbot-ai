@@ -81,6 +81,8 @@ export async function handleConfig(request: Request, env: Env): Promise<Response
           const val = body[field];
           if (typeof val === "string") updated[field] = val.trim();
           else if (typeof val === "number") updated[field] = val;
+          else if (typeof val === "boolean") updated[field] = val;
+          else if (Array.isArray(val)) updated[field] = val;
         }
       }
 
@@ -103,7 +105,7 @@ export async function handleConfig(request: Request, env: Env): Promise<Response
       }
 
       for (const field of CONFIG_FIELDS) {
-        if ((updated[field] === "" || updated[field] === undefined) && field !== "aiProvider" && field !== "aiMaxTokens") {
+        if (updated[field] === undefined && field !== "aiProvider" && field !== "aiMaxTokens") {
           delete updated[field];
         }
       }
