@@ -17,12 +17,12 @@ router.beforeEach(async (to, _from, next) => {
     next();
     return;
   }
-  // 1. 先检查 localStorage（扫码确认后写入，秒级响应）
+  // 1. localStorage 已登录
   if (localStorage.getItem("clawbot_auth") === "ok") {
     next();
     return;
   }
-  // 2. 再检查后端
+  // 2. 后端 session 验证
   try {
     const data = await checkLogin();
     if (data.loggedIn) {
