@@ -4,7 +4,7 @@
 
 import { Logger } from "../utils/error";
 import { generateSessionToken } from "../utils";
-import { getUpdates, sendTextMessage, extractMessageText, getQRCodeStatus, MessageType } from "./ilink";
+import { getUpdates, sendTextMessage, sendTypingStatus, extractMessageText, getQRCodeStatus, MessageType } from "./ilink";
 import { callAIWithContext } from "./ai";
 import { D1Service } from "./d1";
 import { sendWebhook } from "./webhook";
@@ -781,6 +781,9 @@ export class ILinkConnectionDO implements DurableObject {
       let replyAt = "";
 
       try {
+        // 发送"对方正在输入"状态
+        sendTypingStatus(this.ilinkCreds!, from, ctxToken, true).catch(() => {});
+
         // 调用 AI 生成回复（使用 DO SQLite 存储上下文，不再走 KV）
         const reply = await callAIWithContext(
           this.state.storage.sql,

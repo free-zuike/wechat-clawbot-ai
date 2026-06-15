@@ -14,7 +14,8 @@
 
     <div class="chat-input">
       <input
-        v-model="input"
+        :value="input"
+        @input="$emit('update:input', ($event.target as HTMLInputElement).value)"
         class="input"
         placeholder="输入消息..."
         :disabled="loading"
@@ -38,5 +39,5 @@ defineProps<{
   loading: boolean;
 }>();
 
-defineEmits(["send"]);
+defineEmits(["send", "update:input"]);
 </script>

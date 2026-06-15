@@ -204,6 +204,30 @@ export async function getUpdates(
   }
 }
 
+// ========== 发送输入状态 ==========
+export async function sendTypingStatus(
+  creds: ILinkCredentials,
+  toUserId: string,
+  contextToken: string,
+  typing: boolean,
+): Promise<void> {
+  const msg: WeixinMessage = {
+    from_user_id: "",
+    to_user_id: toUserId,
+    client_id: generateClientId(),
+    message_type: MessageType.BOT,
+    message_state: typing ? MessageState.GENERATING : MessageState.FINISH,
+    context_token: contextToken,
+    item_list: [],
+  };
+
+  try {
+    await post(creds, "ilink/bot/sendmessage", { msg }, DEFAULT_API_MS);
+  } catch {
+    // typing 状态失败不影响主流程
+  }
+}
+
 // ========== 发送消息 ==========
 export async function sendTextMessage(
   creds: ILinkCredentials,

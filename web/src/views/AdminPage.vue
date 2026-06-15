@@ -90,6 +90,7 @@
           :input="chatInput"
           :loading="chatLoading"
           @send="handleSendChat"
+          @update:input="(v: string) => chatInput = v"
         />
       </section>
 
