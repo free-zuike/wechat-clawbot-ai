@@ -597,6 +597,7 @@ export class ILinkConnectionDO implements DurableObject {
   }
 
   private saveStatsSnapshot(): void {
+    if (!this.statsRestored) return;
     const now = new Date();
     const ts = now.toISOString();
     this.statsHistory.push({
