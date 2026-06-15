@@ -60,7 +60,8 @@ async function callOpenAICompatible(params: {
   messages: Array<{ role: string; content: string }>;
   maxTokens: number;
 }): Promise<string> {
-  const url = params.baseUrl.replace(/\/+$/, "") + "/v1/chat/completions";
+  const base = params.baseUrl.replace(/\/+$/, "");
+  const url = base.includes("/chat/completions") ? base : base + "/v1/chat/completions";
 
   const resp = await fetch(url, {
     method: "POST",
