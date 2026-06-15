@@ -64,8 +64,21 @@ export async function handleQRCodeStatus(request: Request, env: Env): Promise<Re
 
       // 生成并存储 admin session（与 bot_token 完全独立）
       const sessionToken = generateSessionToken();
+      
+      // 存到 KV（可能失败）
       try {
         await env.CLAWBOT_KV.put(`clawbot:session:${sessionToken}`, "valid", { expirationTtl: 24 * 60 * 60 });
+      } catch (_e) {}
+
+      // 存到 DO（备用，确保 session 不丢）
+      try {
+        const doId2 = env.ILINK_CONNECTION.idFromName("main");
+        const doStub2 = env.ILINK_CONNECTION.get(doId2);
+        await doStub2.fetch(new Request("http://localhost/save-session", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token: sessionToken, ttl: 24 * 60 * 60 }),
+        }));
       } catch (_e) {}
 
       Logger.info("[qrcode-status] login confirmed", { accountId: status.ilink_bot_id });

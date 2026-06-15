@@ -22,16 +22,25 @@ export function clearSessionCookie(): string {
   return "clawbot_session=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0";
 }
 
-// 验证管理员：session cookie → 管理员密码（与 bot_token 完全独立）
+// 验证管理员：session cookie → DO session → 管理员密码（与 bot_token 完全独立）
 export async function verifyAdmin(request: Request, env: any): Promise<{ ok: boolean; error?: string }> {
   // 1. Session cookie 检查
   const cookieHeader = request.headers.get("Cookie") || "";
   const sessionMatch = cookieHeader.match(/clawbot_session=([^;]+)/);
   if (sessionMatch) {
+    const sessionToken = sessionMatch[1];
+    // 先查 KV
     try {
-      const sessionToken = sessionMatch[1];
       const sessionValid = await env.CLAWBOT_KV?.get(`clawbot:session:${sessionToken}`);
       if (sessionValid) return { ok: true };
+    } catch (_e) {}
+    // 再查 DO
+    try {
+      const doId = env.ILINK_CONNECTION.idFromName("main");
+      const doStub = env.ILINK_CONNECTION.get(doId);
+      const resp = await doStub.fetch(new Request(`http://localhost/check-session?token=${sessionToken}`), { signal: AbortSignal.timeout(3000) });
+      const data = await resp.json() as any;
+      if (data.valid) return { ok: true };
     } catch (_e) {}
   }
 

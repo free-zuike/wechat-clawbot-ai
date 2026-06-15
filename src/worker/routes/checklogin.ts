@@ -15,18 +15,27 @@ export async function handleCheckLogin(request: Request, env: Env): Promise<Resp
   let loggedIn = false;
   let tokenHealth = "unknown";
 
-  try {
-    const doId = env.ILINK_CONNECTION.idFromName("main");
-    const doStub = env.ILINK_CONNECTION.get(doId);
-    const resp = await doStub.fetch(new Request("http://localhost/status"), { signal: AbortSignal.timeout(3000) });
-    const data = await resp.json() as any;
-    if (data.hasCredentials) {
-      loggedIn = true;
-      tokenHealth = "valid";
+  // 检查 session cookie（KV + DO）
+  const cookieHeader = request.headers.get("Cookie") || "";
+  const sessionMatch = cookieHeader.match(/clawbot_session=([^;]+)/);
+  if (sessionMatch) {
+    const sessionToken = sessionMatch[1];
+    try {
+      const sessionValid = await env.CLAWBOT_KV.get(`clawbot:session:${sessionToken}`);
+      if (sessionValid) loggedIn = true;
+    } catch (_e) {}
+    if (!loggedIn) {
+      try {
+        const doId = env.ILINK_CONNECTION.idFromName("main");
+        const doStub = env.ILINK_CONNECTION.get(doId);
+        const resp = await doStub.fetch(new Request(`http://localhost/check-session?token=${sessionToken}`), { signal: AbortSignal.timeout(3000) });
+        const data = await resp.json() as any;
+        if (data.valid) loggedIn = true;
+      } catch (_e) {}
     }
-  } catch (e) {
-    Logger.warn("[check-login] DO status check failed", { error: (e as Error).message });
   }
+
+  if (loggedIn) tokenHealth = "valid";
 
   Logger.info("[check-login] result", { loggedIn });
 

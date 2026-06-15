@@ -169,6 +169,9 @@ export class ILinkConnectionDO implements DurableObject {
     if (url.pathname === "/check-session") {
       return this.handleCheckSession(url);
     }
+    if (url.pathname === "/save-session") {
+      return this.handleSaveSession(request);
+    }
     if (url.pathname === "/save-creds") {
       return this.handleSaveCreds(request);
     }
@@ -304,6 +307,33 @@ export class ILinkConnectionDO implements DurableObject {
       });
     } catch (e: any) {
       Logger.error("[DO] Failed to save credentials", { error: e.message });
+      return new Response(JSON.stringify({ error: e.message }), {
+        status: 500,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+  }
+
+  // ========== 保存 session（admin登录时调用）==========
+
+  private async handleSaveSession(request: Request): Promise<Response> {
+    try {
+      const body = await request.json();
+      const { token, ttl } = body;
+      if (!token) {
+        return new Response(JSON.stringify({ error: "缺少 token" }), {
+          status: 400,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      await this.state.storage.put(`session:${token}`, JSON.stringify({ valid: true, createdAt: Date.now() }));
+      Logger.info("[DO] Session saved", { token: token.slice(0, 8) + "..." });
+      return new Response(JSON.stringify({ ok: true }), {
+        headers: { "Content-Type": "application/json" },
+      });
+    } catch (e: any) {
+      Logger.error("[DO] /save-session error", { error: e.message });
       return new Response(JSON.stringify({ error: e.message }), {
         status: 500,
         headers: { "Content-Type": "application/json" },
