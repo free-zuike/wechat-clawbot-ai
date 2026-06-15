@@ -36,44 +36,43 @@
       </section>
 
       <section v-if="activeSection === 'control'">
-        <MessageControl
+        <TaskPanel
+          ref="taskPanelRef"
+          :status="status"
           :bound="qrCodeBound"
-          :qr-code="qrCode"
+          :is-polling="isPolling"
+          :poll-result="pollResult"
+          :ws-connected="wsConnected"
+          :ws-messages="wsMessages"
           :qr-image="qrImage"
           :qr-status="qrStatus"
           :qr-loading="qrLoading"
-          :ws-connected="wsConnected"
-          :ws-messages="wsMessages"
-          :is-polling="isPolling"
-          :poll-result="pollResult"
+          @trigger-poll="handleTriggerPoll"
           @get-q-r="handleGetQRCode"
           @reset-q-r="resetQR"
           @unbind="handleUnbindWeChat"
-          @trigger-poll="handleTriggerPoll"
           @clear-messages="wsMessages = []"
         />
-      </section>
-
-      <section v-if="activeSection === 'tasks'">
-        <TaskPanel
-          :status="status"
-          :bound="qrCodeBound"
-          :account-id="''"
-          :is-polling="isPolling"
-          :ws-connected="wsConnected"
-          :ws-messages="wsMessages"
-          :template-count="templateCount"
-          :config-provider="config.aiProvider"
-          :qr-code="qrCode"
-          :qr-loading="qrLoading"
-          @trigger-poll="handleTriggerPoll"
-          @get-q-r="handleGetQRCode"
-          @unbind="handleUnbindWeChat"
-          @clear-messages="wsMessages = []"
-          @open-chat="activeSection = 'chat'"
-          @open-templates="activeSection = 'templates'"
-          @open-config="activeSection = 'config'"
-        />
+        <!-- WebSocket 实时消息列表 -->
+        <div v-if="wsMessages.length > 0" class="card" style="margin-top: 16px">
+          <h2>📡 实时消息 ({{ wsMessages.length }})</h2>
+          <div style="max-height: 400px; overflow-y: auto; border: 1px solid var(--border-light); border-radius: 8px">
+            <div
+              v-for="(msg, i) in wsMessages"
+              :key="i"
+              style="padding: 10px 14px; border-bottom: 1px solid var(--border-light); font-size: 13px"
+            >
+              <div style="display: flex; justify-content: space-between; margin-bottom: 4px">
+                <span style="font-weight: 600; color: var(--link)">📩 {{ msg.data?.fromUserId || '未知' }}</span>
+                <span style="color: var(--text-dim); font-size: 12px">{{ msg.data?.timestamp || '' }}</span>
+              </div>
+              <div style="color: var(--text-primary)">{{ msg.data?.content || msg.data }}</div>
+              <div v-if="msg.data?.replyContent" style="color: var(--success); margin-top: 4px; padding: 6px 8px; background: var(--alert-success-bg); border-radius: 4px">
+                💬 {{ msg.data.replyContent }}
+              </div>
+            </div>
+          </div>
+        </div>
       </section>
 
       <section v-if="activeSection === 'config'">
@@ -142,11 +141,10 @@ import { useRouter } from "vue-router";
 import {
   fetchStatus, fetchConfig, saveConfig, triggerPoll, logout, chat,
   checkLogin, debugLogin, fetchAlerts, resolveAlert, resolveAllAlerts,
-  fetchSessions, fetchHealth, getQRCode, getQRCodeStatus, fetchTemplates, ApiError,
+  fetchSessions, fetchHealth, getQRCode, getQRCodeStatus, ApiError,
 } from "../api";
 import QRCode from "qrcode";
 import StatusPanel from "../components/admin/StatusPanel.vue";
-import MessageControl from "../components/admin/MessageControl.vue";
 import ConfigPanel from "../components/admin/ConfigPanel.vue";
 import ChatPanel from "../components/admin/ChatPanel.vue";
 import AlertsPanel from "../components/admin/AlertsPanel.vue";
@@ -166,8 +164,7 @@ applyTheme();
 // ===== Nav =====
 const navItems = [
   { key: "status", label: "状态监控", icon: "📊" },
-  { key: "control", label: "消息控制", icon: "🎮" },
-  { key: "tasks", label: "任务面板", icon: "🎯" },
+  { key: "control", label: "操作面板", icon: "🎯" },
   { key: "config", label: "系统配置", icon: "⚙️" },
   { key: "chat", label: "AI 测试", icon: "🤖" },
   { key: "alerts", label: "报警中心", icon: "🚨" },
@@ -195,6 +192,9 @@ const configSaving = ref(false);
 const chatMessages = ref<Array<{ role: string; text: string }>>([]);
 const chatInput = ref("");
 const chatLoading = ref(false);
+
+// ===== Task Panel =====
+const taskPanelRef = ref<InstanceType<typeof TaskPanel> | null>(null);
 
 // ===== QR =====
 const qrCode = ref(""); const qrImage = ref(""); const qrStatus = ref("");
@@ -228,9 +228,6 @@ const healthData = reactive({
   kv: "—", loggedIn: false, totalPolls: 0, totalHandled: 0, totalAICalls: 0, totalAIFails: 0,
   unresolvedAlerts: 0, criticalAlerts: 0, errorAlerts: 0, warningAlerts: 0, timestamp: "",
 });
-
-// ===== Templates =====
-const templateCount = ref(0);
 
 // ===== Error handling =====
 function handleApiError(error: unknown, defaultMessage: string): string {
@@ -393,7 +390,6 @@ onMounted(async () => {
     if (!loginOk) { router.push("/login"); return; }
   }
   handleRefreshStatus(); handleLoadConfig(); handleRefreshAlerts(); handleRefreshSessions(); connectWebSocket();
-  fetchTemplates().then((d) => { templateCount.value = (d.templates || []).length; }).catch(() => {});
   async function tick() { try { await handleRefreshStatus(); if (activeSection.value === "alerts") await handleRefreshAlerts(); } finally { refreshTimer = window.setTimeout(tick, 30000); } }
   refreshTimer = window.setTimeout(tick, 30000);
 });
