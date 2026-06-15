@@ -12,5 +12,7 @@ export async function handleWebSocket(request: Request, env: Env): Promise<Respo
   const doId = env.ILINK_CONNECTION.idFromName("main");
   const doStub = env.ILINK_CONNECTION.get(doId);
 
-  return doStub.fetch(request);
+  const doUrl = new URL(request.url);
+  doUrl.pathname = "/ws";
+  return doStub.fetch(new Request(doUrl.toString(), request));
 }

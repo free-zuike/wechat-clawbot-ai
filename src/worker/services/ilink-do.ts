@@ -155,7 +155,7 @@ export class ILinkConnectionDO implements DurableObject {
     }
 
     // WebSocket 升级
-    if (url.pathname === "/ws") {
+    if (url.pathname === "/ws" || url.pathname === "/api/ws") {
       return this.handleWebSocket(request);
     }
 
