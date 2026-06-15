@@ -354,35 +354,6 @@ export class ILinkConnectionDO implements DurableObject {
 
   // ========== 清除凭证（解绑微信）==========
 
-  private async handleSaveConfig(request: Request): Promise<Response> {
-    try {
-      const body = await request.json();
-      await this.state.storage.put("app_config", JSON.stringify(body));
-      return new Response(JSON.stringify({ ok: true }), {
-        headers: { "Content-Type": "application/json" },
-      });
-    } catch (e: any) {
-      Logger.error("[DO] /save-config error", { error: e.message });
-      return new Response(JSON.stringify({ error: e.message }), {
-        status: 500,
-        headers: { "Content-Type": "application/json" },
-      });
-    }
-  }
-
-  private async handleGetConfig(): Promise<Response> {
-    try {
-      const stored = await this.state.storage.get<string>("app_config");
-      return new Response(JSON.stringify({ config: stored ? JSON.parse(stored) : null }), {
-        headers: { "Content-Type": "application/json" },
-      });
-    } catch (e: any) {
-      return new Response(JSON.stringify({ config: null }), {
-        headers: { "Content-Type": "application/json" },
-      });
-    }
-  }
-
   // ========== 获取凭证详情（诊断用）==========
 
   private async handleGetCreds(): Promise<Response> {
