@@ -84,41 +84,44 @@ const chartData = computed(() => {
   const data = history.value;
   if (data.length === 0) return [];
 
-  // 计算deltas（每个数据点相对于前一个的deltas）
-  const deltas: Array<{
+  // 直接使用累积值（不计算 delta），这样柱子会随时间增长
+  const points: Array<{
     time: string;
     polls: number; handled: number; aiCalls: number; aiFails: number;
     pollsH: number; handledH: number; aiCallsH: number; aiFailsH: number;
   }> = [];
 
-  for (let i = 1; i < data.length; i++) {
-    const d = data[i];
-    const prev = data[i - 1];
-    deltas.push({
+  for (const d of data) {
+    points.push({
       time: new Date(d.ts).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }),
-      polls: d.polls - prev.polls,
-      handled: d.handled - prev.handled,
-      aiCalls: d.aiCalls - prev.aiCalls,
-      aiFails: d.aiFails - prev.aiFails,
+      polls: d.polls,
+      handled: d.handled,
+      aiCalls: d.aiCalls,
+      aiFails: d.aiFails,
       pollsH: 0, handledH: 0, aiCallsH: 0, aiFailsH: 0,
     });
   }
 
-  // 计算高度百分比
-  const maxPolls = Math.max(...deltas.map(d => d.polls), 1);
-  const maxHandled = Math.max(...deltas.map(d => d.handled), 1);
-  const maxAiCalls = Math.max(...deltas.map(d => d.aiCalls), 1);
-  const maxAiFails = Math.max(...deltas.map(d => d.aiFails), 1);
+  // 使用第一个点的值作为基准，显示相对于起始的增量
+  const first = points[0];
+  const maxPolls = Math.max(...points.map(d => d.polls - first.polls), 1);
+  const maxHandled = Math.max(...points.map(d => d.handled - first.handled), 1);
+  const maxAiCalls = Math.max(...points.map(d => d.aiCalls - first.aiCalls), 1);
+  const maxAiFails = Math.max(...points.map(d => d.aiFails - first.aiFails), 1);
 
-  for (const d of deltas) {
-    d.pollsH = Math.max((d.polls / maxPolls) * 100, d.polls > 0 ? 4 : 0);
-    d.handledH = Math.max((d.handled / maxHandled) * 100, d.handled > 0 ? 4 : 0);
-    d.aiCallsH = Math.max((d.aiCalls / maxAiCalls) * 100, d.aiCalls > 0 ? 4 : 0);
-    d.aiFailsH = Math.max((d.aiFails / maxAiFails) * 100, d.aiFails > 0 ? 4 : 0);
+  for (const d of points) {
+    const pDiff = d.polls - first.polls;
+    const hDiff = d.handled - first.handled;
+    const aDiff = d.aiCalls - first.aiCalls;
+    const fDiff = d.aiFails - first.aiFails;
+    d.pollsH = Math.max((pDiff / maxPolls) * 100, d.polls > 0 ? 4 : 0);
+    d.handledH = Math.max((hDiff / maxHandled) * 100, hDiff > 0 ? 4 : 0);
+    d.aiCallsH = Math.max((aDiff / maxAiCalls) * 100, aDiff > 0 ? 4 : 0);
+    d.aiFailsH = Math.max((fDiff / maxAiFails) * 100, fDiff > 0 ? 4 : 0);
   }
 
-  // 最多显示 24 个数据点
-  return deltas.slice(-24);
+  // 最多显示 48 个数据点
+  return points.slice(-48);
 });
 
 onMounted(async () => {
