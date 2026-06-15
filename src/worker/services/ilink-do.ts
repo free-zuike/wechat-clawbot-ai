@@ -719,7 +719,7 @@ export class ILinkConnectionDO implements DurableObject {
 
   private async getConfigCached() {
     const now = Date.now();
-    if (this.cache.config && now - this.cache.configLoadedAt < 10 * 60 * 1000) {
+    if (this.cache.config && now - this.cache.configLoadedAt < 2 * 60 * 1000) {
       return this.cache.config;
     }
 
@@ -861,6 +861,7 @@ export class ILinkConnectionDO implements DurableObject {
       // Webhook 推送（fire and forget）
       if (replyContent) {
         const webhookConfig = this.cache.config?.webhook;
+        Logger.debug("[DO] Webhook check", { enabled: webhookConfig?.enabled, hasUrl: !!webhookConfig?.url, replyLength: replyContent.length });
         if (webhookConfig?.enabled && webhookConfig?.url) {
           sendWebhook(webhookConfig, { fromUserId: from, content: text, replyContent, timestamp: createdAt }).catch(() => {});
         }
