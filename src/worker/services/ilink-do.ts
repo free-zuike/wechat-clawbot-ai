@@ -632,6 +632,7 @@ export class ILinkConnectionDO implements DurableObject {
 
     while (this.pollLoopRunning && this.ilinkCreds) {
       try {
+        const pollStart = Date.now();
         const result = await getUpdates(this.ilinkCreds, this.state.syncBuf);
 
         // 更新 syncBuf（写 DO SQLite，不再写 KV）
@@ -644,6 +645,7 @@ export class ILinkConnectionDO implements DurableObject {
         this.state.consecutiveErrors = 0;
         this.state.lastPollAt = new Date().toISOString();
         this.runtimeStats.polls++;
+        this.runtimeStats.lastLatencyMs = Date.now() - pollStart;
 
         // 处理消息
         if (result.msgs && result.msgs.length > 0) {
