@@ -607,10 +607,10 @@ export class ILinkConnectionDO implements DurableObject {
       aiCalls: this.runtimeStats.aiCalls,
       aiFails: this.runtimeStats.aiFails,
     });
-    // 保留最近 48 条（约 48 小时）
     if (this.statsHistory.length > 48) this.statsHistory = this.statsHistory.slice(-48);
-    this.state.storage.put("stats_history", this.statsHistory).catch(() => {});
-    this.state.storage.put("runtime_stats", this.runtimeStats).catch(() => {});
+    // 同步写入 DO storage（不 await，但不用 .catch 吞错误）
+    this.state.storage.put("stats_history", this.statsHistory);
+    this.state.storage.put("runtime_stats", this.runtimeStats);
   }
 
   // ========== 清空待处理消息队列 ==========
