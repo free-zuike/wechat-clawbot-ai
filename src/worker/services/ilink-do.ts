@@ -570,6 +570,8 @@ export class ILinkConnectionDO implements DurableObject {
       accountId: this.ilinkCreds?.accountId,
       needsReLogin: !this.ilinkCreds,
       stats: this.runtimeStats,
+      statsHistoryLen: this.statsHistory.length,
+      lastSnapshot: this.statsHistory.length > 0 ? this.statsHistory[this.statsHistory.length - 1] : null,
     }), {
       headers: { "Content-Type": "application/json" },
     });
@@ -590,8 +592,13 @@ export class ILinkConnectionDO implements DurableObject {
   // ========== 统计历史 ==========
 
   private async handleStatsHistory(): Promise<Response> {
-    Logger.info("[DO] stats-history requested", { points: this.statsHistory.length, stats: this.runtimeStats });
-    return new Response(JSON.stringify({ success: true, history: this.statsHistory }), {
+    return new Response(JSON.stringify({
+      success: true,
+      history: this.statsHistory,
+      runtimeStats: this.runtimeStats,
+      statsRestored: this.statsRestored,
+      historyLen: this.statsHistory.length,
+    }), {
       headers: { "Content-Type": "application/json" },
     });
   }
@@ -600,18 +607,18 @@ export class ILinkConnectionDO implements DurableObject {
     if (!this.statsRestored) return;
     const now = new Date();
     const ts = now.toISOString();
-    this.statsHistory.push({
-      ts,
-      polls: this.runtimeStats.polls,
-      handled: this.runtimeStats.handled,
-      aiCalls: this.runtimeStats.aiCalls,
-      aiFails: this.runtimeStats.aiFails,
-    });
+
+    // 读取上次保存的快照作为基准，确保值单调递增
+    const lastSnapshot = this.statsHistory.length > 0 ? this.statsHistory[this.statsHistory.length - 1] : null;
+    const polls = Math.max(this.runtimeStats.polls, lastSnapshot?.polls || 0);
+    const handled = Math.max(this.runtimeStats.handled, lastSnapshot?.handled || 0);
+    const aiCalls = Math.max(this.runtimeStats.aiCalls, lastSnapshot?.aiCalls || 0);
+    const aiFails = Math.max(this.runtimeStats.aiFails, lastSnapshot?.aiFails || 0);
+
+    this.statsHistory.push({ ts, polls, handled, aiCalls, aiFails });
     if (this.statsHistory.length > 48) this.statsHistory = this.statsHistory.slice(-48);
-    await Promise.all([
-      this.state.storage.put("stats_history", this.statsHistory),
-      this.state.storage.put("runtime_stats", this.runtimeStats),
-    ]);
+    await this.state.storage.put("stats_history", this.statsHistory);
+    await this.state.storage.put("runtime_stats", { polls, handled, aiCalls, aiFails, lastLatencyMs: this.runtimeStats.lastLatencyMs });
   }
 
   // ========== 清空待处理消息队列 ==========
