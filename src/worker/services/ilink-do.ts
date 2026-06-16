@@ -829,7 +829,7 @@ export class ILinkConnectionDO implements DurableObject {
 
         if (result.msgs && result.msgs.length > 0) {
           Logger.info("[DO] Received messages", { accountId, count: result.msgs.length });
-          await this.processMessages(result.msgs);
+          await this.processMessages(result.msgs, account.creds);
         }
 
         this.state.storage.put("runtime_stats", this.runtimeStats);
@@ -919,6 +919,7 @@ export class ILinkConnectionDO implements DurableObject {
 
   private async processMessages(msgs: WeixinMessage[], creds?: ILinkCredentials): Promise<void> {
     const useCreds = creds || this.ilinkCreds;
+    Logger.info(`[DO] processMessages: ${msgs.length} msgs, using creds=${useCreds?.accountId || 'NONE'}`);
     const cfg = await this.getConfigCached();
     const { aiSystemPrompt: systemPrompt, aiModel } = cfg;
     let processedCount = 0;
