@@ -11,7 +11,7 @@
       </div>
 
       <div class="preset-grid">
-        <div class="preset-card" :class="{ active: selectedPresetId === 'cloudflare' }" @click="selectCloudflare">
+        <div class="preset-card" :class="{ active: config.aiProvider === 'cloudflare' || selectedPresetId === 'cloudflare' }" @click="selectCloudflare">
           <div class="preset-icon">☁️</div>
           <div class="preset-name">Cloudflare AI</div>
           <div class="preset-model">免费</div>
@@ -175,15 +175,11 @@ const webhookChannelsStr = computed({
   set: (val: string) => { props.config.webhookChannels = val.split(",").map(s => s.trim()).filter(Boolean); },
 });
 
-const selectedPresetId = computed(() => props.config.aiActivePresetId || "cloudflare");
+const selectedPresetId = computed(() => props.config.aiActivePresetId || "");
 
 function selectCloudflare() {
   props.config.aiActivePresetId = "cloudflare";
   props.config.aiProvider = "cloudflare";
-  props.config.aiModel = "";
-  props.config.aiBaseUrl = "";
-  props.config.aiApiKey = "";
-  props.config.aiMaxTokens = 1024;
   emit("save");
 }
 
