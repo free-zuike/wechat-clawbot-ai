@@ -4,8 +4,8 @@
 
 import { Logger } from "../utils/error";
 import { generateSessionToken } from "../utils";
-import { getUpdates, sendTextMessage, sendTextChunked, sendTypingStatus, extractMessageText, getQRCodeStatus, uploadAndSendMedia, MessageType, MessageItemType } from "./ilink";
-import { callAIWithContext, isImageGenerationRequest, extractImagePrompt, generateImage } from "./ai";
+import { getUpdates, sendTextMessage, sendTextChunked, sendTypingStatus, extractMessageText, getQRCodeStatus, uploadAndSendMedia, sendFileFromUrl, MessageType, MessageItemType } from "./ilink";
+import { callAIWithContext, isImageGenerationRequest, isVideoGenerationRequest, extractMediaPrompt, generateImage, generateVideo } from "./ai";
 import { sendWebhook } from "./webhook";
 import { clearContextSQLite } from "./context";
 import type { ILinkCredentials, WeixinMessage } from "../types";
@@ -917,37 +917,44 @@ export class ILinkConnectionDO implements DurableObject {
         // 发送"对方正在输入"状态
         sendTypingStatus(useCreds!, from, ctxToken, true).catch(() => {});
 
-        // 检查是否为图片生成请求
-        if (isImageGenerationRequest(text)) {
-          if (cfg.aiProvider === "cloudflare") {
-            const imagePrompt = extractImagePrompt(text);
-            Logger.info("[DO] Image generation request", { from, prompt: imagePrompt.slice(0, 50) });
+        // 检查是否为图片/视频生成请求
+        if (isImageGenerationRequest(text) || isVideoGenerationRequest(text)) {
+          const isVideo = isVideoGenerationRequest(text);
+          const mediaType = isVideo ? "视频" : "图片";
+          const mediaPrompt = extractMediaPrompt(text, isVideo ? "video" : "image");
+          Logger.info(`[DO] ${mediaType} generation request`, { from, prompt: mediaPrompt.slice(0, 50) });
 
-            const imageData = await generateImage(this.env.AI, imagePrompt);
-            if (imageData) {
-              await uploadAndSendMedia(useCreds!, from, ctxToken, MessageItemType.IMAGE, "generated.png", imageData.buffer as ArrayBuffer, "image/png");
-              replyContent = `[图片生成] ${imagePrompt}`;
-              replyAt = new Date().toISOString();
-              aiSuccessCount++;
-              await this.markMessageProcessed(messageId);
-              sendTypingStatus(useCreds!, from, ctxToken, false).catch(() => {});
-
-              const pendingMsg = { messageId, fromUserId: from, content: text, timestamp: createdAt, replyContent, replyAt, processed: true };
-              this.state.pendingMessages.push(pendingMsg);
-              if (this.websockets.size > 0) this.broadcastToWebSockets({ type: "message", data: pendingMsg });
-              return;
+          if (isVideo) {
+            const videoUrl = await generateVideo(this.env.AI, mediaPrompt);
+            if (videoUrl) {
+              try {
+                await sendFileFromUrl(useCreds!, from, ctxToken, videoUrl, MessageItemType.VIDEO, "generated.mp4");
+              } catch {
+                await sendTextMessage(useCreds!, from, ctxToken, `视频已生成，但发送失败。视频链接：${videoUrl}`);
+              }
+              replyContent = `[视频生成] ${mediaPrompt}`;
             } else {
-              await sendTextMessage(useCreds!, from, ctxToken, "图片生成失败，请稍后重试或换个描述试试");
-              await this.markMessageProcessed(messageId);
-              sendTypingStatus(useCreds!, from, ctxToken, false).catch(() => {});
-              return;
+              await sendTextMessage(useCreds!, from, ctxToken, "视频生成失败，请稍后重试或换个描述试试");
             }
           } else {
-            await sendTextMessage(useCreds!, from, ctxToken, "图片生成仅支持 Cloudflare AI 提供商，请在管理后台切换后重试");
-            await this.markMessageProcessed(messageId);
-            sendTypingStatus(useCreds!, from, ctxToken, false).catch(() => {});
-            return;
+            const imageData = await generateImage(this.env.AI, mediaPrompt);
+            if (imageData) {
+              await uploadAndSendMedia(useCreds!, from, ctxToken, MessageItemType.IMAGE, "generated.png", imageData.buffer as ArrayBuffer, "image/png");
+              replyContent = `[图片生成] ${mediaPrompt}`;
+            } else {
+              await sendTextMessage(useCreds!, from, ctxToken, "图片生成失败，请稍后重试或换个描述试试");
+            }
           }
+
+          replyAt = new Date().toISOString();
+          aiSuccessCount++;
+          await this.markMessageProcessed(messageId);
+          sendTypingStatus(useCreds!, from, ctxToken, false).catch(() => {});
+
+          const pendingMsg = { messageId, fromUserId: from, content: text, timestamp: createdAt, replyContent, replyAt, processed: true };
+          this.state.pendingMessages.push(pendingMsg);
+          if (this.websockets.size > 0) this.broadcastToWebSockets({ type: "message", data: pendingMsg });
+          return;
         }
 
         // 调用 AI 生成回复（使用 DO SQLite 存储上下文，不再走 KV）

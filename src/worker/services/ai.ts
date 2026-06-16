@@ -241,31 +241,39 @@ export function getDefaultSystemPrompt(): string {
   return DEFAULT_SYSTEM_PROMPT;
 }
 
-// ========== 图片生成（Cloudflare Workers AI）==========
+// ========== 图片/视频生成（Cloudflare Workers AI）==========
 
 const IMAGE_KEYWORDS = /^(画|绘制|生成图片|生成一张|帮我画|给我画|画一个|画一幅|draw|generate image|create image)/i;
+const VIDEO_KEYWORDS = /^(生成视频|制作视频|做一个视频|帮我做视频|帮我生成视频|录一段|generate video|create video|make a video)/i;
 const IMAGE_PROMPT_PREFIXES = ["画", "绘制", "生成图片", "生成一张", "帮我画", "给我画", "画一个", "画一幅"];
+const VIDEO_PROMPT_PREFIXES = ["生成视频", "制作视频", "做一个视频", "帮我做视频", "帮我生成视频", "录一段"];
 
 export function isImageGenerationRequest(text: string): boolean {
   return IMAGE_KEYWORDS.test(text.trim());
 }
 
-export function extractImagePrompt(text: string): string {
+export function isVideoGenerationRequest(text: string): boolean {
+  return VIDEO_KEYWORDS.test(text.trim());
+}
+
+export function extractMediaPrompt(text: string, type: "image" | "video"): string {
+  const prefixes = type === "image" ? IMAGE_PROMPT_PREFIXES : VIDEO_PROMPT_PREFIXES;
   let prompt = text.trim();
-  for (const prefix of IMAGE_PROMPT_PREFIXES) {
+  for (const prefix of prefixes) {
     if (prompt.startsWith(prefix)) {
       prompt = prompt.slice(prefix.length).trim();
       break;
     }
   }
-  // 移除开头的 "一"、"一个"、"一幅" 等量词
-  prompt = prompt.replace(/^一个?|^[一一幅张]/, "").trim();
+  // 移除开头的量词：一个、一幅、一张、一段 等
+  prompt = prompt.replace(/^(一个|一幅|一张|一段|一个)/, "").trim();
   // 移除结尾的标点
   prompt = prompt.replace(/[。！？.!?,，]+$/, "").trim();
   return prompt || text.trim();
 }
 
 const IMAGE_MODEL = "@cf/black-forest-labs/flux-1-schnell";
+const VIDEO_MODEL = "bytedance/seedance-2.0-fast";
 
 export async function generateImage(
   aiBinding: any,
@@ -280,16 +288,13 @@ export async function generateImage(
     Logger.info("[ai] Generating image", { prompt: prompt.slice(0, 50) });
     const response = await aiBinding.run(IMAGE_MODEL, { prompt });
 
-    // Cloudflare Workers AI 图片模型返回 Uint8Array
     if (response instanceof Uint8Array) {
       Logger.info("[ai] Image generated", { size: response.length });
       return response;
     }
-    // 如果返回的是带 images 数组的对象
     if (response?.images?.[0]) {
       const img = response.images[0];
       if (typeof img === "string") {
-        // base64 编码
         const binary = atob(img);
         const bytes = new Uint8Array(binary.length);
         for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
@@ -301,6 +306,63 @@ export async function generateImage(
     return null;
   } catch (e: any) {
     Logger.error("[ai] Image generation failed", { error: e?.message, prompt: prompt.slice(0, 50) });
+    return null;
+  }
+}
+
+export async function generateVideo(
+  aiBinding: any,
+  prompt: string,
+): Promise<string | null> {
+  if (!aiBinding) {
+    Logger.warn("[ai] AI binding not available for video generation");
+    return null;
+  }
+
+  try {
+    Logger.info("[ai] Generating video", { prompt: prompt.slice(0, 50) });
+    const response = await aiBinding.run(VIDEO_MODEL, {
+      prompt,
+      aspect_ratio: "16:9",
+      duration: 5,
+      resolution: "720p",
+    });
+
+    // 异步模型：可能返回 state=Processing，需要轮询
+    if (response?.state === "Processing" || response?.state === "Queued") {
+      const jobId = response.id || response.job_id;
+      if (jobId) {
+        // 轮询等待完成（最多 120 秒）
+        for (let i = 0; i < 24; i++) {
+          await new Promise(r => setTimeout(r, 5000));
+          const status = await aiBinding.run(VIDEO_MODEL, { jobId });
+          if (status?.state === "Completed" && status?.result?.video) {
+            Logger.info("[ai] Video generated", { url: status.result.video });
+            return status.result.video;
+          }
+          if (status?.state === "Failed") {
+            Logger.error("[ai] Video generation failed", { error: status.error });
+            return null;
+          }
+        }
+        Logger.error("[ai] Video generation timeout");
+        return null;
+      }
+    }
+
+    // 同步返回
+    if (response?.result?.video) {
+      Logger.info("[ai] Video generated", { url: response.result.video });
+      return response.result.video;
+    }
+    if (typeof response === "string" && response.startsWith("http")) {
+      return response;
+    }
+
+    Logger.warn("[ai] Unexpected video response format", { keys: Object.keys(response || {}) });
+    return null;
+  } catch (e: any) {
+    Logger.error("[ai] Video generation failed", { error: e?.message, prompt: prompt.slice(0, 50) });
     return null;
   }
 }
