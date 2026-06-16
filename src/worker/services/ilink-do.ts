@@ -661,7 +661,7 @@ export class ILinkConnectionDO implements DurableObject {
       pollLoopRunning: a.pollLoopRunning,
     }));
 
-    Logger.info("[DO] Status check", { accountsSize: this.accounts.size, hasIlinkCreds: !!this.ilinkCreds, accountsListLen: accountsList.length });
+    Logger.info(`[DO] Status check: accounts=${this.accounts.size} ilinkCreds=${!!this.ilinkCreds} listLen=${accountsList.length}`);
 
     // 兼容：如果没有 accounts 但有 ilinkCreds，构造一个
     if (accountsList.length === 0 && this.ilinkCreds) {
@@ -1122,6 +1122,7 @@ export class ILinkConnectionDO implements DurableObject {
 
   private async initCredentials(): Promise<void> {
     const now = Date.now();
+    Logger.info(`[DO] initCredentials: accounts=${this.accounts.size} cached=${!!this.cache.credentials}`);
 
     // 1) 内存缓存：5 分钟内复用
     if (this.cache.credentials && now - this.cache.credentialsLoadedAt < 5 * 60 * 1000) {
@@ -1133,6 +1134,13 @@ export class ILinkConnectionDO implements DurableObject {
           userId: this.cache.credentials.userId,
         };
         this.state.syncBuf = this.cache.credentials.syncBuf || "";
+        // 补充 accounts Map
+        if (!this.accounts.has(this.ilinkCreds.accountId)) {
+          this.accounts.set(this.ilinkCreds.accountId, {
+            creds: this.ilinkCreds, syncBuf: this.cache.credentials.syncBuf || "",
+            consecutiveErrors: 0, lastPollAt: "", pollLoopRunning: false,
+          });
+        }
       }
       return;
     }
@@ -1158,6 +1166,13 @@ export class ILinkConnectionDO implements DurableObject {
             userId: creds.userId || "",
           };
           this.state.syncBuf = creds.syncBuf || "";
+          if (!this.accounts.has(creds.accountId)) {
+            this.accounts.set(creds.accountId, {
+              creds: this.ilinkCreds!, syncBuf: creds.syncBuf || "",
+              consecutiveErrors: 0, lastPollAt: "", pollLoopRunning: false,
+            });
+          }
+          Logger.info(`[DO] initCredentials: loaded from KV, accounts=${this.accounts.size}`);
           return;
         }
       }
