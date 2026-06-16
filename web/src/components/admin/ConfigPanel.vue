@@ -73,6 +73,10 @@
           <label>API 密钥</label>
           <input v-model="config.aiApiKey" class="input" type="password" placeholder="sk-..." />
         </div>
+        <div class="field">
+          <label>最大 Token 数</label>
+          <input v-model.number="config.aiMaxTokens" class="input" type="number" min="1" max="32000" placeholder="1024" />
+        </div>
       </template>
     </div>
 
@@ -139,8 +143,18 @@ const webhookChannelsStr = computed({
   set: (val: string) => { props.config.webhookChannels = val.split(",").map(s => s.trim()).filter(Boolean); },
 });
 
-const selectedPresetId = ref("cloudflare");
+const showPresetManager = ref(false);
 const presets = computed(() => props.config.aiPresets || []);
+
+// 模态框状态
+const showModal = ref(false);
+const modalMode = ref<"edit" | "add">("add");
+const modalPreset = ref<any>(null);
+const modalName = ref("");
+const modalModel = ref("");
+const modalBaseUrl = ref("");
+const modalApiKey = ref("");
+const modalMaxTokens = ref(1024);
 
 function selectCloudflare() {
   selectedPresetId.value = "cloudflare";
