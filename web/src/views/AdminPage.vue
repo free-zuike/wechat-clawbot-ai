@@ -292,10 +292,10 @@ async function handleLoadConfig() {
     config.aiCustomProviders = d.aiCustomProviders || [];
     // 加载预设数据（每个提供商独立配置）
     config.aiPresets = d.aiPresets || [];
-    // 从旧的 aiPresets 迁移到 aiCustomProviders
+    // 从旧的 aiPresets 迁移到 aiCustomProviders（旧预设无 name 字段，用 id 生成）
     if (config.aiCustomProviders.length === 0 && config.aiPresets.length > 0) {
       config.aiCustomProviders = config.aiPresets.map((p: any) => ({
-        id: p.id, name: p.name, icon: "🤖",
+        id: p.id, name: p.name || p.id.replace("custom_", "提供商 "), icon: "🤖",
       }));
     }
     configResult.value = d.hasEnvOverride ? "✅ 已加载当前配置（注意：当前有环境变量覆盖）" : "✅ 已加载当前配置";
@@ -310,8 +310,11 @@ async function handleSaveConfig() {
       // 保存成功后重新加载配置，确保预设等数据同步
       await handleLoadConfig();
     }
-    else if (d.error === "CONFLICT") configResult.value = "⚠️ " + (d.message || "配置已被其他人修改，请刷新后重试");
-    else if (d.error === "VALIDATION_ERROR") configResult.value = "⚠️ 验证失败: " + (d.errors || []).join("; ");
+    else if (d.error === "CONFLICT") {
+      configResult.value = "⚠️ " + (d.message || "配置已被其他人修改，正在重新加载...");
+      await handleLoadConfig();
+    }
+    else if (d.error === "VALIDATION_ERROR") configResult.value = "⚠️ 验证失败: " + (d.message || "请检查配置项");
     else configResult.value = "❌ " + (d.error || "保存失败");
   } catch (e: any) { configResult.value = "❌ 保存失败: " + handleApiError(e, "保存失败"); } finally { configSaving.value = false; }
 }

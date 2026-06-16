@@ -186,7 +186,6 @@ export async function callAI(
   aiBinding: any,
   userMessage: string,
   systemPrompt: string,
-  aiModel: string,
   aiConfig?: Partial<AIConfig>
 ): Promise<string> {
   const cleanMsg = (userMessage || "").trim();
@@ -195,7 +194,7 @@ export async function callAI(
 
   const config: AIConfig = {
     provider: aiConfig?.provider || "cloudflare",
-    model: aiModel || aiConfig?.model || "@cf/meta/llama-3.2-3b-instruct",
+    model: aiConfig?.model || "@cf/meta/llama-3.2-3b-instruct",
     baseUrl: aiConfig?.baseUrl || "",
     apiKey: aiConfig?.apiKey || "",
     maxTokens: aiConfig?.maxTokens || 1024,

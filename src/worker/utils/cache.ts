@@ -13,12 +13,14 @@ interface CacheOptions {
 
 export class MemoryCache {
   private cache: Map<string, CacheEntry<any>>;
+  private inflight: Map<string, Promise<any>>;
   private defaultTtlMs: number;
   private maxEntries: number;
 
   constructor(options: Partial<CacheOptions> = {}) {
     this.cache = new Map();
-    this.defaultTtlMs = options.defaultTtlMs || 5000; // 默认 5 秒
+    this.inflight = new Map();
+    this.defaultTtlMs = options.defaultTtlMs || 5000;
     this.maxEntries = options.maxEntries || 100;
   }
 
@@ -58,11 +60,22 @@ export class MemoryCache {
     const cached = this.get<T>(key);
     if (cached !== null) return cached;
 
-    const value = await loader();
-    if (value !== null && value !== undefined) {
-      this.set(key, value, ttlMs);
-    }
-    return value;
+    // 防止缓存击穿：相同 key 的并发请求共享同一个 loader Promise
+    const existing = this.inflight.get(key);
+    if (existing) return existing as T;
+
+    const promise = loader().then((value) => {
+      this.inflight.delete(key);
+      if (value !== null && value !== undefined) {
+        this.set(key, value, ttlMs);
+      }
+      return value;
+    }).catch((err) => {
+      this.inflight.delete(key);
+      throw err;
+    });
+    this.inflight.set(key, promise);
+    return promise;
   }
 
   invalidate(key: string): void {

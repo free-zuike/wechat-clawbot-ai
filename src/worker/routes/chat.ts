@@ -54,8 +54,9 @@ export async function handleChat(request: Request, env: Env): Promise<Response> 
 
     Logger.info(`[chat][${requestId}] provider`, { provider: aiConfig.provider, model: aiConfig.model || "default" });
 
-    const reply = await callAI(env.AI, trimmed, systemPrompt, aiConfig.model, {
+    const reply = await callAI(env.AI, trimmed, systemPrompt, {
       provider: aiConfig.provider,
+      model: aiConfig.model,
       baseUrl: aiConfig.baseUrl,
       apiKey: aiConfig.apiKey,
       maxTokens: aiConfig.maxTokens,

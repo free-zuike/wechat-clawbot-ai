@@ -180,7 +180,7 @@ function selectProvider(id: string) {
   // 加载新提供商配置
   local.value.aiProvider = id;
   if (id === "cloudflare") {
-    local.value.aiModel = preset?.model || "";
+    local.value.aiModel = preset?.model || "@cf/meta/llama-3.2-3b-instruct";
     local.value.aiBaseUrl = "";
     local.value.aiApiKey = "";
     local.value.aiMaxTokens = preset?.maxTokens || 1024;
@@ -205,7 +205,6 @@ function deleteProvider(id: string, event: Event) {
     selectProvider("cloudflare");
   }
   syncToProps();
-  emit("save");
 }
 
 function getCurrentProviderName() {
