@@ -6,17 +6,17 @@
     <div class="ai-layout">
       <div class="ai-sidebar">
         <div class="sidebar-title">🤖 AI 提供商</div>
-        <div class="provider-item" :class="{ active: local.aiProvider === 'cloudflare' }" @click="selectProvider('cloudflare')">
+        <div class="provider-item" :class="{ active: config.aiProvider === 'cloudflare' }" @click="selectProvider('cloudflare')">
           <span class="provider-icon">☁️</span>
           <span class="provider-name">Cloudflare AI</span>
-          <span v-if="local.aiProvider === 'cloudflare'" class="provider-check">✓</span>
+          <span v-if="config.aiProvider === 'cloudflare'" class="provider-check">✓</span>
         </div>
-        <div v-for="p in customProviders" :key="p.id" class="provider-item" :class="{ active: local.aiProvider === p.id }" @click="selectProvider(p.id)">
+        <div v-for="p in config.aiCustomProviders" :key="p.id" class="provider-item" :class="{ active: config.aiProvider === p.id }" @click="selectProvider(p.id)">
           <span class="provider-icon">{{ p.icon }}</span>
           <span class="provider-name">{{ p.name }}</span>
           <span class="provider-rename" @click.stop="renameProvider(p.id, $event)">✏️</span>
           <span class="provider-delete" @click.stop="deleteProvider(p.id, $event)">🗑️</span>
-          <span v-if="local.aiProvider === p.id" class="provider-check">✓</span>
+          <span v-if="config.aiProvider === p.id" class="provider-check">✓</span>
         </div>
         <div class="provider-item add" @click="showAddModal = true">
           <span class="provider-icon">+</span>
@@ -25,37 +25,37 @@
       </div>
 
       <div class="ai-form">
-        <div v-if="local.aiProvider === 'cloudflare'" class="form-section">
+        <div v-if="config.aiProvider === 'cloudflare'" class="form-section">
           <h4>☁️ Cloudflare Workers AI</h4>
           <p class="form-desc">使用 Cloudflare 绑定，无需 API 地址和密钥</p>
-          <div class="field"><label>AI 模型</label><input v-model="local.aiModel" class="input" placeholder="@cf/meta/llama-3.2-3b-instruct" /></div>
+          <div class="field"><label>AI 模型</label><input v-model="config.aiModel" class="input" placeholder="@cf/meta/llama-3.2-3b-instruct" /></div>
         </div>
-        <div v-else-if="local.aiProvider" class="form-section">
+        <div v-else-if="config.aiProvider" class="form-section">
           <h4>{{ getCurrentProviderName() }}</h4>
           <p class="form-desc">OpenAI 兼容的 API 接口</p>
-          <div class="field"><label>AI 模型</label><input v-model="local.aiModel" class="input" placeholder="glm-4-flash" /></div>
-          <div class="field"><label>API 地址</label><input v-model="local.aiBaseUrl" class="input" placeholder="https://api.example.com" /><div class="field-hint">不要加 /v1/chat/completions 后缀</div></div>
-          <div class="field"><label>API 密钥</label><input v-model="local.aiApiKey" class="input" type="password" placeholder="sk-..." /></div>
+          <div class="field"><label>AI 模型</label><input v-model="config.aiModel" class="input" placeholder="glm-4-flash" /></div>
+          <div class="field"><label>API 地址</label><input v-model="config.aiBaseUrl" class="input" placeholder="https://api.example.com" /><div class="field-hint">不要加 /v1/chat/completions 后缀</div></div>
+          <div class="field"><label>API 密钥</label><input v-model="config.aiApiKey" class="input" type="password" placeholder="sk-..." /></div>
         </div>
         <div v-else class="form-empty">← 从左侧选择提供商</div>
-        <div v-if="local.aiProvider" class="field" style="margin-top: 12px"><label>最大 Token 数</label><input v-model.number="local.aiMaxTokens" class="input" type="number" min="1" max="32000" placeholder="1024" /></div>
+        <div v-if="config.aiProvider" class="field" style="margin-top: 12px"><label>最大 Token 数</label><input v-model.number="config.aiMaxTokens" class="input" type="number" min="1" max="32000" placeholder="1024" /></div>
       </div>
     </div>
 
     <div class="field" style="margin-top: 16px">
       <label>人设提示词</label>
-      <textarea v-model="local.aiSystemPrompt" class="input" placeholder="你是爪爪，一个友好的 AI 助手..." rows="6"></textarea>
+      <textarea v-model="config.aiSystemPrompt" class="input" placeholder="你是爪爪，一个友好的 AI 助手..." rows="6"></textarea>
     </div>
 
     <div class="webhook-section">
       <div class="section-header">
         <span class="section-title">🔔 Webhook 通知</span>
-        <label class="toggle"><input type="checkbox" v-model="local.webhookEnabled" /><span class="toggle-slider"></span></label>
+        <label class="toggle"><input type="checkbox" v-model="config.webhookEnabled" /><span class="toggle-slider"></span></label>
       </div>
-      <template v-if="local.webhookEnabled">
-        <div class="field"><label>推送地址</label><input v-model="local.webhookUrl" class="input" placeholder="https://beeswarm.xxx.workers.dev/api/admin/webhook/push" /></div>
-        <div class="field"><label>API 密钥</label><input v-model="local.webhookApiKey" class="input" type="password" placeholder="X-API-Key" /></div>
-        <div class="field"><label>通知标题</label><input v-model="local.webhookTitle" class="input" placeholder="ClawBot AI" /></div>
+      <template v-if="config.webhookEnabled">
+        <div class="field"><label>推送地址</label><input v-model="config.webhookUrl" class="input" placeholder="https://beeswarm.xxx.workers.dev/api/admin/webhook/push" /></div>
+        <div class="field"><label>API 密钥</label><input v-model="config.webhookApiKey" class="input" type="password" placeholder="X-API-Key" /></div>
+        <div class="field"><label>通知标题</label><input v-model="config.webhookTitle" class="input" placeholder="ClawBot AI" /></div>
         <div class="field"><label>推送渠道</label><input v-model="webhookChannelsStr" class="input" placeholder="wework,dingtalk,telegram" /></div>
       </template>
     </div>
@@ -122,28 +122,14 @@ const props = defineProps<{
 
 const emit = defineEmits(["load", "save"]);
 
-// 本地状态副本，避免直接修改 props
-const local = ref({
-  ...props.config,
-  aiPresets: [...(props.config.aiPresets || [])],
-  aiCustomProviders: [...(props.config.aiCustomProviders || [])],
-});
-watch(() => props.config, (v) => {
-  Object.assign(local.value, v);
-  local.value.aiPresets = [...(v.aiPresets || [])];
-  local.value.aiCustomProviders = [...(v.aiCustomProviders || [])];
-}, { deep: true });
-
 const webhookChannelsStr = computed({
-  get: () => (local.value.webhookChannels || []).join(","),
-  set: (val: string) => { local.value.webhookChannels = val.split(",").map(s => s.trim()).filter(Boolean); },
+  get: () => (props.config.webhookChannels || []).join(","),
+  set: (val: string) => { props.config.webhookChannels = val.split(",").map(s => s.trim()).filter(Boolean); },
 });
-
-const customProviders = computed(() => local.value.aiCustomProviders || []);
 
 function ensurePresets(): Preset[] {
-  if (!local.value.aiPresets) local.value.aiPresets = [];
-  return local.value.aiPresets;
+  if (!props.config.aiPresets) props.config.aiPresets = [];
+  return props.config.aiPresets;
 }
 
 function upsertPreset(id: string, fields: Partial<Preset>): Preset {
@@ -168,80 +154,59 @@ function selectProvider(id: string) {
   const preset = presets.find(p => p.id === id);
 
   // 保存当前提供商配置到预设
-  const currentId = local.value.aiProvider;
+  const currentId = props.config.aiProvider;
   if (currentId) {
     upsertPreset(currentId, {
-      model: local.value.aiModel,
-      baseUrl: local.value.aiBaseUrl,
-      apiKey: local.value.aiApiKey,
-      maxTokens: local.value.aiMaxTokens,
+      model: props.config.aiModel,
+      baseUrl: props.config.aiBaseUrl,
+      apiKey: props.config.aiApiKey,
+      maxTokens: props.config.aiMaxTokens,
     });
   }
 
   // 加载新提供商配置
-  local.value.aiProvider = id;
+  props.config.aiProvider = id;
   if (id === "cloudflare") {
-    local.value.aiModel = preset?.model || "@cf/meta/llama-3.2-3b-instruct";
-    local.value.aiBaseUrl = "";
-    local.value.aiApiKey = "";
-    local.value.aiMaxTokens = preset?.maxTokens || 1024;
+    props.config.aiModel = preset?.model || "@cf/meta/llama-3.2-3b-instruct";
+    props.config.aiBaseUrl = "";
+    props.config.aiApiKey = "";
+    props.config.aiMaxTokens = preset?.maxTokens || 1024;
   } else {
-    local.value.aiModel = preset?.model || "";
-    local.value.aiBaseUrl = preset?.baseUrl || "";
-    local.value.aiApiKey = preset?.apiKey || "";
-    local.value.aiMaxTokens = preset?.maxTokens || 1024;
+    props.config.aiModel = preset?.model || "";
+    props.config.aiBaseUrl = preset?.baseUrl || "";
+    props.config.aiApiKey = preset?.apiKey || "";
+    props.config.aiMaxTokens = preset?.maxTokens || 1024;
   }
-  syncToProps();
 }
 
 function deleteProvider(id: string, event: Event) {
   event.stopPropagation();
   if (!confirm("确定删除此提供商？该提供商的配置也将被删除。")) return;
 
-  const idx = (local.value.aiCustomProviders || []).findIndex(p => p.id === id);
-  if (idx !== -1) local.value.aiCustomProviders.splice(idx, 1);
+  const idx = (props.config.aiCustomProviders || []).findIndex(p => p.id === id);
+  if (idx !== -1) props.config.aiCustomProviders.splice(idx, 1);
   removePreset(id);
 
-  if (local.value.aiProvider === id) {
+  if (props.config.aiProvider === id) {
     selectProvider("cloudflare");
   }
-  syncToProps();
   emit("save");
 }
 
 function getCurrentProviderName() {
-  const p = customProviders.value.find(x => x.id === local.value.aiProvider);
+  const p = (props.config.aiCustomProviders || []).find(x => x.id === props.config.aiProvider);
   return p ? p.name : "OpenAI 兼容";
 }
 
 function renameProvider(id: string, event: Event) {
   event.stopPropagation();
-  const provider = local.value.aiCustomProviders.find(p => p.id === id);
+  const provider = props.config.aiCustomProviders.find(p => p.id === id);
   if (!provider) return;
   const newName = prompt("修改提供商名称", provider.name);
   if (newName !== null && newName.trim()) {
     provider.name = newName.trim();
-    syncToProps();
     emit("save");
   }
-}
-
-function syncToProps() {
-  Object.assign(props.config, {
-    aiProvider: local.value.aiProvider,
-    aiModel: local.value.aiModel,
-    aiBaseUrl: local.value.aiBaseUrl,
-    aiApiKey: local.value.aiApiKey,
-    aiMaxTokens: local.value.aiMaxTokens,
-    aiSystemPrompt: local.value.aiSystemPrompt,
-    webhookEnabled: local.value.webhookEnabled,
-    webhookUrl: local.value.webhookUrl,
-    webhookTitle: local.value.webhookTitle,
-    webhookApiKey: local.value.webhookApiKey,
-    webhookChannels: [...local.value.webhookChannels],
-    aiCustomProviders: [...local.value.aiCustomProviders],
-    aiPresets: [...(local.value.aiPresets || [])],
-  });
 }
 
 const showAddModal = ref(false);
@@ -253,8 +218,8 @@ function addProvider() {
   if (!newName.value.trim()) return;
   const id = "custom_" + Date.now();
 
-  if (!local.value.aiCustomProviders) local.value.aiCustomProviders = [];
-  local.value.aiCustomProviders.push({ id, name: newName.value.trim(), icon: newIcon.value });
+  if (!props.config.aiCustomProviders) props.config.aiCustomProviders = [];
+  props.config.aiCustomProviders.push({ id, name: newName.value.trim(), icon: newIcon.value });
   upsertPreset(id, { model: "", baseUrl: "", apiKey: "", maxTokens: 1024 });
   selectProvider(id);
 
@@ -265,25 +230,24 @@ function addProvider() {
 
 function handleSave() {
   syncCurrentToPreset();
-  syncToProps();
   emit("save");
 }
 
 function syncCurrentToPreset() {
-  const id = local.value.aiProvider;
+  const id = props.config.aiProvider;
   if (!id) return;
   upsertPreset(id, {
-    model: local.value.aiModel,
-    baseUrl: local.value.aiBaseUrl,
-    apiKey: local.value.aiApiKey,
-    maxTokens: local.value.aiMaxTokens,
+    model: props.config.aiModel,
+    baseUrl: props.config.aiBaseUrl,
+    apiKey: props.config.aiApiKey,
+    maxTokens: props.config.aiMaxTokens,
   });
 }
 
 // 监听编辑字段变化，实时同步到当前提供商的预设
 watch(
-  () => [local.value.aiModel, local.value.aiBaseUrl, local.value.aiApiKey, local.value.aiMaxTokens],
-  () => { if (local.value.aiProvider) syncCurrentToPreset(); },
+  () => [props.config.aiModel, props.config.aiBaseUrl, props.config.aiApiKey, props.config.aiMaxTokens],
+  () => { if (props.config.aiProvider) syncCurrentToPreset(); },
   { deep: true }
 );
 </script>
