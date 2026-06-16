@@ -49,7 +49,6 @@ export class ILinkConnectionDO implements DurableObject {
     lastPollAt: string;
     pollLoopRunning: boolean;
   }> = new Map();
-  private pollLoopRunning = false;
   private kv: KVNamespace | null = null;
   private websockets: Set<WebSocket> = new Set();
   private runtimeStats = { polls: 0, handled: 0, aiCalls: 0, aiFails: 0, lastLatencyMs: 0 };
@@ -256,7 +255,8 @@ export class ILinkConnectionDO implements DurableObject {
       }), { headers: { "Content-Type": "application/json" } });
     }
 
-    if (!this.pollLoopRunning) {
+    const anyRunning = Array.from(this.accounts.values()).some(a => a.pollLoopRunning);
+    if (!anyRunning) {
       this.triggerImmediatePoll();
     }
 
@@ -620,7 +620,7 @@ export class ILinkConnectionDO implements DurableObject {
         userId: this.ilinkCreds.userId || "",
         lastPollAt: this.state.lastPollAt,
         consecutiveErrors: this.state.consecutiveErrors,
-        pollLoopRunning: this.pollLoopRunning,
+        pollLoopRunning: a.pollLoopRunning,
       });
     }
 
@@ -692,93 +692,6 @@ export class ILinkConnectionDO implements DurableObject {
   }
 
   // ========== 轮询循环 ==========
-
-  private async runPollLoop(): Promise<void> {
-    Logger.info("[DO] Poll loop started");
-
-    while (this.pollLoopRunning && this.ilinkCreds) {
-      try {
-        const pollStart = Date.now();
-        const result = await getUpdates(this.ilinkCreds, this.state.syncBuf);
-
-        // 更新 syncBuf（写 DO SQLite，不再写 KV）
-        if (result.get_updates_buf && result.get_updates_buf !== this.state.syncBuf) {
-          this.state.syncBuf = result.get_updates_buf;
-          await this.saveCredentials();
-        }
-
-        // 重置错误计数
-        this.state.consecutiveErrors = 0;
-        this.state.lastPollAt = new Date().toISOString();
-        this.runtimeStats.polls++;
-        this.runtimeStats.lastLatencyMs = Date.now() - pollStart;
-
-        // 处理消息（传入当前账号的凭证）
-        if (result.msgs && result.msgs.length > 0) {
-          Logger.info("[DO] Received messages", { accountId, count: result.msgs.length });
-          await this.processMessages(result.msgs, account.creds);
-        }
-
-        // 持久化运行时统计到 DO storage
-        this.state.storage.put("runtime_stats", this.runtimeStats);
-
-        // saveState 写 DO storage，轻量，保留
-        await this.saveState();
-
-        // 长轮询正常间隔（30 秒）
-        await new Promise((resolve) => setTimeout(resolve, 30000));
-
-      } catch (e: any) {
-        Logger.error("[DO] Poll error", { error: e.message });
-
-        // ILINK_SESSION_TIMEOUT：会话连接断开，尝试重新获取 bot_token
-        // 账号绑定是持久的，不需要重新扫码
-        if (e.code === "ILINK_SESSION_TIMEOUT" || e.message?.includes("ILINK_SESSION_TIMEOUT")) {
-          Logger.warn("[DO] Session timeout — attempting token refresh");
-          this.state.consecutiveErrors++;
-
-          // 尝试通过 get_qrcode_status 刷新 bot_token（账号已绑定）
-          try {
-            const refreshResult = await getQRCodeStatus(this.ilinkCreds!.accountId);
-            if (refreshResult.status === "confirmed" && refreshResult.bot_token) {
-              // 刷新成功，更新凭证
-              this.ilinkCreds!.botToken = refreshResult.bot_token;
-              this.state.syncBuf = "";
-              Logger.info("[DO] Token refreshed successfully");
-              this.state.consecutiveErrors = 0;
-              await this.saveCredentials();
-              await this.saveState();
-              continue; // 继续轮询
-            }
-          } catch (refreshErr: any) {
-            Logger.warn("[DO] Token refresh failed", { error: refreshErr.message });
-          }
-
-          // 刷新失败，暂停轮询等待重试（不清除凭证）
-          this.pollLoopRunning = false;
-          await this.saveState();
-          return;
-        }
-
-        this.state.consecutiveErrors++;
-        await this.saveState();
-
-        // 连续错误太多，暂停轮询
-        if (this.state.consecutiveErrors > 10) {
-          Logger.error("[DO] Too many consecutive errors, stopping poll loop");
-          this.pollLoopRunning = false;
-          // 等待 5 分钟后重试
-          await new Promise((resolve) => setTimeout(resolve, 300000));
-          this.pollLoopRunning = true;
-        } else {
-          // 等待 30 秒后重试
-          await new Promise((resolve) => setTimeout(resolve, 30000));
-        }
-      }
-    }
-
-    Logger.info("[DO] Poll loop stopped");
-  }
 
   // ========== 单账号轮询循环 ==========
 
