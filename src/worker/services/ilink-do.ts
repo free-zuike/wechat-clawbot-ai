@@ -193,14 +193,6 @@ export class ILinkConnectionDO implements DurableObject {
           });
         }
       }
-      // 兼容：保持旧的轮询逻辑
-      if (this.ilinkCreds && !this.pollLoopRunning) {
-        this.pollLoopRunning = true;
-        this.runPollLoop().catch((e) => {
-          Logger.error("[DO] Poll loop error", { error: e.message });
-          this.pollLoopRunning = false;
-        });
-      }
     }
 
     // WebSocket 升级
@@ -279,11 +271,7 @@ export class ILinkConnectionDO implements DurableObject {
     }
 
     if (!this.pollLoopRunning) {
-      this.pollLoopRunning = true;
-      this.runPollLoop().catch((e) => {
-        Logger.error("[DO] Poll loop error", { error: e.message });
-        this.pollLoopRunning = false;
-      });
+      this.triggerImmediatePoll();
     }
 
     // 等最多5秒让当前轮询完成，立即返回
@@ -672,7 +660,7 @@ export class ILinkConnectionDO implements DurableObject {
 
     return new Response(JSON.stringify({
       success: true,
-      isRunning: this.pollLoopRunning,
+      isRunning: Array.from(this.accounts.values()).some(a => a.pollLoopRunning),
       lastPollAt: this.state.lastPollAt,
       consecutiveErrors: this.state.consecutiveErrors,
       pendingMessages: this.state.pendingMessages.length,
@@ -690,12 +678,14 @@ export class ILinkConnectionDO implements DurableObject {
   // ========== 立即触发一次轮询（用于发送消息后）==========
 
   private triggerImmediatePoll(): void {
-    if (!this.pollLoopRunning) {
-      this.pollLoopRunning = true;
-      this.runPollLoop().catch((e) => {
-        Logger.error("[DO] Poll loop error", { error: e.message });
-        this.pollLoopRunning = false;
-      });
+    for (const [accountId, account] of this.accounts) {
+      if (!account.pollLoopRunning) {
+        account.pollLoopRunning = true;
+        this.runAccountPollLoop(accountId).catch((e) => {
+          Logger.error("[DO] Poll loop error", { accountId, error: e.message });
+          account.pollLoopRunning = false;
+        });
+      }
     }
   }
 
