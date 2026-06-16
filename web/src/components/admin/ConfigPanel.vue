@@ -14,6 +14,7 @@
         <div v-for="p in customProviders" :key="p.id" class="provider-item" :class="{ active: local.aiProvider === p.id }" @click="selectProvider(p.id)">
           <span class="provider-icon">{{ p.icon }}</span>
           <span class="provider-name">{{ p.name }}</span>
+          <span class="provider-rename" @click.stop="renameProvider(p.id, $event)">✏️</span>
           <span class="provider-delete" @click.stop="deleteProvider(p.id, $event)">🗑️</span>
           <span v-if="local.aiProvider === p.id" class="provider-check">✓</span>
         </div>
@@ -213,6 +214,18 @@ function getCurrentProviderName() {
   return p ? p.name : "OpenAI 兼容";
 }
 
+function renameProvider(id: string, event: Event) {
+  event.stopPropagation();
+  const provider = local.value.aiCustomProviders.find(p => p.id === id);
+  if (!provider) return;
+  const newName = prompt("修改提供商名称", provider.name);
+  if (newName !== null && newName.trim()) {
+    provider.name = newName.trim();
+    syncToProps();
+    emit("save");
+  }
+}
+
 function syncToProps() {
   Object.assign(props.config, {
     aiProvider: local.value.aiProvider,
@@ -288,6 +301,8 @@ watch(
 .provider-check { color: var(--link); font-weight: bold; }
 .provider-delete { font-size: 12px; cursor: pointer; opacity: 0.5; transition: opacity 0.15s; }
 .provider-delete:hover { opacity: 1; }
+.provider-rename { font-size: 12px; cursor: pointer; opacity: 0.5; transition: opacity 0.15s; }
+.provider-rename:hover { opacity: 1; }
 .ai-form { flex: 1; min-width: 0; }
 .form-section h4 { margin: 0 0 8px; font-size: 14px; }
 .form-desc { font-size: 12px; color: var(--text-secondary); margin-bottom: 12px; }
