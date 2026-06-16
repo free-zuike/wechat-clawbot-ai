@@ -240,3 +240,67 @@ export async function callAI(
 export function getDefaultSystemPrompt(): string {
   return DEFAULT_SYSTEM_PROMPT;
 }
+
+// ========== 图片生成（Cloudflare Workers AI）==========
+
+const IMAGE_KEYWORDS = /^(画|绘制|生成图片|生成一张|帮我画|给我画|画一个|画一幅|draw|generate image|create image)/i;
+const IMAGE_PROMPT_PREFIXES = ["画", "绘制", "生成图片", "生成一张", "帮我画", "给我画", "画一个", "画一幅"];
+
+export function isImageGenerationRequest(text: string): boolean {
+  return IMAGE_KEYWORDS.test(text.trim());
+}
+
+export function extractImagePrompt(text: string): string {
+  let prompt = text.trim();
+  for (const prefix of IMAGE_PROMPT_PREFIXES) {
+    if (prompt.startsWith(prefix)) {
+      prompt = prompt.slice(prefix.length).trim();
+      break;
+    }
+  }
+  // 移除开头的 "一"、"一个"、"一幅" 等量词
+  prompt = prompt.replace(/^一个?|^[一一幅张]/, "").trim();
+  // 移除结尾的标点
+  prompt = prompt.replace(/[。！？.!?,，]+$/, "").trim();
+  return prompt || text.trim();
+}
+
+const IMAGE_MODEL = "@cf/black-forest-labs/flux-1-schnell";
+
+export async function generateImage(
+  aiBinding: any,
+  prompt: string,
+): Promise<Uint8Array | null> {
+  if (!aiBinding) {
+    Logger.warn("[ai] AI binding not available for image generation");
+    return null;
+  }
+
+  try {
+    Logger.info("[ai] Generating image", { prompt: prompt.slice(0, 50) });
+    const response = await aiBinding.run(IMAGE_MODEL, { prompt });
+
+    // Cloudflare Workers AI 图片模型返回 Uint8Array
+    if (response instanceof Uint8Array) {
+      Logger.info("[ai] Image generated", { size: response.length });
+      return response;
+    }
+    // 如果返回的是带 images 数组的对象
+    if (response?.images?.[0]) {
+      const img = response.images[0];
+      if (typeof img === "string") {
+        // base64 编码
+        const binary = atob(img);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+        return bytes;
+      }
+      return img;
+    }
+    Logger.warn("[ai] Unexpected image response format");
+    return null;
+  } catch (e: any) {
+    Logger.error("[ai] Image generation failed", { error: e?.message, prompt: prompt.slice(0, 50) });
+    return null;
+  }
+}
