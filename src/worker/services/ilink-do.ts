@@ -661,6 +661,8 @@ export class ILinkConnectionDO implements DurableObject {
       pollLoopRunning: a.pollLoopRunning,
     }));
 
+    Logger.info("[DO] Status check", { accountsSize: this.accounts.size, hasIlinkCreds: !!this.ilinkCreds, accountsListLen: accountsList.length });
+
     // 兼容：如果没有 accounts 但有 ilinkCreds，构造一个
     if (accountsList.length === 0 && this.ilinkCreds) {
       accountsList.push({
@@ -671,6 +673,26 @@ export class ILinkConnectionDO implements DurableObject {
         consecutiveErrors: this.state.consecutiveErrors,
         pollLoopRunning: this.pollLoopRunning,
       });
+    }
+
+    // 兜底：如果还是空，尝试直接从 DO storage 读旧格式
+    if (accountsList.length === 0) {
+      try {
+        const oldCreds = await this.state.storage.get<string>("credentials");
+        if (oldCreds) {
+          const c = JSON.parse(oldCreds);
+          if (c.botToken && c.accountId) {
+            accountsList.push({
+              accountId: c.accountId,
+              baseUrl: c.baseUrl || "https://ilinkai.weixin.qq.com",
+              userId: c.userId || "",
+              lastPollAt: "",
+              consecutiveErrors: 0,
+              pollLoopRunning: false,
+            });
+          }
+        }
+      } catch {}
     }
 
     return new Response(JSON.stringify({
