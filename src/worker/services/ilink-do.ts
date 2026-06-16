@@ -924,8 +924,7 @@ export class ILinkConnectionDO implements DurableObject {
           from,
           text,
           systemPrompt,
-          aiModel,
-          { provider: cfg.aiProvider, baseUrl: cfg.aiBaseUrl, apiKey: cfg.aiApiKey, maxTokens: cfg.aiMaxTokens }
+          { provider: cfg.aiProvider, model: aiModel, baseUrl: cfg.aiBaseUrl, apiKey: cfg.aiApiKey, maxTokens: cfg.aiMaxTokens }
         );
 
         // 发送回复（自动分段）
