@@ -175,11 +175,10 @@ const webhookChannelsStr = computed({
   set: (val: string) => { props.config.webhookChannels = val.split(",").map(s => s.trim()).filter(Boolean); },
 });
 
-const selectedPresetId = ref("cloudflare");
-const presets = computed(() => props.config.aiPresets || []);
+const selectedPresetId = computed(() => props.config.aiActivePresetId || "cloudflare");
 
 function selectCloudflare() {
-  selectedPresetId.value = "cloudflare";
+  props.config.aiActivePresetId = "cloudflare";
   props.config.aiProvider = "cloudflare";
   props.config.aiModel = "";
   props.config.aiBaseUrl = "";
@@ -189,7 +188,7 @@ function selectCloudflare() {
 }
 
 function selectPreset(preset: any) {
-  selectedPresetId.value = preset.id;
+  props.config.aiActivePresetId = preset.id;
   props.config.aiProvider = preset.provider;
   props.config.aiModel = preset.model;
   props.config.aiBaseUrl = preset.baseUrl;
@@ -197,13 +196,6 @@ function selectPreset(preset: any) {
   props.config.aiMaxTokens = preset.maxTokens;
   emit("save");
 }
-
-function getHost(url: string) {
-  if (!url) return "-";
-  try { return new URL(url).hostname; } catch { return url.slice(0, 25); }
-}
-
-// 新增/编辑模态框
 const showModal = ref(false);
 const modalMode = ref<"edit" | "add">("add");
 const modalEditId = ref("");
@@ -244,7 +236,7 @@ function saveModal() {
       baseUrl: modalBaseUrl.value, apiKey: modalApiKey.value, maxTokens: modalMaxTokens.value,
     };
     props.config.aiPresets.push(newPreset);
-    selectedPresetId.value = id;
+    props.config.aiActivePresetId = id;
     selectPreset(newPreset);
   } else {
     const p = presets.value.find(x => x.id === modalEditId.value);

@@ -6,7 +6,7 @@ import { configCache } from "../utils/cache";
 import type { Env } from "../index";
 
 const KV_CONFIG_KEY = "clawbot:config";
-const CONFIG_FIELDS = ["aiProvider", "aiModel", "aiBaseUrl", "aiApiKey", "aiMaxTokens", "aiSystemPrompt", "webhookUrl", "webhookEnabled", "webhookTitle", "webhookApiKey", "webhookChannels", "aiPresets"] as const;
+const CONFIG_FIELDS = ["aiProvider", "aiModel", "aiBaseUrl", "aiApiKey", "aiMaxTokens", "aiSystemPrompt", "webhookUrl", "webhookEnabled", "webhookTitle", "webhookApiKey", "webhookChannels", "aiPresets", "aiActivePresetId"] as const;
 type ConfigField = (typeof CONFIG_FIELDS)[number];
 
 function maskKey(key: string): string {
@@ -27,6 +27,7 @@ function getConfigResponse(kvConfig: Record<string, unknown>) {
     webhookApiKey: typeof kvConfig.webhookApiKey === "string" && kvConfig.webhookApiKey ? maskKey(kvConfig.webhookApiKey as string) : "",
     webhookChannels: (kvConfig.webhookChannels as string[]) || [],
     aiPresets: (kvConfig.aiPresets as any[]) || [],
+    aiActivePresetId: (kvConfig.aiActivePresetId as string) || "cloudflare",
   };
 }
 
