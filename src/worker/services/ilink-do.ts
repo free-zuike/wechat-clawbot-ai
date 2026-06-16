@@ -86,8 +86,8 @@ export class ILinkConnectionDO implements DurableObject {
 
     // 恢复多账号数据
     state.storage.get<Array<{ accountId: string; creds: ILinkCredentials; syncBuf: string }>>("accounts")
-      .then((accs) => {
-        if (accs) {
+      .then(async (accs) => {
+        if (accs && accs.length > 0) {
           for (const a of accs) {
             this.accounts.set(a.accountId, {
               creds: a.creds,
@@ -97,10 +97,36 @@ export class ILinkConnectionDO implements DurableObject {
               pollLoopRunning: false,
             });
           }
-          // 兼容：设 ilinkCreds 为第一个账号
           if (!this.ilinkCreds && accs.length > 0) {
             this.ilinkCreds = accs[0].creds;
           }
+        } else {
+          // 迁移旧格式：从 "credentials" key 读取单账号
+          try {
+            const oldCreds = await state.storage.get<string>("credentials");
+            if (oldCreds) {
+              const c = JSON.parse(oldCreds);
+              if (c.botToken && c.accountId) {
+                const creds: ILinkCredentials = {
+                  botToken: c.botToken,
+                  accountId: c.accountId,
+                  baseUrl: c.baseUrl || "https://ilinkai.weixin.qq.com",
+                  userId: c.userId || "",
+                };
+                this.accounts.set(c.accountId, {
+                  creds,
+                  syncBuf: c.syncBuf || "",
+                  consecutiveErrors: 0,
+                  lastPollAt: "",
+                  pollLoopRunning: false,
+                });
+                this.ilinkCreds = creds;
+                // 迁移到新格式
+                await this.saveAccounts();
+                Logger.info("[DO] Migrated old credentials to accounts", { accountId: c.accountId });
+              }
+            }
+          } catch {}
         }
       })
       .catch(() => {});
