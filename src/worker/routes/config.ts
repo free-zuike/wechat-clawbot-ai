@@ -1,4 +1,9 @@
 // 配置路由
+// 数据模型：
+//   aiProvider: 当前选中的提供商 ID ("cloudflare" 或 "custom_xxx")
+//   aiCustomProviders: 自定义提供商元数据 [{id, name, icon}]
+//   aiPresets: 每个提供商的独立配置 [{id, model, baseUrl, apiKey, maxTokens}]
+//   aiModel/aiBaseUrl/aiApiKey/aiMaxTokens: 当前提供商配置的回显副本
 
 import { json, verifyAdmin } from "../utils";
 import { Logger } from "../utils/error";
@@ -6,29 +11,100 @@ import { configCache } from "../utils/cache";
 import type { Env } from "../index";
 
 const KV_CONFIG_KEY = "clawbot:config";
-const CONFIG_FIELDS = ["aiProvider", "aiModel", "aiBaseUrl", "aiApiKey", "aiMaxTokens", "aiSystemPrompt", "webhookUrl", "webhookEnabled", "webhookTitle", "webhookApiKey", "webhookChannels", "aiPresets", "aiActivePresetId", "aiCustomProviders"] as const;
-type ConfigField = (typeof CONFIG_FIELDS)[number];
+const CONFIG_FIELDS = ["aiProvider", "aiModel", "aiBaseUrl", "aiApiKey", "aiMaxTokens", "aiSystemPrompt", "webhookUrl", "webhookEnabled", "webhookTitle", "webhookApiKey", "webhookChannels", "aiPresets", "aiCustomProviders"] as const;
+
+type Preset = {
+  id: string;
+  model?: string;
+  baseUrl?: string;
+  apiKey?: string;
+  maxTokens?: number;
+};
 
 function maskKey(key: string): string {
+  if (!key) return "";
   return key.length <= 8 ? "***" : key.slice(0, 4) + "***" + key.slice(-4);
 }
 
+function unmaskKey(newVal: unknown, oldVal: unknown): string {
+  // 如果新值包含 ***，说明是前端回显的掩码值，保留原值
+  if (typeof newVal === "string" && newVal.includes("***")) {
+    return (oldVal as string) || "";
+  }
+  return (newVal as string) || "";
+}
+
+function findPreset(presets: Preset[], id: string): Preset | undefined {
+  return presets.find((p) => p.id === id);
+}
+
 function getConfigResponse(kvConfig: Record<string, unknown>) {
+  const currentProvider = (kvConfig.aiProvider as string) || "cloudflare";
+  const rawPresets = (kvConfig.aiPresets as Preset[]) || [];
+
+  // 从预设中获取当前提供商的配置作为顶层回显字段
+  let currentModel = (kvConfig.aiModel as string) || "";
+  let currentBaseUrl = (kvConfig.aiBaseUrl as string) || "";
+  let currentApiKey = (kvConfig.aiApiKey as string) || "";
+  let currentMaxTokens = (kvConfig.aiMaxTokens as number) || 1024;
+
+  const activePreset = findPreset(rawPresets, currentProvider);
+  if (activePreset) {
+    currentModel = activePreset.model || currentModel;
+    currentBaseUrl = activePreset.baseUrl || currentBaseUrl;
+    currentApiKey = activePreset.apiKey || currentApiKey;
+    currentMaxTokens = activePreset.maxTokens || currentMaxTokens;
+  }
+
+  // 掩码化预设中的 API key
+  const maskedPresets: Preset[] = rawPresets.map((p) => ({
+    id: p.id,
+    model: p.model || "",
+    baseUrl: p.baseUrl || "",
+    apiKey: p.apiKey ? maskKey(p.apiKey) : "",
+    maxTokens: p.maxTokens || 1024,
+  }));
+
   return {
-    aiProvider: (kvConfig.aiProvider as string) || "cloudflare",
-    aiModel: (kvConfig.aiModel as string) || "",
-    aiBaseUrl: (kvConfig.aiBaseUrl as string) || "",
-    aiApiKey: typeof kvConfig.aiApiKey === "string" && kvConfig.aiApiKey ? maskKey(kvConfig.aiApiKey as string) : "",
-    aiMaxTokens: (kvConfig.aiMaxTokens as number) || 1024,
+    aiProvider: currentProvider,
+    aiModel: currentModel,
+    aiBaseUrl: currentBaseUrl,
+    aiApiKey: maskKey(currentApiKey),
+    aiMaxTokens: currentMaxTokens,
     aiSystemPrompt: (kvConfig.aiSystemPrompt as string) || "",
     webhookUrl: (kvConfig.webhookUrl as string) || "",
     webhookEnabled: (kvConfig.webhookEnabled as boolean) || false,
     webhookTitle: (kvConfig.webhookTitle as string) || "",
     webhookApiKey: typeof kvConfig.webhookApiKey === "string" && kvConfig.webhookApiKey ? maskKey(kvConfig.webhookApiKey as string) : "",
     webhookChannels: (kvConfig.webhookChannels as string[]) || [],
-    aiPresets: (kvConfig.aiPresets as any[]) || [],
-    aiActivePresetId: (kvConfig.aiActivePresetId as string) || "cloudflare",
+    aiPresets: maskedPresets,
     aiCustomProviders: (kvConfig.aiCustomProviders as any[]) || [],
+  };
+}
+
+// 从配置中解析出实际的 AI 调用配置（供 chat / trigger 使用）
+export function resolveAIConfig(kvConfig: Record<string, unknown>) {
+  const provider = (kvConfig.aiProvider as string) || "cloudflare";
+  const presets = (kvConfig.aiPresets as Preset[]) || [];
+  const active = findPreset(presets, provider);
+
+  if (active && provider !== "cloudflare") {
+    return {
+      provider,
+      model: active.model || "",
+      baseUrl: active.baseUrl || "",
+      apiKey: active.apiKey || "",
+      maxTokens: active.maxTokens || 1024,
+    };
+  }
+
+  // 回退到顶层字段（兼容旧数据）
+  return {
+    provider,
+    model: (kvConfig.aiModel as string) || "",
+    baseUrl: (kvConfig.aiBaseUrl as string) || "",
+    apiKey: (kvConfig.aiApiKey as string) || "",
+    maxTokens: (kvConfig.aiMaxTokens as number) || 1024,
   };
 }
 
@@ -79,6 +155,7 @@ export async function handleConfig(request: Request, env: Env): Promise<Response
 
       const updated: Record<string, unknown> = { ...current };
 
+      // 处理简单字段
       for (const field of CONFIG_FIELDS) {
         if (field in body) {
           const val = body[field];
@@ -89,20 +166,43 @@ export async function handleConfig(request: Request, env: Env): Promise<Response
         }
       }
 
-      if (updated.aiProvider && !["cloudflare", "openai"].includes(updated.aiProvider as string) && !(updated.aiProvider as string).startsWith("custom_")) {
-        return json({ error: "VALIDATION_ERROR", message: "aiProvider 必须是 cloudflare、openai 或 custom_* 格式" }, 400);
+      // 验证 aiProvider
+      const provider = (updated.aiProvider as string) || "cloudflare";
+      if (provider !== "cloudflare" && !provider.startsWith("custom_")) {
+        return json({ error: "VALIDATION_ERROR", message: "aiProvider 必须是 cloudflare 或 custom_* 格式" }, 400);
       }
-      if (updated.aiProvider === "openai" && !updated.aiBaseUrl) {
-        return json({ error: "VALIDATION_ERROR", message: "使用 OpenAI 兼容 API 时，API 地址为必填" }, 400);
+
+      // 处理 aiPresets - 需要对掩码的 apiKey 解密
+      const bodyPresets = body.aiPresets as Preset[] | undefined;
+      if (Array.isArray(bodyPresets)) {
+        const currentPresets = (current.aiPresets as Preset[]) || [];
+        const savedPresets: Preset[] = bodyPresets.map((bp) => {
+          const oldPreset = findPreset(currentPresets, bp.id);
+          return {
+            id: bp.id,
+            model: (bp.model as string) || "",
+            baseUrl: (bp.baseUrl as string) || "",
+            apiKey: unmaskKey(bp.apiKey, oldPreset?.apiKey),
+            maxTokens: Number(bp.maxTokens) || 1024,
+          };
+        });
+        updated.aiPresets = savedPresets;
+
+        // 对于非 cloudflare 提供商，需要验证其预设的必填字段
+        if (provider !== "cloudflare") {
+          const activePreset = findPreset(savedPresets, provider);
+          if (activePreset) {
+            if (!activePreset.baseUrl) {
+              return json({ error: "VALIDATION_ERROR", message: "使用自定义提供商时，API 地址为必填" }, 400);
+            }
+            if (!activePreset.apiKey) {
+              return json({ error: "VALIDATION_ERROR", message: "使用自定义提供商时，API 密钥为必填" }, 400);
+            }
+          }
+        }
       }
-      if (updated.aiProvider === "openai" && !updated.aiApiKey) {
-        return json({ error: "VALIDATION_ERROR", message: "使用 OpenAI 兼容 API 时，API 密钥为必填" }, 400);
-      }
-      if (updated.aiMaxTokens !== undefined) {
-        const n = Number(updated.aiMaxTokens);
-        if (isNaN(n) || n < 1 || n > 32000) return json({ error: "VALIDATION_ERROR", message: "max_tokens 必须在 1-32000 之间" }, 400);
-        updated.aiMaxTokens = n;
-      }
+
+      // 处理顶层 aiApiKey 掩码
       if (typeof updated.aiApiKey === "string" && updated.aiApiKey.includes("***")) {
         updated.aiApiKey = current.aiApiKey || "";
       }
@@ -110,6 +210,14 @@ export async function handleConfig(request: Request, env: Env): Promise<Response
         updated.webhookApiKey = current.webhookApiKey || "";
       }
 
+      // maxTokens 验证
+      if (updated.aiMaxTokens !== undefined) {
+        const n = Number(updated.aiMaxTokens);
+        if (isNaN(n) || n < 1 || n > 32000) return json({ error: "VALIDATION_ERROR", message: "max_tokens 必须在 1-32000 之间" }, 400);
+        updated.aiMaxTokens = n;
+      }
+
+      // 清理 undefined 字段
       for (const field of CONFIG_FIELDS) {
         if (updated[field] === undefined && field !== "aiProvider" && field !== "aiMaxTokens") {
           delete updated[field];
@@ -119,7 +227,7 @@ export async function handleConfig(request: Request, env: Env): Promise<Response
       await env.CLAWBOT_KV.put(KV_CONFIG_KEY, JSON.stringify(updated));
       configCache.invalidate("config");
 
-      Logger.info("[config] updated", { provider: updated.aiProvider, model: updated.aiModel });
+      Logger.info("[config] updated", { provider, customProviders: (updated.aiCustomProviders as any[])?.length || 0 });
       return json({ ok: true, message: "配置已保存" });
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);

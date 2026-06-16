@@ -183,7 +183,7 @@ const statusLoading = ref(false);
 const firstLoadDone = ref(false);
 
 // ===== Config =====
-const config = reactive({ aiProvider: "cloudflare", aiModel: "", aiBaseUrl: "", aiApiKey: "", aiMaxTokens: 1024, aiSystemPrompt: "", webhookEnabled: false, webhookUrl: "", webhookTitle: "", webhookApiKey: "", webhookChannels: [] as string[], aiCustomProviders: [] as Array<{ id: string; name: string; icon: string }> });
+const config = reactive({ aiProvider: "cloudflare", aiModel: "", aiBaseUrl: "", aiApiKey: "", aiMaxTokens: 1024, aiSystemPrompt: "", webhookEnabled: false, webhookUrl: "", webhookTitle: "", webhookApiKey: "", webhookChannels: [] as string[], aiCustomProviders: [] as Array<{ id: string; name: string; icon: string }>, aiPresets: [] as Array<{ id: string; model: string; baseUrl: string; apiKey: string; maxTokens: number }> });
 const configResult = ref("");
 const configSaving = ref(false);
 
@@ -289,12 +289,8 @@ async function handleLoadConfig() {
     config.webhookApiKey = d.webhookApiKey || "";
     config.webhookChannels = d.webhookChannels || [];
     config.aiCustomProviders = d.aiCustomProviders || [];
-    // 从旧的 aiPresets 迁移到 aiCustomProviders
-    if (config.aiCustomProviders.length === 0 && d.aiPresets && d.aiPresets.length > 0) {
-      config.aiCustomProviders = d.aiPresets.map((p: any) => ({
-        id: p.id, name: p.name, icon: "🤖",
-      }));
-    }
+    // 加载预设数据（每个提供商独立配置）
+    config.aiPresets = d.aiPresets || [];
     configResult.value = d.hasEnvOverride ? "✅ 已加载当前配置（注意：当前有环境变量覆盖）" : "✅ 已加载当前配置";
   } catch (e: any) { if (e instanceof ApiError && e.isCancelled) return; configResult.value = "❌ 加载失败: " + handleApiError(e, "加载失败"); }
 }

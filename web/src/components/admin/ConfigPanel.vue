@@ -11,7 +11,7 @@
           <span class="provider-name">Cloudflare AI</span>
           <span v-if="config.aiProvider === 'cloudflare'" class="provider-check">✓</span>
         </div>
-        <div v-for="p in customProviders" :key="p.id" class="provider-item" :class="{ active: config.aiProvider === p.id }" @click="selectProvider(p.id)">
+        <div v-for="p in config.aiCustomProviders" :key="p.id" class="provider-item" :class="{ active: config.aiProvider === p.id }" @click="selectProvider(p.id)">
           <span class="provider-icon">{{ p.icon }}</span>
           <span class="provider-name">{{ p.name }}</span>
           <span class="provider-delete" @click.stop="deleteProvider(p.id, $event)">🗑️</span>
@@ -27,10 +27,11 @@
         <div v-if="config.aiProvider === 'cloudflare'" class="form-section">
           <h4>☁️ Cloudflare Workers AI</h4>
           <p class="form-desc">使用 Cloudflare 绑定，无需 API 地址和密钥</p>
-          <div class="field"><label>AI 模型</label><input v-model="config.aiModel" class="input" placeholder="@cf/meta/llama-3-8b-instruct" /></div>
+          <div class="field"><label>AI 模型</label><input v-model="config.aiModel" class="input" placeholder="@cf/meta/llama-3.2-3b-instruct" /></div>
         </div>
         <div v-else-if="config.aiProvider" class="form-section">
           <h4>{{ getCurrentProviderName() }}</h4>
+          <p class="form-desc">OpenAI 兼容的 API 接口</p>
           <div class="field"><label>AI 模型</label><input v-model="config.aiModel" class="input" placeholder="glm-4-flash" /></div>
           <div class="field"><label>API 地址</label><input v-model="config.aiBaseUrl" class="input" placeholder="https://api.example.com" /><div class="field-hint">不要加 /v1/chat/completions 后缀</div></div>
           <div class="field"><label>API 密钥</label><input v-model="config.aiApiKey" class="input" type="password" placeholder="sk-..." /></div>
@@ -60,7 +61,7 @@
 
     <div class="save-bar">
       <button class="btn secondary" @click="$emit('load')">📥 加载</button>
-      <button class="btn" :disabled="saving" @click="$emit('save')">{{ saving ? "保存中..." : "💾 保存配置" }}</button>
+      <button class="btn" :disabled="saving" @click="handleSave">{{ saving ? '保存中...' : '💾 保存配置' }}</button>
     </div>
     <div v-if="result" :class="['result-box', result.includes('✅') ? 'success' : '']">{{ result }}</div>
 
@@ -82,10 +83,38 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from "vue";
+import { ref, computed, watch } from "vue";
+
+interface Preset {
+  id: string;
+  model: string;
+  baseUrl: string;
+  apiKey: string;
+  maxTokens: number;
+}
+
+interface CustomProvider {
+  id: string;
+  name: string;
+  icon: string;
+}
 
 const props = defineProps<{
-  config: { aiProvider: string; aiModel: string; aiBaseUrl: string; aiApiKey: string; aiMaxTokens: number; aiSystemPrompt: string; webhookEnabled: boolean; webhookUrl: string; webhookTitle: string; webhookApiKey: string; webhookChannels: string[]; aiCustomProviders: Array<{ id: string; name: string; icon: string }> };
+  config: {
+    aiProvider: string;
+    aiModel: string;
+    aiBaseUrl: string;
+    aiApiKey: string;
+    aiMaxTokens: number;
+    aiSystemPrompt: string;
+    webhookEnabled: boolean;
+    webhookUrl: string;
+    webhookTitle: string;
+    webhookApiKey: string;
+    webhookChannels: string[];
+    aiCustomProviders: CustomProvider[];
+    aiPresets?: Preset[];
+  };
   result: string;
   saving: boolean;
 }>();
@@ -97,60 +126,89 @@ const webhookChannelsStr = computed({
   set: (val: string) => { props.config.webhookChannels = val.split(",").map(s => s.trim()).filter(Boolean); },
 });
 
-const customProviders = computed(() => props.config.aiCustomProviders || []);
+function ensurePresets(): Preset[] {
+  if (!props.config.aiPresets) props.config.aiPresets = [];
+  return props.config.aiPresets;
+}
+
+function getPreset(id: string): Preset | undefined {
+  return ensurePresets().find(p => p.id === id);
+}
+
+function upsertPreset(id: string, fields: Partial<Preset>): Preset {
+  const presets = ensurePresets();
+  let preset = presets.find(p => p.id === id);
+  if (!preset) {
+    preset = { id, model: "", baseUrl: "", apiKey: "", maxTokens: 1024 };
+    presets.push(preset);
+  }
+  Object.assign(preset, fields);
+  return preset;
+}
+
+function removePreset(id: string) {
+  const presets = ensurePresets();
+  const idx = presets.findIndex(p => p.id === id);
+  if (idx !== -1) presets.splice(idx, 1);
+}
 
 function selectProvider(id: string) {
-  // 先加载新提供商的配置
-  const newPreset = (props.config as any).aiPresets?.find((p: any) => p.id === id);
-  const newModel = newPreset?.model || "";
-  const newBaseUrl = newPreset?.baseUrl || "";
-  const newApiKey = newPreset?.apiKey || "";
-  const newMaxTokens = newPreset?.maxTokens || 1024;
+  const presets = ensurePresets();
+  const preset = presets.find(p => p.id === id);
 
-  // 再保存当前提供商的配置到 aiPresets
-  const currentPreset = (props.config as any).aiPresets?.find((p: any) => p.id === props.config.aiProvider);
-  if (currentPreset) {
-    currentPreset.model = props.config.aiModel;
-    currentPreset.baseUrl = props.config.aiBaseUrl;
-    currentPreset.apiKey = props.config.aiApiKey;
-    currentPreset.maxTokens = props.config.aiMaxTokens;
-  }
-
-  // 应用新提供商的配置
+  // 更新为新的提供商
   props.config.aiProvider = id;
-  if (id !== "cloudflare") {
-    props.config.aiModel = newModel;
-    props.config.aiBaseUrl = newBaseUrl;
-    props.config.aiApiKey = newApiKey;
-    props.config.aiMaxTokens = newMaxTokens;
+
+  if (id === "cloudflare") {
+    // cloudflare：从预设加载（或用默认值）
+    if (preset) {
+      props.config.aiModel = preset.model;
+      props.config.aiBaseUrl = "";
+      props.config.aiApiKey = "";
+      props.config.aiMaxTokens = preset.maxTokens || 1024;
+    } else {
+      props.config.aiModel = "";
+      props.config.aiBaseUrl = "";
+      props.config.aiApiKey = "";
+      props.config.aiMaxTokens = 1024;
+    }
   } else {
-    props.config.aiModel = "";
-    props.config.aiBaseUrl = "";
-    props.config.aiApiKey = "";
-    props.config.aiMaxTokens = 1024;
+    // 自定义提供商：从预设加载
+    if (preset) {
+      props.config.aiModel = preset.model;
+      props.config.aiBaseUrl = preset.baseUrl;
+      props.config.aiApiKey = preset.apiKey;
+      props.config.aiMaxTokens = preset.maxTokens || 1024;
+    } else {
+      props.config.aiModel = "";
+      props.config.aiBaseUrl = "";
+      props.config.aiApiKey = "";
+      props.config.aiMaxTokens = 1024;
+    }
   }
-  emit("save");
+  // 注意：不调用 emit("save")，只有点击"保存配置"按钮才保存
 }
 
 function deleteProvider(id: string, event: Event) {
   event.stopPropagation();
-  if (!confirm("确定删除此提供商？")) return;
+  if (!confirm("确定删除此提供商？该提供商的配置也将被删除。")) return;
+
+  // 从自定义提供商列表删除
+  const idx = (props.config.aiCustomProviders || []).findIndex(p => p.id === id);
+  if (idx !== -1) props.config.aiCustomProviders!.splice(idx, 1);
+
+  // 从预设中删除
+  removePreset(id);
+
+  // 如果删除的是当前提供商，切回 cloudflare
   if (props.config.aiProvider === id) {
-    props.config.aiProvider = "cloudflare";
+    selectProvider("cloudflare");
   }
-  const idx = customProviders.value.findIndex(p => p.id === id);
-  if (idx !== -1) props.config.aiCustomProviders.splice(idx, 1);
-  // 同步删除 aiPresets 中的条目
-  const presets = (props.config as any).aiPresets;
-  if (Array.isArray(presets)) {
-    const pidx = presets.findIndex((p: any) => p.id === id);
-    if (pidx !== -1) presets.splice(pidx, 1);
-  }
-  emit("save");
+  // 不自动保存
 }
 
 function getCurrentProviderName() {
-  const p = customProviders.value.find((x) => x.id === props.config.aiProvider);
+  const p = (props.config.aiCustomProviders || []).find(x => x.id === props.config.aiProvider);
   return p ? p.name : "OpenAI 兼容";
 }
 
@@ -162,21 +220,50 @@ const availableIcons = ["🤖", "🧠", "⚡", "🔧", "🌟", "🎯", "🚀", "
 function addProvider() {
   if (!newName.value.trim()) return;
   const id = "custom_" + Date.now();
+
   if (!props.config.aiCustomProviders) props.config.aiCustomProviders = [];
   props.config.aiCustomProviders.push({ id, name: newName.value.trim(), icon: newIcon.value });
-  // 同时保存到 aiPresets
-  if (!(props.config as any).aiPresets) (props.config as any).aiPresets = [];
-  (props.config as any).aiPresets.push({
-    id, name: newName.value.trim(),
-    provider: "openai", model: "",
-    baseUrl: "", apiKey: "", maxTokens: 1024,
-  });
-  props.config.aiProvider = id;
+
+  // 创建空预设
+  upsertPreset(id, { model: "", baseUrl: "", apiKey: "", maxTokens: 1024 });
+
+  // 切换到新提供商
+  selectProvider(id);
+
   newName.value = "";
   newIcon.value = "🤖";
   showAddModal.value = false;
+  // 不自动保存
+}
+
+// ===== 当前编辑字段同步到预设 =====
+// 当用户编辑表单字段时，同步更新当前提供商对应的预设条目，这样后端 save 时
+// 才能拿到正确的值。（前端拥有完整状态，后端只是持久化）
+function syncCurrentToPreset() {
+  const id = props.config.aiProvider;
+  if (!id) return;
+  upsertPreset(id, {
+    model: props.config.aiModel,
+    baseUrl: props.config.aiBaseUrl,
+    apiKey: props.config.aiApiKey,
+    maxTokens: props.config.aiMaxTokens,
+  });
+}
+
+function handleSave() {
+  // 保存前，先把当前表单字段同步到预设
+  syncCurrentToPreset();
   emit("save");
 }
+
+// 监听编辑字段变化，实时同步到当前提供商的预设
+watch(
+  () => [props.config.aiModel, props.config.aiBaseUrl, props.config.aiApiKey, props.config.aiMaxTokens],
+  () => {
+    if (props.config.aiProvider) syncCurrentToPreset();
+  },
+  { deep: true }
+);
 </script>
 
 <style scoped>

@@ -103,7 +103,8 @@ interface AIConfig {
 }
 
 async function callModel(config: AIConfig, messages: Array<{ role: string; content: string }>): Promise<string> {
-  if (config.provider === "openai") {
+  // 非 cloudflare 提供商统一走 OpenAI 兼容接口
+  if (config.provider !== "cloudflare") {
     return callOpenAICompatible({
       baseUrl: config.baseUrl,
       apiKey: config.apiKey,
@@ -112,7 +113,6 @@ async function callModel(config: AIConfig, messages: Array<{ role: string; conte
       maxTokens: config.maxTokens,
     });
   }
-  // 默认 Cloudflare
   return callCloudflareAI(undefined, config.model, messages, config.maxTokens);
 }
 
@@ -156,7 +156,7 @@ export async function callAIWithContext(
 
   let reply = "";
   try {
-    if (config.provider === "openai") {
+    if (config.provider !== "cloudflare") {
       reply = await callOpenAICompatible({
         baseUrl: config.baseUrl,
         apiKey: config.apiKey,
@@ -221,7 +221,7 @@ export async function callAI(
 
   try {
     let text = "";
-    if (config.provider === "openai") {
+    if (config.provider !== "cloudflare") {
       text = await callOpenAICompatible({
         baseUrl: config.baseUrl,
         apiKey: config.apiKey,

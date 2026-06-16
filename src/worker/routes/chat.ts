@@ -4,16 +4,8 @@ import { json, verifyAdmin } from "../utils";
 import { Logger } from "../utils/error";
 import { callAI, tryQuickReply } from "../services/ai";
 import { configCache } from "../utils/cache";
+import { resolveAIConfig } from "./config";
 import type { Env } from "../index";
-
-interface ChatConfig {
-  aiProvider: string;
-  aiModel: string;
-  aiBaseUrl: string;
-  aiApiKey: string;
-  aiMaxTokens: number;
-  aiSystemPrompt: string;
-}
 
 interface ChatResponse {
   reply: string;
@@ -46,31 +38,27 @@ export async function handleChat(request: Request, env: Env): Promise<Response> 
     const quick = tryQuickReply(trimmed);
     if (quick) return json({ reply: quick, source: "shortcut" } satisfies ChatResponse);
 
-    const config: ChatConfig = await configCache.getOrLoad("config", async () => {
-      let kv: Record<string, unknown> = {};
+    const kv = await configCache.getOrLoad("config", async () => {
+      let kvConfig: Record<string, unknown> = {};
       try {
         const raw = await env.CLAWBOT_KV.get("clawbot:config");
-        if (raw) kv = JSON.parse(raw);
+        if (raw) kvConfig = JSON.parse(raw);
       } catch (e) {
         Logger.warn("[chat] config read failed", { error: (e as Error).message });
       }
-      return {
-        aiProvider: (kv.aiProvider as string) || "cloudflare",
-        aiModel: (kv.aiModel as string) || "",
-        aiBaseUrl: (kv.aiBaseUrl as string) || "",
-        aiApiKey: (kv.aiApiKey as string) || "",
-        aiMaxTokens: (kv.aiMaxTokens as number) || 1024,
-        aiSystemPrompt: (kv.aiSystemPrompt as string) || "",
-      };
+      return kvConfig;
     }, 10000);
 
-    Logger.info(`[chat][${requestId}] provider`, { provider: config.aiProvider, model: config.aiModel || "default" });
+    const aiConfig = resolveAIConfig(kv);
+    const systemPrompt = (kv.aiSystemPrompt as string) || "";
 
-    const reply = await callAI(env.AI, trimmed, config.aiSystemPrompt, config.aiModel, {
-      provider: config.aiProvider,
-      baseUrl: config.aiBaseUrl,
-      apiKey: config.aiApiKey,
-      maxTokens: config.aiMaxTokens,
+    Logger.info(`[chat][${requestId}] provider`, { provider: aiConfig.provider, model: aiConfig.model || "default" });
+
+    const reply = await callAI(env.AI, trimmed, systemPrompt, aiConfig.model, {
+      provider: aiConfig.provider,
+      baseUrl: aiConfig.baseUrl,
+      apiKey: aiConfig.apiKey,
+      maxTokens: aiConfig.maxTokens,
     });
 
     Logger.info(`[chat][${requestId}] reply`, { length: reply.length });

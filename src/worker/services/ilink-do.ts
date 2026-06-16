@@ -801,12 +801,6 @@ export class ILinkConnectionDO implements DurableObject {
     }
 
     let aiSystemPrompt = this.env.AI_SYSTEM_PROMPT || "";
-    let aiModel = this.env.AI_MODEL || "";
-    let aiProvider = "cloudflare";
-    let aiBaseUrl = "";
-    let aiApiKey = "";
-    let aiMaxTokens = 1024;
-
     let webhookUrl = "";
     let webhookEnabled = false;
     let webhookTitle = "";
@@ -815,22 +809,44 @@ export class ILinkConnectionDO implements DurableObject {
 
     // 从 KV 读配置
     const configRaw = await this.kv?.get("clawbot:config");
+    let kvConfig: Record<string, unknown> = {};
     try {
       if (configRaw) {
-        const kvConfig = JSON.parse(configRaw);
-        aiSystemPrompt = aiSystemPrompt || kvConfig.aiSystemPrompt || "";
-        aiModel = aiModel || kvConfig.aiModel || "";
-        aiProvider = kvConfig.aiProvider || "cloudflare";
-        aiBaseUrl = kvConfig.aiBaseUrl || "";
-        aiApiKey = kvConfig.aiApiKey || "";
-        aiMaxTokens = kvConfig.aiMaxTokens || 1024;
-        webhookUrl = kvConfig.webhookUrl || "";
-        webhookEnabled = kvConfig.webhookEnabled || false;
-        webhookTitle = kvConfig.webhookTitle || "";
-        webhookApiKey = kvConfig.webhookApiKey || "";
-        webhookChannels = kvConfig.webhookChannels || [];
+        kvConfig = JSON.parse(configRaw);
+        aiSystemPrompt = aiSystemPrompt || (kvConfig.aiSystemPrompt as string) || "";
+        webhookUrl = (kvConfig.webhookUrl as string) || "";
+        webhookEnabled = (kvConfig.webhookEnabled as boolean) || false;
+        webhookTitle = (kvConfig.webhookTitle as string) || "";
+        webhookApiKey = (kvConfig.webhookApiKey as string) || "";
+        webhookChannels = (kvConfig.webhookChannels as string[]) || [];
       }
     } catch (_e) {}
+
+    // 使用 resolveAIConfig 统一解析 AI 提供商配置（支持 aiPresets）
+    const presets = (kvConfig.aiPresets as any[]) || [];
+    const activeProvider = (kvConfig.aiProvider as string) || "cloudflare";
+    const activePreset = presets.find((p: any) => p.id === activeProvider);
+
+    let aiModel = this.env.AI_MODEL || "";
+    let aiProvider = "cloudflare";
+    let aiBaseUrl = "";
+    let aiApiKey = "";
+    let aiMaxTokens = 1024;
+
+    if (activePreset && activeProvider !== "cloudflare") {
+      aiProvider = activeProvider;
+      aiModel = activePreset.model || aiModel;
+      aiBaseUrl = activePreset.baseUrl || "";
+      aiApiKey = activePreset.apiKey || "";
+      aiMaxTokens = activePreset.maxTokens || 1024;
+    } else {
+      // cloudflare 或无预设：回退到顶层字段
+      aiProvider = activeProvider;
+      aiModel = aiModel || (kvConfig.aiModel as string) || "";
+      aiBaseUrl = (kvConfig.aiBaseUrl as string) || "";
+      aiApiKey = (kvConfig.aiApiKey as string) || "";
+      aiMaxTokens = (kvConfig.aiMaxTokens as number) || 1024;
+    }
 
     const cfg = { aiSystemPrompt, aiModel, aiProvider, aiBaseUrl, aiApiKey, aiMaxTokens, webhook: { enabled: webhookEnabled, url: webhookUrl, title: webhookTitle, apiKey: webhookApiKey, channels: webhookChannels } };
     this.cache.config = cfg;
