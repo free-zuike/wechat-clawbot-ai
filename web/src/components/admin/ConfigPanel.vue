@@ -100,7 +100,14 @@ const webhookChannelsStr = computed({
 const customProviders = computed(() => props.config.aiCustomProviders || []);
 
 function selectProvider(id: string) {
-  // 先保存当前提供商的配置到 aiPresets
+  // 先加载新提供商的配置
+  const newPreset = (props.config as any).aiPresets?.find((p: any) => p.id === id);
+  const newModel = newPreset?.model || "";
+  const newBaseUrl = newPreset?.baseUrl || "";
+  const newApiKey = newPreset?.apiKey || "";
+  const newMaxTokens = newPreset?.maxTokens || 1024;
+
+  // 再保存当前提供商的配置到 aiPresets
   const currentPreset = (props.config as any).aiPresets?.find((p: any) => p.id === props.config.aiProvider);
   if (currentPreset) {
     currentPreset.model = props.config.aiModel;
@@ -108,17 +115,14 @@ function selectProvider(id: string) {
     currentPreset.apiKey = props.config.aiApiKey;
     currentPreset.maxTokens = props.config.aiMaxTokens;
   }
-  // 切换提供商
+
+  // 应用新提供商的配置
   props.config.aiProvider = id;
-  // 加载新提供商的配置
   if (id !== "cloudflare") {
-    const preset = (props.config as any).aiPresets?.find((p: any) => p.id === id);
-    if (preset) {
-      props.config.aiModel = preset.model || "";
-      props.config.aiBaseUrl = preset.baseUrl || "";
-      props.config.aiApiKey = preset.apiKey || "";
-      props.config.aiMaxTokens = preset.maxTokens || 1024;
-    }
+    props.config.aiModel = newModel;
+    props.config.aiBaseUrl = newBaseUrl;
+    props.config.aiApiKey = newApiKey;
+    props.config.aiMaxTokens = newMaxTokens;
   } else {
     props.config.aiModel = "";
     props.config.aiBaseUrl = "";
