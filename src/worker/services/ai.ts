@@ -182,7 +182,10 @@ export async function callAIWithContext(
     context.lastUpdated = now;
     try {
       await saveContextToSQLite(storage, userId, context);
-    } catch {}
+      Logger.info(`[ai] Context saved for ${userId}`, { messageCount: context.messages.length });
+    } catch (e) {
+      Logger.error(`[ai] Context save failed for ${userId}`, { error: (e as Error).message });
+    }
   }
 
   return (reply || "").slice(0, 700) || "（AI 没有返回内容）";
