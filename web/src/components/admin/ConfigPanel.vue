@@ -26,7 +26,7 @@
         >
           <div class="preset-actions-top">
             <button class="preset-action" @click.stop="openEditModal(p)">✏️</button>
-            <button class="preset-action danger" @click.stop="confirmDelete(p)">🗑️</button>
+            <button class="preset-action danger" @click.stop="openDeleteModal(p)">🗑️</button>
           </div>
           <div class="preset-name">{{ p.name }}</div>
           <div class="preset-model">{{ p.model }}</div>
@@ -35,13 +35,12 @@
       </div>
     </div>
 
-    <!-- 当前选中的 AI 配置 -->
+    <!-- 当前 AI 配置详情 -->
     <div class="config-detail">
       <div class="field">
         <label>AI 模型</label>
-        <input v-model="config.aiModel" class="input" placeholder="@cf/meta/llama-3-8b-instruct" />
+        <input v-model="config.aiModel" class="input" :placeholder="config.aiProvider === 'openai' ? 'deepseek-chat / qwen-turbo' : '@cf/meta/llama-3-8b-instruct'" />
       </div>
-
       <template v-if="config.aiProvider === 'openai'">
         <div class="field">
           <label>API 地址</label>
@@ -122,32 +121,37 @@
                   <option value="cloudflare">Cloudflare</option>
                 </select>
               </div>
-              <div class="field">
-                <label>模型名称</label>
-                <input v-model="modalModel" class="input" placeholder="glm-4-flash" />
-              </div>
-              <div class="field">
-                <label>API 地址</label>
-                <input v-model="modalBaseUrl" class="input" placeholder="https://api.example.com" />
-              </div>
-              <div class="field">
-                <label>API 密钥</label>
-                <input v-model="modalApiKey" class="input" type="password" placeholder="sk-..." />
-              </div>
-              <div class="field">
-                <label>最大 Token 数</label>
-                <input v-model.number="modalMaxTokens" class="input" type="number" min="1" max="32000" />
-              </div>
+              <div class="field"><label>模型名称</label><input v-model="modalModel" class="input" placeholder="glm-4-flash" /></div>
+              <div class="field"><label>API 地址</label><input v-model="modalBaseUrl" class="input" placeholder="https://api.example.com" /></div>
+              <div class="field"><label>API 密钥</label><input v-model="modalApiKey" class="input" type="password" placeholder="sk-..." /></div>
+              <div class="field"><label>最大 Token 数</label><input v-model.number="modalMaxTokens" class="input" type="number" min="1" max="32000" /></div>
             </template>
             <template v-else>
-              <div style="font-size:12px;color:var(--text-secondary);margin-top:8px">
-                选择下方"保存"将此预设应用为当前配置，或"更新"仅修改名称。
-              </div>
+              <div style="font-size:12px;color:var(--text-secondary);margin-top:8px">点击"更新"仅修改预设名称</div>
             </template>
           </div>
           <div class="modal-footer">
             <button class="btn secondary" @click="closeModal">取消</button>
             <button class="btn" @click="saveModal">{{ modalMode === 'add' ? '保存' : '更新' }}</button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- 删除确认模态框 -->
+    <Teleport to="body">
+      <div v-if="showDeleteModal" class="modal-overlay" @click.self="showDeleteModal = false">
+        <div class="modal" style="width: 360px">
+          <div class="modal-header">
+            <h3>确认删除</h3>
+            <button class="modal-close" @click="showDeleteModal = false">&times;</button>
+          </div>
+          <div class="modal-body">
+            <p>确定要删除预设「{{ deleteTarget?.name }}」吗？此操作不可恢复。</p>
+          </div>
+          <div class="modal-footer">
+            <button class="btn secondary" @click="showDeleteModal = false">取消</button>
+            <button class="btn danger" @click="doDelete">删除</button>
           </div>
         </div>
       </div>
@@ -181,6 +185,7 @@ function selectCloudflare() {
   props.config.aiBaseUrl = "";
   props.config.aiApiKey = "";
   props.config.aiMaxTokens = 1024;
+  emit("save");
 }
 
 function selectPreset(preset: any) {
@@ -190,6 +195,7 @@ function selectPreset(preset: any) {
   props.config.aiBaseUrl = preset.baseUrl;
   props.config.aiApiKey = preset.apiKey;
   props.config.aiMaxTokens = preset.maxTokens;
+  emit("save");
 }
 
 function getHost(url: string) {
@@ -197,7 +203,7 @@ function getHost(url: string) {
   try { return new URL(url).hostname; } catch { return url.slice(0, 25); }
 }
 
-// 模态框
+// 新增/编辑模态框
 const showModal = ref(false);
 const modalMode = ref<"edit" | "add">("add");
 const modalEditId = ref("");
@@ -227,35 +233,44 @@ function openEditModal(preset: any) {
   showModal.value = true;
 }
 
-function confirmDelete(preset: any) {
-  if (!confirm("确定删除预设「" + preset.name + "」？")) return;
-  const idx = presets.value.findIndex(p => p.id === preset.id);
-  if (idx !== -1) {
-    props.config.aiPresets.splice(idx, 1);
-    if (selectedPresetId.value === preset.id) selectCloudflare();
-  }
-}
-
 function saveModal() {
   if (!modalName.value) return;
   if (modalMode.value === "add") {
     const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
     if (!props.config.aiPresets) props.config.aiPresets = [];
-    props.config.aiPresets.push({
+    const newPreset = {
       id, name: modalName.value,
-      provider: modalProvider.value,
-      model: modalModel.value,
-      baseUrl: modalBaseUrl.value,
-      apiKey: modalApiKey.value,
-      maxTokens: modalMaxTokens.value,
-    });
+      provider: modalProvider.value, model: modalModel.value,
+      baseUrl: modalBaseUrl.value, apiKey: modalApiKey.value, maxTokens: modalMaxTokens.value,
+    };
+    props.config.aiPresets.push(newPreset);
     selectedPresetId.value = id;
-    selectPreset(props.config.aiPresets[props.config.aiPresets.length - 1]);
+    selectPreset(newPreset);
   } else {
     const p = presets.value.find(x => x.id === modalEditId.value);
     if (p) p.name = modalName.value;
   }
   closeModal();
+}
+
+// 删除模态框
+const showDeleteModal = ref(false);
+const deleteTarget = ref<any>(null);
+
+function openDeleteModal(preset: any) {
+  deleteTarget.value = preset;
+  showDeleteModal.value = true;
+}
+
+function doDelete() {
+  if (!deleteTarget.value) return;
+  const idx = presets.value.findIndex(p => p.id === deleteTarget.value.id);
+  if (idx !== -1) {
+    props.config.aiPresets.splice(idx, 1);
+    if (selectedPresetId.value === deleteTarget.value.id) selectCloudflare();
+  }
+  showDeleteModal.value = false;
+  deleteTarget.value = null;
 }
 
 function closeModal() {
@@ -272,7 +287,6 @@ function closeModal() {
 <style scoped>
 .section-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
 .section-title { font-weight: 600; font-size: 14px; }
-
 .preset-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; margin-bottom: 20px; }
 .preset-card {
   position: relative; border: 2px solid var(--border-light); border-radius: 10px;
@@ -289,12 +303,10 @@ function closeModal() {
 .preset-action { background: none; border: none; cursor: pointer; font-size: 12px; padding: 2px 4px; border-radius: 4px; }
 .preset-action:hover { background: var(--bg-skeleton-1); }
 .preset-action.danger:hover { background: var(--alert-error-bg); }
-
 .config-detail { margin-bottom: 16px; }
 .field-hint { font-size: 12px; color: var(--text-secondary); margin-top: 4px; }
 .webhook-section { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border-light); }
 .save-bar { display: flex; gap: 10px; margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border-light); }
-
 .modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 1000; }
 .modal { background: var(--bg-card); border-radius: 12px; width: 400px; max-height: 80vh; overflow-y: auto; box-shadow: 0 8px 32px rgba(0,0,0,0.3); }
 .modal-header { display: flex; justify-content: space-between; align-items: center; padding: 16px 20px; border-bottom: 1px solid var(--border-light); }
