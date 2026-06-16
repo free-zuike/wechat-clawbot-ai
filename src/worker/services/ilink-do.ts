@@ -671,6 +671,7 @@ export class ILinkConnectionDO implements DurableObject {
       const cursor = this.state.storage.sql.exec(
         `SELECT user_id, messages, last_updated FROM contexts ORDER BY last_updated DESC`
       ).toArray();
+      Logger.info(`[DO] SQLite contexts: raw rows=${cursor.length}`);
       const rows = cursor.map((r: any) => {
         let messageCount = 0;
         let rawMessages = r.messages;
