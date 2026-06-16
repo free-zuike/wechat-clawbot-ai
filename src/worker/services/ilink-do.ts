@@ -102,6 +102,16 @@ export class ILinkConnectionDO implements DurableObject {
           if (!this.ilinkCreds && accs.length > 0) {
             this.ilinkCreds = accs[0].creds;
           }
+          // 加载完成后启动轮询
+          for (const [accountId, account] of this.accounts) {
+            if (!account.pollLoopRunning) {
+              account.pollLoopRunning = true;
+              this.runAccountPollLoop(accountId).catch((e) => {
+                Logger.error("[DO] Account poll loop error", { accountId, error: e.message });
+                account.pollLoopRunning = false;
+              });
+            }
+          }
         }
       })
       .catch(() => {});
