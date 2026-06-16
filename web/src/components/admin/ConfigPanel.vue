@@ -79,6 +79,15 @@
           <div class="modal-footer"><button class="btn secondary" @click="showAddModal = false">取消</button><button class="btn" @click="addProvider">添加</button></div>
         </div>
       </div>
+      <div v-if="showRenameModal" class="modal-overlay" @click.self="showRenameModal = false">
+        <div class="modal">
+          <div class="modal-header"><h3>修改提供商名称</h3><button class="modal-close" @click="showRenameModal = false">&times;</button></div>
+          <div class="modal-body">
+            <div class="field"><label>名称</label><input v-model="renameInput" class="input" placeholder="提供商名称" @keyup.enter="confirmRename" /></div>
+          </div>
+          <div class="modal-footer"><button class="btn secondary" @click="showRenameModal = false">取消</button><button class="btn" @click="confirmRename">确认</button></div>
+        </div>
+      </div>
     </Teleport>
   </div>
 </template>
@@ -210,22 +219,31 @@ function renameProvider(id: string, event: Event) {
 }
 
 const showAddModal = ref(false);
+const showRenameModal = ref(false);
+const renameTarget = ref<{ id: string; name: string } | null>(null);
+const renameInput = ref("");
 const newName = ref("");
 const newIcon = ref("🤖");
 const availableIcons = ["🤖", "🧠", "⚡", "🔧", "🌟", "🎯", "🚀", "💡", "🔥", "✨"];
 
-function addProvider() {
-  if (!newName.value.trim()) return;
-  const id = "custom_" + Date.now();
+function renameProvider(id: string, event: Event) {
+  event.stopPropagation();
+  const provider = props.config.aiCustomProviders.find(p => p.id === id);
+  if (!provider) return;
+  renameTarget.value = { id, name: provider.name };
+  renameInput.value = provider.name;
+  showRenameModal.value = true;
+}
 
-  if (!props.config.aiCustomProviders) props.config.aiCustomProviders = [];
-  props.config.aiCustomProviders.push({ id, name: newName.value.trim(), icon: newIcon.value });
-  upsertPreset(id, { model: "", baseUrl: "", apiKey: "", maxTokens: 1024 });
-  selectProvider(id);
-
-  newName.value = "";
-  newIcon.value = "🤖";
-  showAddModal.value = false;
+function confirmRename() {
+  if (!renameTarget.value || !renameInput.value.trim()) return;
+  const provider = props.config.aiCustomProviders.find(p => p.id === renameTarget.value!.id);
+  if (provider) {
+    provider.name = renameInput.value.trim();
+    emit("save");
+  }
+  showRenameModal.value = false;
+  renameTarget.value = null;
 }
 
 function handleSave() {
