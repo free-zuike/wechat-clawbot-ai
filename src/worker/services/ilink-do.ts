@@ -32,13 +32,12 @@ export interface ProcessedMessage {
 interface RuntimeCache {
   credentials: { botToken: string; accountId: string; baseUrl: string; userId: string; syncBuf: string } | null;
   credentialsLoadedAt: number;
-  config: { aiSystemPrompt: string; aiModel: string } | null;
+  config: { aiSystemPrompt: string; aiModel: string; aiProvider: string; aiBaseUrl: string; aiApiKey: string; aiMaxTokens: number; webhook: { enabled: boolean; url: string; title: string; apiKey: string; channels: string[] } } | null;
   configLoadedAt: number;
-  // 注意：不再用内存 Set 去重，改为依赖 syncBuf 服务端去重
-  // 每次轮询用 syncBuf 告诉服务器"我只接收这个位置之后的消息"
 }
 
 export class ILinkConnectionDO implements DurableObject {
+  private doState: DurableObjectState;
   private state: ILINKSessionState;
   private env: any;
   private ilinkCreds: ILinkCredentials | null = null; // 当前活跃账号（兼容）
@@ -61,20 +60,29 @@ export class ILinkConnectionDO implements DurableObject {
   private sqliteInitialized = false;
 
   constructor(state: DurableObjectState, env: any) {
-    this.state = state;
+    this.doState = state;
     this.env = env;
     this.kv = env.CLAWBOT_KV;
 
-    // 从 DO storage 恢复状态
-    const stored = state.storage.get<ILINKSessionState>("session").catch(() => null);
+    // 初始化 session state
     this.state = {
       syncBuf: "",
       lastPollAt: "",
       consecutiveErrors: 0,
       isRunning: false,
       pendingMessages: [],
-      ...this.state,
     };
+
+    // 从 DO storage 恢复状态（异步）
+    state.storage.get<ILINKSessionState>("session").then((stored) => {
+      if (stored) {
+        this.state.syncBuf = stored.syncBuf || "";
+        this.state.lastPollAt = stored.lastPollAt || "";
+        this.state.consecutiveErrors = stored.consecutiveErrors || 0;
+        this.state.isRunning = stored.isRunning || false;
+        this.state.pendingMessages = stored.pendingMessages || [];
+      }
+    }).catch(() => {});
 
     // 恢复运行时统计
     state.storage.get<typeof this.runtimeStats>("runtime_stats")
@@ -119,7 +127,7 @@ export class ILinkConnectionDO implements DurableObject {
   private async initSQLite(): Promise<void> {
     if (this.sqliteInitialized) return;
 
-    const sql = this.state.storage.sql;
+    const sql = this.doState.storage.sql;
 
     // credentials 表：存储微信登录凭证
     await sql.exec(`
@@ -330,8 +338,8 @@ export class ILinkConnectionDO implements DurableObject {
 
   private async handleSaveSession(request: Request): Promise<Response> {
     try {
-      const body = await request.json();
-      const { token, ttl } = body;
+      const body = await request.json() as { token?: string; ttl?: number };
+      const { token } = body;
       if (!token) {
         return new Response(JSON.stringify({ error: "缺少 token" }), {
           status: 400,
@@ -339,7 +347,7 @@ export class ILinkConnectionDO implements DurableObject {
         });
       }
 
-      await this.state.storage.put(`session:${token}`, JSON.stringify({ valid: true, createdAt: Date.now() }));
+      await this.doState.storage.put(`session:${token}`, JSON.stringify({ valid: true, createdAt: Date.now() }));
       Logger.info("[DO] Session saved", { token: token.slice(0, 8) + "..." });
       return new Response(JSON.stringify({ ok: true }), {
         headers: { "Content-Type": "application/json" },
@@ -364,12 +372,9 @@ export class ILinkConnectionDO implements DurableObject {
     }
 
     try {
-      await this.initSQLite();
-      const row = this.state.storage.sql.exec(
-        `SELECT token FROM sessions WHERE token = ?`,
-        token
-      ).one();
-      return new Response(JSON.stringify({ valid: !!row }), {
+      const sessionData = await this.doState.storage.get<string>(`session:${token}`);
+      const valid = !!sessionData;
+      return new Response(JSON.stringify({ valid }), {
         headers: { "Content-Type": "application/json" },
       });
     } catch {
@@ -387,7 +392,7 @@ export class ILinkConnectionDO implements DurableObject {
     // 从 DO storage 读取凭证
     let credsRaw: string | null = null;
     try {
-      credsRaw = await this.state.storage.get<string>("credentials");
+      credsRaw = await this.doState.storage.get<string>("credentials");
     } catch (_e) {}
 
     // 如果内存中有凭证，优先用内存的
@@ -413,7 +418,7 @@ export class ILinkConnectionDO implements DurableObject {
       creds: a.creds,
       syncBuf: a.syncBuf,
     }));
-    await this.state.storage.put("accounts", arr);
+    await this.doState.storage.put("accounts", arr);
   }
 
   // ========== 清除凭证（解绑微信）==========
@@ -425,7 +430,7 @@ export class ILinkConnectionDO implements DurableObject {
       // 支持指定 accountId 解绑
       if (request) {
         try {
-          const body = await request.json().catch(() => ({}));
+          const body = await request.json() as { accountId?: string };
           targetAccountId = body.accountId || null;
         } catch {}
       }
@@ -458,8 +463,8 @@ export class ILinkConnectionDO implements DurableObject {
 
   private async handleSaveCreds(request: Request): Promise<Response> {
     try {
-      const body = await request.json();
-      const { botToken, accountId, userId, baseUrl, syncBuf, createdAt } = body;
+      const body = await request.json() as { botToken?: string; accountId?: string; userId?: string; baseUrl?: string; syncBuf?: string; createdAt?: number };
+      const { botToken, accountId, userId, baseUrl, syncBuf } = body;
       if (!botToken || !accountId) {
         return new Response(JSON.stringify({ error: "缺少凭证" }), {
           status: 400,
@@ -534,15 +539,18 @@ export class ILinkConnectionDO implements DurableObject {
           };
           // KV写入失败不阻塞
           try { await this.kv!.put("credentials", JSON.stringify(creds)); } catch {}
+
+          const sessionToken = generateSessionToken();
           try {
-            const sessionToken = generateSessionToken();
             await this.kv!.put(`clawbot:session:${sessionToken}`, "valid", { expirationTtl: 24 * 60 * 60 });
           } catch {}
 
           Logger.info("[DO] QR login confirmed", { accountId: status.ilink_bot_id });
           return new Response(JSON.stringify({ status: "confirmed", ok: true }), {
-            headers: { "Content-Type": "application/json" },
-            "Set-Cookie": `clawbot_session=${sessionToken}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${24 * 60 * 60}`,
+            headers: {
+              "Content-Type": "application/json",
+              "Set-Cookie": `clawbot_session=${sessionToken}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${24 * 60 * 60}`,
+            },
           });
         }
 
@@ -576,7 +584,7 @@ export class ILinkConnectionDO implements DurableObject {
     }
 
     try {
-      const body = await request.json();
+      const body = await request.json() as { toUserId?: string; contextToken?: string; text?: string };
       const { toUserId, contextToken, text } = body;
 
       if (!toUserId || !text) {
@@ -625,14 +633,14 @@ export class ILinkConnectionDO implements DurableObject {
         userId: this.ilinkCreds.userId || "",
         lastPollAt: this.state.lastPollAt,
         consecutiveErrors: this.state.consecutiveErrors,
-        pollLoopRunning: a.pollLoopRunning,
+        pollLoopRunning: false,
       });
     }
 
     // 兜底：如果还是空，尝试直接从 DO storage 读旧格式
     if (accountsList.length === 0) {
       try {
-        const oldCreds = await this.state.storage.get<string>("credentials");
+        const oldCreds = await this.doState.storage.get<string>("credentials");
         if (oldCreds) {
           const c = JSON.parse(oldCreds);
           if (c.botToken && c.accountId) {
@@ -671,7 +679,7 @@ export class ILinkConnectionDO implements DurableObject {
   private async handleSQLiteContexts(): Promise<Response> {
     try {
       await this.initSQLite();
-      const cursor = this.state.storage.sql.exec(
+      const cursor = this.doState.storage.sql.exec(
         `SELECT user_id, messages, last_updated FROM contexts ORDER BY last_updated DESC`
       ).toArray();
       Logger.info(`[DO] SQLite contexts: raw rows=${cursor.length}`);
@@ -754,7 +762,7 @@ export class ILinkConnectionDO implements DurableObject {
           await this.processMessages(result.msgs, account.creds);
         }
 
-        this.state.storage.put("runtime_stats", this.runtimeStats);
+        await this.doState.storage.put("runtime_stats", this.runtimeStats);
         await new Promise((resolve) => setTimeout(resolve, 30000));
 
       } catch (e: any) {
@@ -765,7 +773,7 @@ export class ILinkConnectionDO implements DurableObject {
           try {
             const refreshResult = await getQRCodeStatus(account.creds.accountId);
             if (refreshResult.status === "confirmed" && refreshResult.bot_token) {
-              account.creds.botToken = refreshResult.botToken || refreshResult.bot_token;
+              account.creds.botToken = refreshResult.bot_token;
               account.syncBuf = "";
               Logger.info("[DO] Token refreshed", { accountId });
               account.consecutiveErrors = 0;
@@ -796,7 +804,7 @@ export class ILinkConnectionDO implements DurableObject {
 
   private async getConfigCached() {
     const now = Date.now();
-    if (this.cache.config && now - this.cache.configLoadedAt < 2 * 60 * 1000) {
+    if (this.cache.config && now - this.cache.configLoadedAt < 30 * 1000) {
       return this.cache.config;
     }
 
@@ -897,7 +905,7 @@ export class ILinkConnectionDO implements DurableObject {
       // 检查重置命令
       const RESET_COMMANDS = new Set(["新对话", "/reset", "/clear", "重置", "清空"]);
       if (RESET_COMMANDS.has(text.trim())) {
-        await clearContextSQLite(this.state.storage.sql, from);
+        await clearContextSQLite(this.doState.storage.sql, from);
         await sendTextMessage(useCreds!, from, ctxToken, "✅ 已开始新对话");
         await this.markMessageProcessed(messageId);
         processedCount++;
@@ -911,7 +919,7 @@ export class ILinkConnectionDO implements DurableObject {
 
         // 调用 AI 生成回复（使用 DO SQLite 存储上下文，不再走 KV）
         const reply = await callAIWithContext(
-          this.state.storage.sql,
+          this.doState.storage.sql,
           this.env.AI,
           from,
           text,
@@ -1047,7 +1055,7 @@ export class ILinkConnectionDO implements DurableObject {
 
     // 3) 从 DO storage 读取凭证（主存储）
     try {
-      const credsRaw = await this.state.storage.get<string>("credentials");
+      const credsRaw = await this.doState.storage.get<string>("credentials");
       if (credsRaw) {
         const creds = JSON.parse(credsRaw);
         if (creds.botToken && creds.accountId) {
@@ -1100,7 +1108,7 @@ export class ILinkConnectionDO implements DurableObject {
     if (!syncBufChanged) return;
 
     try {
-      this.state.storage.sql.exec(
+      this.doState.storage.sql.exec(
         `INSERT INTO credentials (id, bot_token, account_id, base_url, user_id, sync_buf, created_at, updated_at)
          VALUES (1, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
@@ -1130,7 +1138,7 @@ export class ILinkConnectionDO implements DurableObject {
 
     const now = Date.now();
     try {
-      this.state.storage.sql.exec(
+      this.doState.storage.sql.exec(
         `INSERT INTO credentials (id, bot_token, account_id, base_url, user_id, sync_buf, created_at, updated_at)
          VALUES (1, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
@@ -1156,11 +1164,11 @@ export class ILinkConnectionDO implements DurableObject {
 
   private async saveState(): Promise<void> {
     try {
-      await this.state.storage.put("session", {
+      await this.doState.storage.put("session", {
         syncBuf: this.state.syncBuf,
         lastPollAt: this.state.lastPollAt,
         consecutiveErrors: this.state.consecutiveErrors,
-        isRunning: this.pollLoopRunning,
+        isRunning: Array.from(this.accounts.values()).some(a => a.pollLoopRunning),
       });
     } catch (e) {
       Logger.error("[DO] Failed to save state", { error: (e as Error).message });
@@ -1173,7 +1181,7 @@ export class ILinkConnectionDO implements DurableObject {
 
   private async hasProcessedMessage(messageId: string): Promise<boolean> {
     try {
-      const rows = this.state.storage.sql.exec(
+      const rows = this.doState.storage.sql.exec(
         `SELECT 1 as found FROM processed_messages WHERE message_id = ? LIMIT 1`,
         messageId
       ).toArray();
@@ -1186,7 +1194,7 @@ export class ILinkConnectionDO implements DurableObject {
 
   private async markMessageProcessed(messageId: string): Promise<void> {
     try {
-      this.state.storage.sql.exec(
+      this.doState.storage.sql.exec(
         `INSERT OR IGNORE INTO processed_messages (message_id, created_at) VALUES (?, ?)`,
         messageId, Date.now()
       );

@@ -27,11 +27,15 @@ function maskKey(key: string): string {
 }
 
 function unmaskKey(newVal: unknown, oldVal: unknown): string {
-  // 如果新值包含 ***，说明是前端回显的掩码值，保留原值
-  if (typeof newVal === "string" && newVal.includes("***")) {
+  // 如果新值匹配掩码格式，说明是前端回显的掩码值，保留原值
+  if (typeof newVal === "string" && isMaskedKey(newVal)) {
     return (oldVal as string) || "";
   }
   return (newVal as string) || "";
+}
+
+function isMaskedKey(val: string): boolean {
+  return /^\*{3}$/.test(val) || /^[a-zA-Z0-9]{4}\*{3}[a-zA-Z0-9]{4}$/.test(val);
 }
 
 function findPreset(presets: Preset[], id: string): Preset | undefined {
@@ -66,6 +70,7 @@ function getConfigResponse(kvConfig: Record<string, unknown>) {
   }));
 
   return {
+    version: (kvConfig._version as number) || 0,
     aiProvider: currentProvider,
     aiModel: currentModel,
     aiBaseUrl: currentBaseUrl,
@@ -153,7 +158,15 @@ export async function handleConfig(request: Request, env: Env): Promise<Response
         Logger.warn("[config] KV read failed", { error: (e as Error).message });
       }
 
+      // 版本号乐观锁：防止并发修改覆盖
+      const currentVersion = (current._version as number) || 0;
+      const clientVersion = (body._version as number) ?? undefined;
+      if (clientVersion !== undefined && clientVersion !== currentVersion) {
+        return json({ error: "CONFLICT", message: "配置已被其他人修改，请刷新后重试", currentVersion }, 409);
+      }
+
       const updated: Record<string, unknown> = { ...current };
+      updated._version = currentVersion + 1;
 
       // 处理简单字段
       for (const field of CONFIG_FIELDS) {
@@ -201,12 +214,11 @@ export async function handleConfig(request: Request, env: Env): Promise<Response
           }
         }
       }
-
       // 处理顶层 aiApiKey 掩码
-      if (typeof updated.aiApiKey === "string" && updated.aiApiKey.includes("***")) {
+      if (typeof updated.aiApiKey === "string" && isMaskedKey(updated.aiApiKey)) {
         updated.aiApiKey = current.aiApiKey || "";
       }
-      if (typeof updated.webhookApiKey === "string" && updated.webhookApiKey.includes("***")) {
+      if (typeof updated.webhookApiKey === "string" && isMaskedKey(updated.webhookApiKey)) {
         updated.webhookApiKey = current.webhookApiKey || "";
       }
 

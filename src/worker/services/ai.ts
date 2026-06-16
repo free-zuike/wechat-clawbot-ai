@@ -92,7 +92,7 @@ async function callCloudflareAI(
   return typeof response === "string" ? response : response?.response || "";
 }
 
-// ========== 统一 AI 调用入口 ==========
+// ========== AI 配置接口 ==========
 
 interface AIConfig {
   provider: string;
@@ -100,20 +100,6 @@ interface AIConfig {
   baseUrl: string;
   apiKey: string;
   maxTokens: number;
-}
-
-async function callModel(config: AIConfig, messages: Array<{ role: string; content: string }>): Promise<string> {
-  // 非 cloudflare 提供商统一走 OpenAI 兼容接口
-  if (config.provider !== "cloudflare") {
-    return callOpenAICompatible({
-      baseUrl: config.baseUrl,
-      apiKey: config.apiKey,
-      model: config.model || "gpt-3.5-turbo",
-      messages,
-      maxTokens: config.maxTokens,
-    });
-  }
-  return callCloudflareAI(undefined, config.model, messages, config.maxTokens);
 }
 
 // ========== 带上下文的 AI 调用（微信消息处理）==========

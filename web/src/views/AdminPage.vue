@@ -183,7 +183,7 @@ const statusLoading = ref(false);
 const firstLoadDone = ref(false);
 
 // ===== Config =====
-const config = reactive({ aiProvider: "cloudflare", aiModel: "", aiBaseUrl: "", aiApiKey: "", aiMaxTokens: 1024, aiSystemPrompt: "", webhookEnabled: false, webhookUrl: "", webhookTitle: "", webhookApiKey: "", webhookChannels: [] as string[], aiCustomProviders: [] as Array<{ id: string; name: string; icon: string }>, aiPresets: [] as Array<{ id: string; model: string; baseUrl: string; apiKey: string; maxTokens: number }> });
+const config = reactive({ version: 0, aiProvider: "cloudflare", aiModel: "", aiBaseUrl: "", aiApiKey: "", aiMaxTokens: 1024, aiSystemPrompt: "", webhookEnabled: false, webhookUrl: "", webhookTitle: "", webhookApiKey: "", webhookChannels: [] as string[], aiCustomProviders: [] as Array<{ id: string; name: string; icon: string }>, aiPresets: [] as Array<{ id: string; model: string; baseUrl: string; apiKey: string; maxTokens: number }> });
 const configResult = ref("");
 const configSaving = ref(false);
 
@@ -280,6 +280,7 @@ async function handleLoadConfig() {
   configResult.value = "加载中...";
   try {
     const d = await fetchConfig(); if (d === null) return;
+    config.version = d.version || 0;
     config.aiProvider = d.aiProvider || "cloudflare"; config.aiModel = d.aiModel || "";
     config.aiBaseUrl = d.aiBaseUrl || ""; config.aiApiKey = d.aiApiKey || "";
     config.aiMaxTokens = d.aiMaxTokens || 1024;     config.aiSystemPrompt = d.aiSystemPrompt || "";
@@ -291,18 +292,25 @@ async function handleLoadConfig() {
     config.aiCustomProviders = d.aiCustomProviders || [];
     // 加载预设数据（每个提供商独立配置）
     config.aiPresets = d.aiPresets || [];
+    // 从旧的 aiPresets 迁移到 aiCustomProviders
+    if (config.aiCustomProviders.length === 0 && config.aiPresets.length > 0) {
+      config.aiCustomProviders = config.aiPresets.map((p: any) => ({
+        id: p.id, name: p.name, icon: "🤖",
+      }));
+    }
     configResult.value = d.hasEnvOverride ? "✅ 已加载当前配置（注意：当前有环境变量覆盖）" : "✅ 已加载当前配置";
   } catch (e: any) { if (e instanceof ApiError && e.isCancelled) return; configResult.value = "❌ 加载失败: " + handleApiError(e, "加载失败"); }
 }
 async function handleSaveConfig() {
   configSaving.value = true; configResult.value = "保存中...";
   try {
-    const d = await saveConfig(config);
+    const d = await saveConfig({ ...config, _version: config.version });
     if (d.ok) {
       configResult.value = "✅ " + (d.message || "配置已保存");
       // 保存成功后重新加载配置，确保预设等数据同步
       await handleLoadConfig();
     }
+    else if (d.error === "CONFLICT") configResult.value = "⚠️ " + (d.message || "配置已被其他人修改，请刷新后重试");
     else if (d.error === "VALIDATION_ERROR") configResult.value = "⚠️ 验证失败: " + (d.errors || []).join("; ");
     else configResult.value = "❌ " + (d.error || "保存失败");
   } catch (e: any) { configResult.value = "❌ 保存失败: " + handleApiError(e, "保存失败"); } finally { configSaving.value = false; }
@@ -416,7 +424,10 @@ onMounted(async () => {
   refreshTimer = window.setTimeout(tick, 30000);
 });
 
-onUnmounted(() => { if (refreshTimer) clearTimeout(refreshTimer); });
+onUnmounted(() => {
+  if (refreshTimer) clearTimeout(refreshTimer);
+  if (ws) { ws.onclose = null; ws.close(); ws = null; }
+});
 </script>
 
 <style scoped>

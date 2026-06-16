@@ -49,16 +49,43 @@ export interface FullStatus extends LoginStatus {
 }
 
 // ========== 配置相关类型 ==========
-export interface ClawBotConfig {
-  aiModel: string;
-  aiSystemPrompt: string;
+export interface AIProviderPreset {
+  id: string;
+  name: string;
+  model: string;
+  baseUrl: string;
+  apiKey: string;
+  maxTokens: number;
 }
 
-export interface ConfigResponse {
+export interface AICustomProvider {
+  id: string;
+  name: string;
+  icon: string;
+}
+
+export interface ClawBotConfig {
+  version?: number;
+  aiProvider: string;
+  aiModel: string;
+  aiBaseUrl: string;
+  aiApiKey: string;
+  aiMaxTokens: number;
+  aiSystemPrompt: string;
+  webhookEnabled: boolean;
+  webhookUrl: string;
+  webhookTitle: string;
+  webhookApiKey: string;
+  webhookChannels: string[];
+  aiPresets: AIProviderPreset[];
+  aiActivePresetId: string;
+  aiCustomProviders: AICustomProvider[];
+}
+
+export interface ConfigResponse extends ClawBotConfig {
   ok?: boolean;
   error?: string;
-  aiModel?: string;
-  aiSystemPrompt?: string;
+  hasEnvOverride?: boolean;
 }
 
 // ========== 响应相关类型 ==========
