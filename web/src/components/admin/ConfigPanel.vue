@@ -42,7 +42,7 @@
           </div>
           <div class="preset-name">{{ p.name }}</div>
           <div class="preset-model">{{ p.model }}</div>
-          <div class="preset-url">{{ p.baseUrl ? new URL(p.baseUrl).hostname : '-' }}</div>
+          <div class="preset-url">{{ getHost(p.baseUrl) }}</div>
         </div>
 
         <div class="preset-card add" @click="addPreset">
@@ -188,6 +188,11 @@ function deletePreset(id: string) {
     props.config.aiPresets.splice(idx, 1);
     if (selectedPresetId.value === id) selectCloudflare();
   }
+}
+
+function getHost(url: string) {
+  if (!url) return "-";
+  try { return new URL(url).hostname; } catch { return url.slice(0, 25); }
 }
 </script>
 
