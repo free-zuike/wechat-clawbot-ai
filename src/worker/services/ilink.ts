@@ -211,18 +211,21 @@ export async function sendTypingStatus(
   contextToken: string,
   typing: boolean,
 ): Promise<void> {
-  const msg: WeixinMessage = {
-    from_user_id: "",
-    to_user_id: toUserId,
-    client_id: generateClientId(),
-    message_type: MessageType.BOT,
-    message_state: typing ? TypingStatus.TYPING : TypingStatus.CANCEL,
-    context_token: contextToken,
-    item_list: [{ type: MessageItemType.TEXT, text_item: { text: " " } }],
-  };
-
   try {
-    await post(creds, "ilink/bot/sendmessage", { msg }, DEFAULT_API_MS);
+    // 第一步：获取 typing_ticket
+    const configResp = await post(creds, "ilink/bot/getconfig", {
+      ilink_user_id: toUserId,
+      context_token: contextToken,
+    }, DEFAULT_API_MS);
+    const typingTicket = configResp?.typing_ticket;
+    if (!typingTicket) return;
+
+    // 第二步：发送 typing 状态
+    await post(creds, "ilink/bot/sendtyping", {
+      ilink_user_id: toUserId,
+      typing_ticket: typingTicket,
+      status: typing ? TypingStatus.TYPING : TypingStatus.CANCEL,
+    }, DEFAULT_API_MS);
   } catch {
     // typing 状态失败不影响主流程
   }
