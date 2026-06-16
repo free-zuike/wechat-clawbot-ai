@@ -11,7 +11,7 @@ import { configCache } from "../utils/cache";
 import type { Env } from "../index";
 
 const KV_CONFIG_KEY = "clawbot:config";
-const CONFIG_FIELDS = ["aiProvider", "aiModel", "aiBaseUrl", "aiApiKey", "aiMaxTokens", "aiSystemPrompt", "webhookUrl", "webhookEnabled", "webhookTitle", "webhookApiKey", "webhookChannels", "aiPresets", "aiCustomProviders"] as const;
+const CONFIG_FIELDS = ["aiProvider", "aiModel", "aiImageModel", "aiVideoModel", "aiBaseUrl", "aiApiKey", "aiMaxTokens", "aiSystemPrompt", "webhookUrl", "webhookEnabled", "webhookTitle", "webhookApiKey", "webhookChannels", "aiPresets", "aiCustomProviders"] as const;
 
 type Preset = {
   id: string;
@@ -73,6 +73,8 @@ function getConfigResponse(kvConfig: Record<string, unknown>) {
     version: (kvConfig._version as number) || 0,
     aiProvider: currentProvider,
     aiModel: currentModel,
+    aiImageModel: (kvConfig.aiImageModel as string) || "@cf/black-forest-labs/flux-1-schnell",
+    aiVideoModel: (kvConfig.aiVideoModel as string) || "bytedance/seedance-2.0-fast",
     aiBaseUrl: currentBaseUrl,
     aiApiKey: maskKey(currentApiKey),
     aiMaxTokens: currentMaxTokens,

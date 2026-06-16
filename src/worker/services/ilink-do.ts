@@ -32,7 +32,7 @@ export interface ProcessedMessage {
 interface RuntimeCache {
   credentials: { botToken: string; accountId: string; baseUrl: string; userId: string; syncBuf: string } | null;
   credentialsLoadedAt: number;
-  config: { aiSystemPrompt: string; aiModel: string; aiProvider: string; aiBaseUrl: string; aiApiKey: string; aiMaxTokens: number; webhook: { enabled: boolean; url: string; title: string; apiKey: string; channels: string[] } } | null;
+  config: { aiSystemPrompt: string; aiModel: string; aiProvider: string; aiBaseUrl: string; aiApiKey: string; aiMaxTokens: number; aiImageModel: string; aiVideoModel: string; webhook: { enabled: boolean; url: string; title: string; apiKey: string; channels: string[] } } | null;
   configLoadedAt: number;
 }
 
@@ -856,7 +856,10 @@ export class ILinkConnectionDO implements DurableObject {
       aiMaxTokens = (kvConfig.aiMaxTokens as number) || 1024;
     }
 
-    const cfg = { aiSystemPrompt, aiModel, aiProvider, aiBaseUrl, aiApiKey, aiMaxTokens, webhook: { enabled: webhookEnabled, url: webhookUrl, title: webhookTitle, apiKey: webhookApiKey, channels: webhookChannels } };
+    const aiImageModel = (kvConfig.aiImageModel as string) || "@cf/black-forest-labs/flux-1-schnell";
+    const aiVideoModel = (kvConfig.aiVideoModel as string) || "bytedance/seedance-2.0-fast";
+
+    const cfg = { aiSystemPrompt, aiModel, aiProvider, aiBaseUrl, aiApiKey, aiMaxTokens, aiImageModel, aiVideoModel, webhook: { enabled: webhookEnabled, url: webhookUrl, title: webhookTitle, apiKey: webhookApiKey, channels: webhookChannels } };
     this.cache.config = cfg;
     this.cache.configLoadedAt = now;
     Logger.info("[DO] Config loaded", { webhookEnabled, hasWebhookUrl: !!webhookUrl, provider: aiProvider });
@@ -925,7 +928,7 @@ export class ILinkConnectionDO implements DurableObject {
           Logger.info(`[DO] ${mediaType} generation request`, { from, prompt: mediaPrompt.slice(0, 50) });
 
           if (isVideo) {
-            const videoUrl = await generateVideo(this.env.AI, mediaPrompt);
+            const videoUrl = await generateVideo(this.env.AI, mediaPrompt, cfg.aiVideoModel);
             if (videoUrl) {
               try {
                 await sendFileFromUrl(useCreds!, from, ctxToken, videoUrl, MessageItemType.VIDEO, "generated.mp4");
@@ -937,7 +940,7 @@ export class ILinkConnectionDO implements DurableObject {
               await sendTextMessage(useCreds!, from, ctxToken, "视频生成失败，请稍后重试或换个描述试试");
             }
           } else {
-            const imageData = await generateImage(this.env.AI, mediaPrompt);
+            const imageData = await generateImage(this.env.AI, mediaPrompt, cfg.aiImageModel);
             if (imageData) {
               await uploadAndSendMedia(useCreds!, from, ctxToken, MessageItemType.IMAGE, "generated.png", imageData.buffer as ArrayBuffer, "image/png");
               replyContent = `[图片生成] ${mediaPrompt}`;

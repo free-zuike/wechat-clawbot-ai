@@ -272,12 +272,13 @@ export function extractMediaPrompt(text: string, type: "image" | "video"): strin
   return prompt || text.trim();
 }
 
-const IMAGE_MODEL = "@cf/black-forest-labs/flux-1-schnell";
-const VIDEO_MODEL = "bytedance/seedance-2.0-fast";
+const DEFAULT_IMAGE_MODEL = "@cf/black-forest-labs/flux-1-schnell";
+const DEFAULT_VIDEO_MODEL = "bytedance/seedance-2.0-fast";
 
 export async function generateImage(
   aiBinding: any,
   prompt: string,
+  model?: string,
 ): Promise<Uint8Array | null> {
   if (!aiBinding) {
     Logger.warn("[ai] AI binding not available for image generation");
@@ -285,8 +286,9 @@ export async function generateImage(
   }
 
   try {
-    Logger.info("[ai] Generating image", { prompt: prompt.slice(0, 50) });
-    const response = await aiBinding.run(IMAGE_MODEL, { prompt });
+    const imageModel = model || DEFAULT_IMAGE_MODEL;
+    Logger.info("[ai] Generating image", { prompt: prompt.slice(0, 50), model: imageModel });
+    const response = await aiBinding.run(imageModel, { prompt });
 
     if (response instanceof Uint8Array) {
       Logger.info("[ai] Image generated", { size: response.length });
@@ -313,6 +315,7 @@ export async function generateImage(
 export async function generateVideo(
   aiBinding: any,
   prompt: string,
+  model?: string,
 ): Promise<string | null> {
   if (!aiBinding) {
     Logger.warn("[ai] AI binding not available for video generation");
@@ -320,8 +323,9 @@ export async function generateVideo(
   }
 
   try {
-    Logger.info("[ai] Generating video", { prompt: prompt.slice(0, 50) });
-    const response = await aiBinding.run(VIDEO_MODEL, {
+    const videoModel = model || DEFAULT_VIDEO_MODEL;
+    Logger.info("[ai] Generating video", { prompt: prompt.slice(0, 50), model: videoModel });
+    const response = await aiBinding.run(videoModel, {
       prompt,
       aspect_ratio: "16:9",
       duration: 5,
@@ -335,7 +339,7 @@ export async function generateVideo(
         // 轮询等待完成（最多 120 秒）
         for (let i = 0; i < 24; i++) {
           await new Promise(r => setTimeout(r, 5000));
-          const status = await aiBinding.run(VIDEO_MODEL, { jobId });
+          const status = await aiBinding.run(videoModel, { jobId });
           if (status?.state === "Completed" && status?.result?.video) {
             Logger.info("[ai] Video generated", { url: status.result.video });
             return status.result.video;

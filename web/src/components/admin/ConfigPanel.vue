@@ -42,6 +42,13 @@
       </div>
     </div>
 
+    <div class="media-models">
+      <h3>🎨 媒体生成模型</h3>
+      <p class="form-desc">用于图片和视频生成的模型，需要 Cloudflare AI binding 支持</p>
+      <div class="field"><label>图片生成模型</label><input v-model="config.aiImageModel" class="input" placeholder="@cf/black-forest-labs/flux-1-schnell" /></div>
+      <div class="field"><label>视频生成模型</label><input v-model="config.aiVideoModel" class="input" placeholder="bytedance/seedance-2.0-fast" /></div>
+    </div>
+
     <div class="field" style="margin-top: 16px">
       <label>人设提示词</label>
       <textarea v-model="config.aiSystemPrompt" class="input" placeholder="你是爪爪，一个友好的 AI 助手..." rows="6"></textarea>
@@ -281,6 +288,8 @@ watch(
 .form-empty { padding: 40px; text-align: center; color: var(--text-dim); }
 .field-hint { font-size: 12px; color: var(--text-secondary); margin-top: 4px; }
 .webhook-section { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border-light); }
+.media-models { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border-light); }
+.media-models h3 { margin: 0 0 4px; font-size: 14px; }
 .section-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
 .section-title { font-weight: 600; font-size: 14px; }
 .save-bar { display: flex; gap: 10px; margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border-light); }
