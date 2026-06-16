@@ -925,28 +925,43 @@ export class ILinkConnectionDO implements DurableObject {
           const isVideo = isVideoGenerationRequest(text);
           const mediaType = isVideo ? "视频" : "图片";
           const mediaPrompt = extractMediaPrompt(text, isVideo ? "video" : "image");
-          Logger.info(`[DO] ${mediaType} generation request`, { from, prompt: mediaPrompt.slice(0, 50) });
+          Logger.info(`[DO] ${mediaType} generation request detected`, { from, prompt: mediaPrompt.slice(0, 50), provider: cfg.aiProvider, hasAIBinding: !!this.env.AI });
 
-          if (isVideo) {
-            const videoUrl = await generateVideo(this.env.AI, mediaPrompt, cfg.aiVideoModel);
-            if (videoUrl) {
-              try {
-                await sendFileFromUrl(useCreds!, from, ctxToken, videoUrl, MessageItemType.VIDEO, "generated.mp4");
-              } catch {
-                await sendTextMessage(useCreds!, from, ctxToken, `视频已生成，但发送失败。视频链接：${videoUrl}`);
+          if (!this.env.AI) {
+            Logger.error("[DO] AI binding not available for image/video generation");
+            await sendTextMessage(useCreds!, from, ctxToken, "AI 服务未配置，无法生成图片/视频");
+            await this.markMessageProcessed(messageId);
+            sendTypingStatus(useCreds!, from, ctxToken, false).catch(() => {});
+            return;
+          }
+
+          try {
+            if (isVideo) {
+              const videoUrl = await generateVideo(this.env.AI, mediaPrompt, cfg.aiVideoModel);
+              Logger.info("[DO] Video generation result", { success: !!videoUrl });
+              if (videoUrl) {
+                try {
+                  await sendFileFromUrl(useCreds!, from, ctxToken, videoUrl, MessageItemType.VIDEO, "generated.mp4");
+                } catch {
+                  await sendTextMessage(useCreds!, from, ctxToken, `视频已生成，但发送失败。视频链接：${videoUrl}`);
+                }
+                replyContent = `[视频生成] ${mediaPrompt}`;
+              } else {
+                await sendTextMessage(useCreds!, from, ctxToken, "视频生成失败，请稍后重试或换个描述试试");
               }
-              replyContent = `[视频生成] ${mediaPrompt}`;
             } else {
-              await sendTextMessage(useCreds!, from, ctxToken, "视频生成失败，请稍后重试或换个描述试试");
+              const imageData = await generateImage(this.env.AI, mediaPrompt, cfg.aiImageModel);
+              Logger.info("[DO] Image generation result", { success: !!imageData, size: imageData?.length });
+              if (imageData) {
+                await uploadAndSendMedia(useCreds!, from, ctxToken, MessageItemType.IMAGE, "generated.png", imageData.buffer as ArrayBuffer, "image/png");
+                replyContent = `[图片生成] ${mediaPrompt}`;
+              } else {
+                await sendTextMessage(useCreds!, from, ctxToken, "图片生成失败，请稍后重试或换个描述试试");
+              }
             }
-          } else {
-            const imageData = await generateImage(this.env.AI, mediaPrompt, cfg.aiImageModel);
-            if (imageData) {
-              await uploadAndSendMedia(useCreds!, from, ctxToken, MessageItemType.IMAGE, "generated.png", imageData.buffer as ArrayBuffer, "image/png");
-              replyContent = `[图片生成] ${mediaPrompt}`;
-            } else {
-              await sendTextMessage(useCreds!, from, ctxToken, "图片生成失败，请稍后重试或换个描述试试");
-            }
+          } catch (genErr: any) {
+            Logger.error("[DO] Media generation error", { error: genErr?.message });
+            await sendTextMessage(useCreds!, from, ctxToken, `生成失败: ${genErr?.message || "未知错误"}`);
           }
 
           replyAt = new Date().toISOString();

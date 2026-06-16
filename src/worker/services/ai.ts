@@ -266,7 +266,7 @@ export function extractMediaPrompt(text: string, type: "image" | "video"): strin
     }
   }
   // 移除开头的量词：一个、一幅、一张、一段 等
-  prompt = prompt.replace(/^(一个|一幅|一张|一段|一个)/, "").trim();
+  prompt = prompt.replace(/^(一个|一幅|一张|一段)/, "").trim();
   // 移除结尾的标点
   prompt = prompt.replace(/[。！？.!?,，]+$/, "").trim();
   return prompt || text.trim();
@@ -285,14 +285,20 @@ export async function generateImage(
     return null;
   }
 
+  const imageModel = model || DEFAULT_IMAGE_MODEL;
+  Logger.info("[ai] Generating image", { prompt: prompt.slice(0, 80), model: imageModel });
+
   try {
-    const imageModel = model || DEFAULT_IMAGE_MODEL;
-    Logger.info("[ai] Generating image", { prompt: prompt.slice(0, 50), model: imageModel });
     const response = await aiBinding.run(imageModel, { prompt });
+    Logger.info("[ai] Image model response", { type: typeof response, isArrayBuffer: response instanceof ArrayBuffer, isUint8Array: response instanceof Uint8Array, keys: response && typeof response === "object" ? Object.keys(response) : null });
 
     if (response instanceof Uint8Array) {
-      Logger.info("[ai] Image generated", { size: response.length });
+      Logger.info("[ai] Image generated (Uint8Array)", { size: response.length });
       return response;
+    }
+    if (response instanceof ArrayBuffer) {
+      Logger.info("[ai] Image generated (ArrayBuffer)", { size: response.byteLength });
+      return new Uint8Array(response);
     }
     if (response?.images?.[0]) {
       const img = response.images[0];
@@ -300,14 +306,25 @@ export async function generateImage(
         const binary = atob(img);
         const bytes = new Uint8Array(binary.length);
         for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+        Logger.info("[ai] Image generated (base64)", { size: bytes.length });
         return bytes;
       }
       return img;
     }
-    Logger.warn("[ai] Unexpected image response format");
+    if (response?.result?.image) {
+      const imgUrl = response.result.image;
+      Logger.info("[ai] Image generated (URL)", { url: imgUrl });
+      // 下载图片
+      const resp = await fetch(imgUrl);
+      if (resp.ok) {
+        const buf = await resp.arrayBuffer();
+        return new Uint8Array(buf);
+      }
+    }
+    Logger.warn("[ai] Unexpected image response format", { response: JSON.stringify(response).slice(0, 200) });
     return null;
   } catch (e: any) {
-    Logger.error("[ai] Image generation failed", { error: e?.message, prompt: prompt.slice(0, 50) });
+    Logger.error("[ai] Image generation failed", { error: e?.message, model: imageModel, prompt: prompt.slice(0, 50) });
     return null;
   }
 }
