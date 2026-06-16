@@ -100,7 +100,7 @@ export async function saveContextToSQLite(sql: SqlStorage, userId: string, conte
          last_updated = excluded.last_updated`,
       userId, JSON.stringify(context.messages), context.lastUpdated
     );
-    Logger.debug(`[Context] Saved SQLite context for ${userId}`, { messageCount: context.messages.length });
+    Logger.info(`[Context] Saved SQLite context for ${userId}`, { messageCount: context.messages.length });
   } catch (error) {
     Logger.error(`[Context] Error saving SQLite context for ${userId}`, { error: (error as Error).message });
   }
