@@ -846,6 +846,7 @@ export class ILinkConnectionDO implements DurableObject {
 
     // 并行处理同一账号的多条消息（每条消息独立上下文，不互相干扰）
     const processOne = async (msg: WeixinMessage) => {
+      Logger.info(`[DO] processOne: type=${msg.message_type} from=${msg.from_user_id?.slice(0,10)} text=${(msg.item_list?.[0] as any)?.text_item?.text?.slice(0,20) || 'N/A'}`);
       // 只处理用户消息
       if (msg.message_type !== undefined && msg.message_type !== MessageType.USER) return;
       if (msg.message_type === undefined && !msg.from_user_id) return;
