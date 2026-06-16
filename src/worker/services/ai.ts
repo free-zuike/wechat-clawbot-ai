@@ -2,10 +2,8 @@
 
 import { Logger } from "../utils/error";
 import {
-  getContext,
   getContextFromSQLite,
   saveContextToSQLite,
-  clearContext,
   clearContextSQLite,
   buildMessagesWithContext,
   shouldClearContext,
@@ -45,10 +43,6 @@ export function tryQuickReply(text: string): string | null {
   if (COMMANDS[clean]) return COMMANDS[clean];
   if (QUICK_REPLIES[clean]) return QUICK_REPLIES[clean];
   return null;
-}
-
-function isSQLiteStorage(storage: any): boolean {
-  return storage && typeof storage.exec === "function";
 }
 
 // ========== OpenAI 兼容 API 调用 ==========
@@ -125,7 +119,7 @@ async function callModel(config: AIConfig, messages: Array<{ role: string; conte
 // ========== 带上下文的 AI 调用（微信消息处理）==========
 
 export async function callAIWithContext(
-  storage: KVNamespace | SqlStorage,
+  storage: SqlStorage,
   aiBinding: any,
   userId: string,
   userMessage: string,
@@ -134,7 +128,6 @@ export async function callAIWithContext(
   aiConfig?: Partial<AIConfig>
 ): Promise<string> {
   const cleanMsg = (userMessage || "").trim();
-  const useSQLite = isSQLiteStorage(storage);
 
   const quick = tryQuickReply(cleanMsg);
   if (quick) {
@@ -143,11 +136,7 @@ export async function callAIWithContext(
   }
 
   if (shouldClearContext(cleanMsg)) {
-    if (useSQLite) {
-      await clearContextSQLite(storage as SqlStorage, userId);
-    } else {
-      await clearContext(storage as KVNamespace, userId);
-    }
+    await clearContextSQLite(storage, userId);
     return "✅ 已清空对话上下文，我们重新开始吧！";
   }
 
@@ -160,14 +149,7 @@ export async function callAIWithContext(
   };
 
   const system = systemPrompt || DEFAULT_SYSTEM_PROMPT;
-
-  let context;
-  if (useSQLite) {
-    context = await getContextFromSQLite(storage as SqlStorage, userId);
-  } else {
-    context = await getContext(storage as KVNamespace, userId);
-  }
-
+  const context = await getContextFromSQLite(storage, userId);
   const messages = buildMessagesWithContext(system, cleanMsg, context);
 
   Logger.info(`[ai] Calling AI for ${userId}`, { provider: config.provider, model: config.model });
@@ -199,13 +181,7 @@ export async function callAIWithContext(
     }
     context.lastUpdated = now;
     try {
-      if (useSQLite) {
-        await saveContextToSQLite(storage as SqlStorage, userId, context);
-      } else {
-        await (storage as KVNamespace).put(`clawbot:context:${userId}`, JSON.stringify(context), {
-          expirationTtl: 24 * 60 * 60,
-        });
-      }
+      await saveContextToSQLite(storage, userId, context);
     } catch {}
   }
 

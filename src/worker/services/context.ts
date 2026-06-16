@@ -1,5 +1,4 @@
-// 对话上下文管理 - 按 user_id 存储最近 N 条消息
-// 支持 KV 和 DO SQLite 两种存储后端
+// 对话上下文管理 - 按 user_id 存储最近 N 条消息（DO SQLite）
 
 import { Logger } from "../utils/error";
 
@@ -20,87 +19,8 @@ export interface UserContext {
 // 配置
 const MAX_CONTEXT_MESSAGES = 10; // 保留最近 10 条消息（5轮对话）
 const CONTEXT_EXPIRE_HOURS = 24; // 上下文 24 小时过期
-const CONTEXT_KEY_PREFIX = "clawbot:context:";
 
-// ========== KV 版本（兼容旧代码和 messaging.ts）==========
-
-// 获取用户上下文
-export async function getContext(kv: KVNamespace, userId: string): Promise<UserContext> {
-  const key = `${CONTEXT_KEY_PREFIX}${userId}`;
-  try {
-    const stored = await kv.get(key);
-    if (stored) {
-      const context: UserContext = JSON.parse(stored);
-      // 检查是否过期
-      const expireMs = CONTEXT_EXPIRE_HOURS * 60 * 60 * 1000;
-      if (Date.now() - context.lastUpdated > expireMs) {
-        Logger.info(`[Context] Context expired for user ${userId}, resetting`);
-        return { userId, messages: [], lastUpdated: Date.now() };
-      }
-      return context;
-    }
-  } catch (error) {
-    Logger.warn(`[Context] Error loading context for ${userId}`, { error: (error as Error).message });
-  }
-  return { userId, messages: [], lastUpdated: Date.now() };
-}
-
-// 保存用户上下文
-export async function saveContext(kv: KVNamespace, context: UserContext): Promise<void> {
-  const key = `${CONTEXT_KEY_PREFIX}${context.userId}`;
-  context.lastUpdated = Date.now();
-
-  // 只保留最近 N 条消息
-  if (context.messages.length > MAX_CONTEXT_MESSAGES) {
-    context.messages = context.messages.slice(-MAX_CONTEXT_MESSAGES);
-  }
-
-  try {
-    await kv.put(key, JSON.stringify(context), {
-      expirationTtl: CONTEXT_EXPIRE_HOURS * 60 * 60 // 秒
-    });
-    Logger.debug(`[Context] Saved context for ${context.userId}`, { messageCount: context.messages.length });
-  } catch (error) {
-    Logger.error(`[Context] Error saving context for ${context.userId}`, { error: (error as Error).message });
-  }
-}
-
-// 添加消息到上下文
-export async function addMessageToContext(
-  kv: KVNamespace,
-  userId: string,
-  role: "user" | "assistant",
-  content: string
-): Promise<UserContext> {
-  const context = await getContext(kv, userId);
-
-  context.messages.push({
-    role,
-    content: content.slice(0, 500), // 截断过长的消息
-    timestamp: Date.now()
-  });
-
-  // 保留最近 N 条
-  if (context.messages.length > MAX_CONTEXT_MESSAGES) {
-    context.messages = context.messages.slice(-MAX_CONTEXT_MESSAGES);
-  }
-
-  await saveContext(kv, context);
-  return context;
-}
-
-// 清空用户上下文
-export async function clearContext(kv: KVNamespace, userId: string): Promise<void> {
-  const key = `${CONTEXT_KEY_PREFIX}${userId}`;
-  try {
-    await kv.delete(key);
-    Logger.info(`[Context] Cleared context for ${userId}`);
-  } catch (error) {
-    Logger.error(`[Context] Error clearing context for ${userId}`, { error: (error as Error).message });
-  }
-}
-
-// ========== DO SQLite 版本（零 KV 读写）==========
+// ========== DO SQLite 版本 ==========
 
 // 从 DO SQLite 获取上下文（表不存在时自动建表）
 export async function getContextFromSQLite(sql: SqlStorage, userId: string): Promise<UserContext> {
