@@ -3,12 +3,34 @@
     <h2>⚙️ 系统配置</h2>
     <div class="desc">配置 AI 提供商、模型和人设提示词</div>
 
+    <!-- AI 提供商预设 -->
     <div class="field">
       <label>AI 提供商</label>
-      <select v-model="config.aiProvider" class="input">
-        <option value="cloudflare">Cloudflare Workers AI</option>
-        <option value="openai">OpenAI 兼容 API（DeepSeek/通义千问/Moonshot/智谱GLM 等）</option>
-      </select>
+      <div style="display: flex; gap: 8px; align-items: center">
+        <select v-model="selectedPresetId" class="input" style="flex: 1" @change="applyPreset">
+          <option value="cloudflare">Cloudflare Workers AI</option>
+          <option v-for="p in presets" :key="p.id" :value="p.id">{{ p.name }} ({{ p.model }})</option>
+          <option value="__custom__">+ 自定义配置</option>
+        </select>
+        <button class="btn secondary small" @click="showPresetManager = !showPresetManager">管理</button>
+      </div>
+    </div>
+
+    <!-- 预设管理面板 -->
+    <div v-if="showPresetManager" class="preset-manager">
+      <div style="font-size: 13px; color: var(--text-secondary); margin-bottom: 8px">保存的提供商配置</div>
+      <div v-if="presets.length === 0" style="font-size: 12px; color: var(--text-dim); margin-bottom: 8px">暂无保存的预设</div>
+      <div v-for="p in presets" :key="p.id" class="preset-item">
+        <span class="preset-name">{{ p.name }}</span>
+        <span class="preset-model">{{ p.model }}</span>
+        <div style="display: flex; gap: 4px">
+          <button class="btn-link" @click="editPreset(p)">编辑</button>
+          <button class="btn-link" style="color: var(--error)" @click="deletePreset(p.id)">删除</button>
+        </div>
+      </div>
+      <button class="btn secondary small" style="margin-top: 8px" @click="saveCurrentAsPreset">
+        + 保存当前配置为预设
+      </button>
     </div>
 
     <div class="field">
@@ -80,7 +102,7 @@
         </div>
         <div class="field">
           <label>通知标题</label>
-          <input v-model="config.webhookTitle" class="input" placeholder="🦞 ClawBot AI 消息" />
+          <input v-model="config.webhookTitle" class="input" placeholder="ClawBot AI 消息" />
         </div>
         <div class="field">
           <label>推送渠道</label>
@@ -105,18 +127,105 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from "vue";
+import { ref, computed } from "vue";
 
 const props = defineProps<{
-  config: { aiProvider: string; aiModel: string; aiBaseUrl: string; aiApiKey: string; aiMaxTokens: number; aiSystemPrompt: string; webhookEnabled: boolean; webhookUrl: string; webhookTitle: string; webhookApiKey: string; webhookChannels: string[] };
+  config: { aiProvider: string; aiModel: string; aiBaseUrl: string; aiApiKey: string; aiMaxTokens: number; aiSystemPrompt: string; webhookEnabled: boolean; webhookUrl: string; webhookTitle: string; webhookApiKey: string; webhookChannels: string[]; aiPresets: Array<{ id: string; name: string; provider: string; model: string; baseUrl: string; apiKey: string; maxTokens: number }> };
   result: string;
   saving: boolean;
 }>();
 
-defineEmits(["load", "save"]);
+const emit = defineEmits(["load", "save"]);
 
 const webhookChannelsStr = computed({
   get: () => (props.config.webhookChannels || []).join(","),
   set: (val: string) => { props.config.webhookChannels = val.split(",").map(s => s.trim()).filter(Boolean); },
 });
+
+// ===== AI 提供商预设 =====
+const selectedPresetId = ref("");
+const showPresetManager = ref(false);
+const presets = computed(() => props.config.aiPresets || []);
+
+function applyPreset() {
+  if (!selectedPresetId.value || selectedPresetId.value === "cloudflare") {
+    props.config.aiProvider = "cloudflare";
+    props.config.aiModel = "";
+    props.config.aiBaseUrl = "";
+    props.config.aiApiKey = "";
+    props.config.aiMaxTokens = 1024;
+    return;
+  }
+  if (selectedPresetId.value === "__custom__") return;
+
+  const preset = presets.value.find(p => p.id === selectedPresetId.value);
+  if (!preset) return;
+
+  props.config.aiProvider = preset.provider;
+  props.config.aiModel = preset.model;
+  props.config.aiBaseUrl = preset.baseUrl;
+  props.config.aiApiKey = preset.apiKey;
+  props.config.aiMaxTokens = preset.maxTokens;
+}
+
+function saveCurrentAsPreset() {
+  const name = prompt("输入预设名称：", props.config.aiModel || "我的AI");
+  if (!name) return;
+
+  const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  const preset = {
+    id,
+    name,
+    provider: props.config.aiProvider,
+    model: props.config.aiModel,
+    baseUrl: props.config.aiBaseUrl,
+    apiKey: props.config.aiApiKey,
+    maxTokens: props.config.aiMaxTokens,
+  };
+
+  if (!props.config.aiPresets) props.config.aiPresets = [];
+  props.config.aiPresets.push(preset);
+  selectedPresetId.value = id;
+}
+
+function editPreset(preset: { id: string; name: string }) {
+  const newName = prompt("修改预设名称：", preset.name);
+  if (newName === null) return;
+  const p = presets.value.find(x => x.id === preset.id);
+  if (p && newName) p.name = newName;
+}
+
+function deletePreset(id: string) {
+  if (!confirm("确定删除此预设？")) return;
+  const idx = presets.value.findIndex(p => p.id === id);
+  if (idx !== -1) {
+    props.config.aiPresets.splice(idx, 1);
+    if (selectedPresetId.value === id) selectedPresetId.value = "";
+  }
+}
 </script>
+
+<style scoped>
+.preset-manager {
+  padding: 12px;
+  background: var(--bg-skeleton-1);
+  border-radius: 8px;
+  margin-bottom: 16px;
+}
+.preset-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border-light);
+  font-size: 13px;
+}
+.preset-item:last-child { border-bottom: none; }
+.preset-name { font-weight: 600; color: var(--text-primary); }
+.preset-model { color: var(--text-secondary); font-size: 12px; flex: 1; }
+.btn-link {
+  background: none; border: none; color: var(--link); cursor: pointer;
+  font-size: 12px; padding: 2px 6px;
+}
+.btn-link:hover { text-decoration: underline; }
+</style>
