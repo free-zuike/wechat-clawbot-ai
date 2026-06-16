@@ -3,86 +3,89 @@
     <h2>⚙️ 系统配置</h2>
     <div class="desc">配置 AI 提供商、模型和人设提示词</div>
 
-    <!-- AI 提供商选择 + 预设管理 -->
-    <div class="ai-section">
-      <div class="ai-header">
-        <label>AI 提供商</label>
-        <button class="btn-link" @click="showPresetManager = !showPresetManager">
-          {{ showPresetManager ? '收起管理' : '管理预设' }}
-        </button>
-      </div>
-      <div class="ai-selector">
-        <select v-model="selectedPresetId" class="input" @change="applyPreset">
-          <option value="cloudflare">Cloudflare Workers AI</option>
-          <option v-for="p in presets" :key="p.id" :value="p.id">{{ p.name }} ({{ p.model }})</option>
-          <option value="__custom__">+ 自定义配置</option>
-        </select>
+    <!-- AI 提供商预设卡片 -->
+    <div class="provider-section">
+      <div class="section-header">
+        <span class="section-title">🤖 AI 提供商</span>
+        <button class="btn-link" @click="addPreset">+ 新增</button>
       </div>
 
-      <!-- 预设管理面板 -->
-      <div v-if="showPresetManager" class="preset-manager">
-        <div class="preset-header">已保存的预设</div>
-        <div v-if="presets.length === 0" class="preset-empty">暂无保存的预设</div>
-        <div v-for="p in presets" :key="p.id" class="preset-item">
-          <span class="preset-name">{{ p.name }}</span>
-          <span class="preset-model">{{ p.model }}</span>
-          <div class="preset-actions">
-            <button class="btn-link" @click="editPreset(p)">编辑</button>
-            <button class="btn-link danger" @click="deletePreset(p.id)">删除</button>
-          </div>
+      <div v-if="presets.length === 0" class="preset-grid">
+        <div class="preset-card active" @click="selectCloudflare">
+          <div class="preset-icon">☁️</div>
+          <div class="preset-name">Cloudflare Workers AI</div>
+          <div class="preset-model">默认免费模型</div>
         </div>
-        <button class="btn secondary small" style="width: 100%; margin-top: 8px" @click="saveCurrentAsPreset">
-          + 保存当前配置为预设
-        </button>
+      </div>
+
+      <div v-else class="preset-grid">
+        <div
+          class="preset-card"
+          :class="{ active: selectedPresetId === 'cloudflare' }"
+          @click="selectCloudflare"
+        >
+          <div class="preset-icon">☁️</div>
+          <div class="preset-name">Cloudflare AI</div>
+          <div class="preset-model">免费</div>
+        </div>
+
+        <div
+          v-for="p in presets"
+          :key="p.id"
+          class="preset-card"
+          :class="{ active: selectedPresetId === p.id }"
+          @click="selectPreset(p)"
+        >
+          <div class="preset-actions-top">
+            <button class="preset-action" @click.stop="editPreset(p)">✏️</button>
+            <button class="preset-action danger" @click.stop="deletePreset(p.id)">🗑️</button>
+          </div>
+          <div class="preset-name">{{ p.name }}</div>
+          <div class="preset-model">{{ p.model }}</div>
+          <div class="preset-url">{{ p.baseUrl ? new URL(p.baseUrl).hostname : '-' }}</div>
+        </div>
+
+        <div class="preset-card add" @click="addPreset">
+          <div class="preset-icon">➕</div>
+          <div class="preset-name">新增配置</div>
+        </div>
       </div>
     </div>
 
-    <!-- AI 配置字段 -->
-    <div class="ai-fields">
+    <!-- 当前配置详情 -->
+    <div class="config-detail">
       <div class="field">
         <label>AI 模型</label>
         <input
           v-model="config.aiModel"
           class="input"
-          :placeholder="config.aiProvider === 'openai' ? 'deepseek-chat / qwen-turbo / glm-4-flash' : '@cf/meta/llama-3-8b-instruct'"
+          :placeholder="config.aiProvider === 'openai' ? 'deepseek-chat / qwen-turbo' : '@cf/meta/llama-3-8b-instruct'"
         />
-        <div class="field-hint">
-          {{ config.aiProvider === 'openai' ? '填写对应平台的模型名称' : '留空使用默认模型 @cf/meta/llama-3.2-3b-instruct' }}
-        </div>
       </div>
 
       <template v-if="config.aiProvider === 'openai'">
         <div class="field">
           <label>API 地址</label>
           <input v-model="config.aiBaseUrl" class="input" placeholder="https://api.deepseek.com" />
-          <div class="field-hint">OpenAI 兼容接口地址，不要加 /v1/chat/completions 后缀</div>
+          <div class="field-hint">不要加 /v1/chat/completions 后缀</div>
         </div>
-
-        <div class="field-row">
-          <div class="field" style="flex: 1">
-            <label>API 密钥</label>
-            <input v-model="config.aiApiKey" class="input" type="password" placeholder="sk-..." />
-          </div>
-          <div class="field" style="flex: 0 0 120px">
-            <label>最大 Token 数</label>
-            <input v-model.number="config.aiMaxTokens" class="input" type="number" min="1" max="32000" placeholder="1024" />
-          </div>
+        <div class="field">
+          <label>API 密钥</label>
+          <input v-model="config.aiApiKey" class="input" type="password" placeholder="sk-..." />
         </div>
-        <div class="field-hint">已有密钥时留空不修改，填写新密钥则覆盖</div>
       </template>
     </div>
 
     <!-- 人设提示词 -->
     <div class="field">
-      <label>人设提示词 (system prompt)</label>
+      <label>人设提示词</label>
       <textarea v-model="config.aiSystemPrompt" class="input" placeholder="你是爪爪，一个友好的 AI 助手..." rows="6"></textarea>
-      <div class="field-hint">定义机器人的性格和行为。留空使用默认人设</div>
     </div>
 
-    <!-- Webhook 通知 -->
+    <!-- Webhook -->
     <div class="webhook-section">
-      <div class="webhook-header">
-        <h3>🔔 Webhook 通知</h3>
+      <div class="section-header">
+        <span class="section-title">🔔 Webhook 通知</span>
         <label class="toggle">
           <input type="checkbox" v-model="config.webhookEnabled" />
           <span class="toggle-slider"></span>
@@ -92,36 +95,31 @@
         <div class="field">
           <label>推送地址</label>
           <input v-model="config.webhookUrl" class="input" placeholder="https://beeswarm.xxx.workers.dev/api/admin/webhook/push" />
-          <div class="field-hint">bee-swarm 的 Webhook 推送 API 地址</div>
         </div>
-        <div class="field-row">
-          <div class="field" style="flex: 1">
-            <label>API 密钥</label>
-            <input v-model="config.webhookApiKey" class="input" type="password" placeholder="X-API-Key" />
-          </div>
-          <div class="field" style="flex: 0 0 180px">
-            <label>通知标题</label>
-            <input v-model="config.webhookTitle" class="input" placeholder="ClawBot AI" />
-          </div>
+        <div class="field">
+          <label>API 密钥</label>
+          <input v-model="config.webhookApiKey" class="input" type="password" placeholder="X-API-Key" />
+        </div>
+        <div class="field">
+          <label>通知标题</label>
+          <input v-model="config.webhookTitle" class="input" placeholder="ClawBot AI" />
         </div>
         <div class="field">
           <label>推送渠道</label>
           <input v-model="webhookChannelsStr" class="input" placeholder="wework,dingtalk,telegram" />
-          <div class="field-hint">用逗号分隔，如: wework,dingtalk,feishu,telegram</div>
+          <div class="field-hint">用逗号分隔</div>
         </div>
       </template>
     </div>
 
-    <!-- 保存按钮 -->
+    <!-- 保存 -->
     <div class="save-bar">
       <button class="btn secondary" @click="$emit('load')">📥 加载</button>
       <button class="btn" :disabled="saving" @click="$emit('save')">
         {{ saving ? "保存中..." : "💾 保存配置" }}
       </button>
     </div>
-    <div v-if="result" :class="['result-box', result.includes('✅') ? 'success' : '']">
-      {{ result }}
-    </div>
+    <div v-if="result" :class="['result-box', result.includes('✅') ? 'success' : '']">{{ result }}</div>
   </div>
 </template>
 
@@ -141,25 +139,20 @@ const webhookChannelsStr = computed({
   set: (val: string) => { props.config.webhookChannels = val.split(",").map(s => s.trim()).filter(Boolean); },
 });
 
-// ===== AI 提供商预设 =====
-const selectedPresetId = ref("");
-const showPresetManager = ref(false);
+const selectedPresetId = ref("cloudflare");
 const presets = computed(() => props.config.aiPresets || []);
 
-function applyPreset() {
-  if (!selectedPresetId.value || selectedPresetId.value === "cloudflare") {
-    props.config.aiProvider = "cloudflare";
-    props.config.aiModel = "";
-    props.config.aiBaseUrl = "";
-    props.config.aiApiKey = "";
-    props.config.aiMaxTokens = 1024;
-    return;
-  }
-  if (selectedPresetId.value === "__custom__") return;
+function selectCloudflare() {
+  selectedPresetId.value = "cloudflare";
+  props.config.aiProvider = "cloudflare";
+  props.config.aiModel = "";
+  props.config.aiBaseUrl = "";
+  props.config.aiApiKey = "";
+  props.config.aiMaxTokens = 1024;
+}
 
-  const preset = presets.value.find(p => p.id === selectedPresetId.value);
-  if (!preset) return;
-
+function selectPreset(preset: any) {
+  selectedPresetId.value = preset.id;
   props.config.aiProvider = preset.provider;
   props.config.aiModel = preset.model;
   props.config.aiBaseUrl = preset.baseUrl;
@@ -167,31 +160,25 @@ function applyPreset() {
   props.config.aiMaxTokens = preset.maxTokens;
 }
 
-function saveCurrentAsPreset() {
+function addPreset() {
   const name = prompt("输入预设名称：", props.config.aiModel || "我的AI");
   if (!name) return;
-
   const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-  const preset = {
-    id,
-    name,
+  if (!props.config.aiPresets) props.config.aiPresets = [];
+  props.config.aiPresets.push({
+    id, name,
     provider: props.config.aiProvider,
     model: props.config.aiModel,
     baseUrl: props.config.aiBaseUrl,
     apiKey: props.config.aiApiKey,
     maxTokens: props.config.aiMaxTokens,
-  };
-
-  if (!props.config.aiPresets) props.config.aiPresets = [];
-  props.config.aiPresets.push(preset);
+  });
   selectedPresetId.value = id;
 }
 
-function editPreset(preset: { id: string; name: string }) {
+function editPreset(preset: any) {
   const newName = prompt("修改预设名称：", preset.name);
-  if (newName === null) return;
-  const p = presets.value.find(x => x.id === preset.id);
-  if (p && newName) p.name = newName;
+  if (newName !== null && newName) preset.name = newName;
 }
 
 function deletePreset(id: string) {
@@ -199,52 +186,55 @@ function deletePreset(id: string) {
   const idx = presets.value.findIndex(p => p.id === id);
   if (idx !== -1) {
     props.config.aiPresets.splice(idx, 1);
-    if (selectedPresetId.value === id) selectedPresetId.value = "";
+    if (selectedPresetId.value === id) selectCloudflare();
   }
 }
 </script>
 
 <style scoped>
-.ai-section { margin-bottom: 16px; }
-.ai-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
-.ai-header label { font-weight: 600; font-size: 14px; }
-.ai-selector { width: 100%; }
-.ai-fields { margin-bottom: 16px; }
+.section-header {
+  display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;
+}
+.section-title { font-weight: 600; font-size: 14px; }
 
-.field-row { display: flex; gap: 12px; }
+.preset-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 10px; margin-bottom: 20px;
+}
+.preset-card {
+  position: relative;
+  border: 2px solid var(--border-light); border-radius: 10px;
+  padding: 12px; text-align: center; cursor: pointer;
+  transition: all 0.2s; background: var(--bg-card);
+}
+.preset-card:hover { border-color: var(--link); }
+.preset-card.active { border-color: var(--link); background: var(--link-bg, rgba(59,130,246,0.1)); }
+.preset-card.add { border-style: dashed; opacity: 0.7; }
+.preset-card.add:hover { opacity: 1; }
+.preset-icon { font-size: 24px; margin-bottom: 6px; }
+.preset-name { font-weight: 600; font-size: 13px; color: var(--text-primary); margin-bottom: 2px; }
+.preset-model { font-size: 11px; color: var(--text-secondary); }
+.preset-url { font-size: 10px; color: var(--text-dim); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.preset-actions-top {
+  position: absolute; top: 6px; right: 6px;
+  display: flex; gap: 2px; opacity: 0; transition: opacity 0.2s;
+}
+.preset-card:hover .preset-actions-top { opacity: 1; }
+.preset-action {
+  background: none; border: none; cursor: pointer; font-size: 12px;
+  padding: 2px 4px; border-radius: 4px;
+}
+.preset-action:hover { background: var(--bg-skeleton-1); }
+.preset-action.danger:hover { background: var(--alert-error-bg); }
 
+.config-detail { margin-bottom: 16px; }
 .field-hint { font-size: 12px; color: var(--text-secondary); margin-top: 4px; }
-
-.preset-manager {
-  padding: 12px;
-  background: var(--bg-skeleton-1);
-  border-radius: 8px;
-  margin-top: 8px;
-}
-.preset-header { font-size: 13px; color: var(--text-secondary); margin-bottom: 8px; }
-.preset-empty { font-size: 12px; color: var(--text-dim); margin-bottom: 8px; }
-.preset-item {
-  display: flex; align-items: center; gap: 8px;
-  padding: 6px 8px; border-bottom: 1px solid var(--border-light);
-  font-size: 13px;
-}
-.preset-item:last-child { border-bottom: none; }
-.preset-name { font-weight: 600; color: var(--text-primary); }
-.preset-model { color: var(--text-secondary); font-size: 12px; flex: 1; }
-.preset-actions { display: flex; gap: 4px; }
-
-.btn-link {
-  background: none; border: none; color: var(--link); cursor: pointer;
-  font-size: 12px; padding: 2px 6px;
-}
-.btn-link:hover { text-decoration: underline; }
-.btn-link.danger { color: var(--error); }
-
 .webhook-section {
   margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border-light);
 }
-.webhook-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
-.webhook-header h3 { margin: 0; font-size: 14px; }
+.save-bar { display: flex; gap: 10px; margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border-light); }
+.btn-link { background: none; border: none; color: var(--link); cursor: pointer; font-size: 13px; }
+.btn-link:hover { text-decoration: underline; }
 
 .toggle { position: relative; display: inline-block; width: 40px; height: 22px; cursor: pointer; }
 .toggle input { opacity: 0; width: 0; height: 0; }
@@ -258,6 +248,4 @@ function deletePreset(id: string) {
 }
 .toggle input:checked + .toggle-slider { background: var(--link); }
 .toggle input:checked + .toggle-slider::before { transform: translateX(18px); }
-
-.save-bar { display: flex; gap: 10px; margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border-light); }
 </style>
