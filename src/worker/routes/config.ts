@@ -11,11 +11,13 @@ import { configCache } from "../utils/cache";
 import type { Env } from "../index";
 
 const KV_CONFIG_KEY = "clawbot:config";
-const CONFIG_FIELDS = ["aiProvider", "aiModel", "aiImageModel", "aiVideoModel", "aiBaseUrl", "aiApiKey", "aiMaxTokens", "aiSystemPrompt", "webhookUrl", "webhookEnabled", "webhookTitle", "webhookApiKey", "webhookChannels", "aiPresets", "aiCustomProviders"] as const;
+const CONFIG_FIELDS = ["aiProvider", "aiModel", "aiBaseUrl", "aiApiKey", "aiMaxTokens", "aiSystemPrompt", "webhookUrl", "webhookEnabled", "webhookTitle", "webhookApiKey", "webhookChannels", "aiPresets", "aiCustomProviders"] as const;
 
 type Preset = {
   id: string;
   model?: string;
+  imageModel?: string;
+  videoModel?: string;
   baseUrl?: string;
   apiKey?: string;
   maxTokens?: number;
@@ -64,6 +66,8 @@ function getConfigResponse(kvConfig: Record<string, unknown>) {
   const maskedPresets: Preset[] = rawPresets.map((p) => ({
     id: p.id,
     model: p.model || "",
+    imageModel: p.imageModel || "",
+    videoModel: p.videoModel || "",
     baseUrl: p.baseUrl || "",
     apiKey: p.apiKey ? maskKey(p.apiKey) : "",
     maxTokens: p.maxTokens || 1024,
@@ -73,8 +77,6 @@ function getConfigResponse(kvConfig: Record<string, unknown>) {
     version: (kvConfig._version as number) || 0,
     aiProvider: currentProvider,
     aiModel: currentModel,
-    aiImageModel: (kvConfig.aiImageModel as string) || "@cf/black-forest-labs/flux-1-schnell",
-    aiVideoModel: (kvConfig.aiVideoModel as string) || "bytedance/seedance-2.0-fast",
     aiBaseUrl: currentBaseUrl,
     aiApiKey: maskKey(currentApiKey),
     aiMaxTokens: currentMaxTokens,
@@ -196,6 +198,8 @@ export async function handleConfig(request: Request, env: Env): Promise<Response
           return {
             id: bp.id,
             model: (bp.model as string) || "",
+            imageModel: (bp.imageModel as string) || "",
+            videoModel: (bp.videoModel as string) || "",
             baseUrl: (bp.baseUrl as string) || "",
             apiKey: unmaskKey(bp.apiKey, oldPreset?.apiKey),
             maxTokens: Number(bp.maxTokens) || 1024,

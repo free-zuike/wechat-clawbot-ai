@@ -856,8 +856,8 @@ export class ILinkConnectionDO implements DurableObject {
       aiMaxTokens = (kvConfig.aiMaxTokens as number) || 1024;
     }
 
-    const aiImageModel = (kvConfig.aiImageModel as string) || "@cf/black-forest-labs/flux-1-schnell";
-    const aiVideoModel = (kvConfig.aiVideoModel as string) || "bytedance/seedance-2.0-fast";
+    const aiImageModel = (activePreset?.imageModel as string) || "@cf/black-forest-labs/flux-1-schnell";
+    const aiVideoModel = (activePreset?.videoModel as string) || "bytedance/seedance-2.0-fast";
 
     const cfg = { aiSystemPrompt, aiModel, aiProvider, aiBaseUrl, aiApiKey, aiMaxTokens, aiImageModel, aiVideoModel, webhook: { enabled: webhookEnabled, url: webhookUrl, title: webhookTitle, apiKey: webhookApiKey, channels: webhookChannels } };
     this.cache.config = cfg;

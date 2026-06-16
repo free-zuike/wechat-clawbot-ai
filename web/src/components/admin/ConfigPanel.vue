@@ -29,42 +29,21 @@
           <h4>☁️ Cloudflare Workers AI</h4>
           <p class="form-desc">使用 Cloudflare 绑定，无需 API 地址和密钥</p>
           <div class="field"><label>AI 模型</label><input v-model="config.aiModel" class="input" placeholder="@cf/meta/llama-3.2-3b-instruct" /></div>
+          <div class="field"><label>图片生成模型</label><input v-model="config.aiImageModel" class="input" placeholder="@cf/black-forest-labs/flux-1-schnell" /><div class="field-hint">用于"画一只猫"等图片生成指令</div></div>
+          <div class="field"><label>视频生成模型</label><input v-model="config.aiVideoModel" class="input" placeholder="bytedance/seedance-2.0-fast" /><div class="field-hint">用于"生成视频"等视频生成指令</div></div>
         </div>
         <div v-else-if="config.aiProvider" class="form-section">
           <h4>{{ getCurrentProviderName() }}</h4>
           <p class="form-desc">OpenAI 兼容的 API 接口</p>
           <div class="field"><label>AI 模型</label><input v-model="config.aiModel" class="input" placeholder="glm-4-flash" /></div>
+          <div class="field"><label>图片生成模型</label><input v-model="config.aiImageModel" class="input" placeholder="如不支持可留空" /><div class="field-hint">用于"画一只猫"等图片生成指令</div></div>
+          <div class="field"><label>视频生成模型</label><input v-model="config.aiVideoModel" class="input" placeholder="如不支持可留空" /><div class="field-hint">用于"生成视频"等视频生成指令</div></div>
           <div class="field"><label>API 地址</label><input v-model="config.aiBaseUrl" class="input" placeholder="https://api.example.com" /><div class="field-hint">不要加 /v1/chat/completions 后缀</div></div>
           <div class="field"><label>API 密钥</label><input v-model="config.aiApiKey" class="input" type="password" placeholder="sk-..." /></div>
         </div>
         <div v-else class="form-empty">← 从左侧选择提供商</div>
         <div v-if="config.aiProvider" class="field" style="margin-top: 12px"><label>最大 Token 数</label><input v-model.number="config.aiMaxTokens" class="input" type="number" min="1" max="32000" placeholder="1024" /></div>
       </div>
-    </div>
-
-    <div class="media-models">
-      <h3>🎨 媒体生成模型</h3>
-      <p class="form-desc">用于图片和视频生成的模型，需要 Cloudflare AI binding 支持</p>
-      <div class="field"><label>图片生成模型</label><input v-model="config.aiImageModel" class="input" placeholder="@cf/black-forest-labs/flux-1-schnell" /></div>
-      <div class="field"><label>视频生成模型</label><input v-model="config.aiVideoModel" class="input" placeholder="bytedance/seedance-2.0-fast" /></div>
-    </div>
-
-    <div class="field" style="margin-top: 16px">
-      <label>人设提示词</label>
-      <textarea v-model="config.aiSystemPrompt" class="input" placeholder="你是爪爪，一个友好的 AI 助手..." rows="6"></textarea>
-    </div>
-
-    <div class="webhook-section">
-      <div class="section-header">
-        <span class="section-title">🔔 Webhook 通知</span>
-        <label class="toggle"><input type="checkbox" v-model="config.webhookEnabled" /><span class="toggle-slider"></span></label>
-      </div>
-      <template v-if="config.webhookEnabled">
-        <div class="field"><label>推送地址</label><input v-model="config.webhookUrl" class="input" placeholder="https://beeswarm.xxx.workers.dev/api/admin/webhook/push" /></div>
-        <div class="field"><label>API 密钥</label><input v-model="config.webhookApiKey" class="input" type="password" placeholder="X-API-Key" /></div>
-        <div class="field"><label>通知标题</label><input v-model="config.webhookTitle" class="input" placeholder="ClawBot AI" /></div>
-        <div class="field"><label>推送渠道</label><input v-model="webhookChannelsStr" class="input" placeholder="wework,dingtalk,telegram" /></div>
-      </template>
     </div>
 
     <div class="save-bar">
@@ -105,6 +84,8 @@ import { ref, computed, watch } from "vue";
 interface Preset {
   id: string;
   model: string;
+  imageModel: string;
+  videoModel: string;
   baseUrl: string;
   apiKey: string;
   maxTokens: number;
@@ -152,7 +133,7 @@ function upsertPreset(id: string, fields: Partial<Preset>): Preset {
   const presets = ensurePresets();
   let preset = presets.find(p => p.id === id);
   if (!preset) {
-    preset = { id, model: "", baseUrl: "", apiKey: "", maxTokens: 1024 };
+    preset = { id, model: "", imageModel: "", videoModel: "", baseUrl: "", apiKey: "", maxTokens: 1024 };
     presets.push(preset);
   }
   Object.assign(preset, fields);
@@ -174,6 +155,8 @@ function selectProvider(id: string) {
   if (currentId) {
     upsertPreset(currentId, {
       model: props.config.aiModel,
+      imageModel: (props.config as any).aiImageModel || "",
+      videoModel: (props.config as any).aiVideoModel || "",
       baseUrl: props.config.aiBaseUrl,
       apiKey: props.config.aiApiKey,
       maxTokens: props.config.aiMaxTokens,
@@ -184,11 +167,15 @@ function selectProvider(id: string) {
   props.config.aiProvider = id;
   if (id === "cloudflare") {
     props.config.aiModel = preset?.model || "@cf/meta/llama-3.2-3b-instruct";
+    (props.config as any).aiImageModel = preset?.imageModel || "@cf/black-forest-labs/flux-1-schnell";
+    (props.config as any).aiVideoModel = preset?.videoModel || "bytedance/seedance-2.0-fast";
     props.config.aiBaseUrl = "";
     props.config.aiApiKey = "";
     props.config.aiMaxTokens = preset?.maxTokens || 1024;
   } else {
     props.config.aiModel = preset?.model || "";
+    (props.config as any).aiImageModel = preset?.imageModel || "";
+    (props.config as any).aiVideoModel = preset?.videoModel || "";
     props.config.aiBaseUrl = preset?.baseUrl || "";
     props.config.aiApiKey = preset?.apiKey || "";
     props.config.aiMaxTokens = preset?.maxTokens || 1024;
@@ -253,6 +240,8 @@ function syncCurrentToPreset() {
   if (!id) return;
   upsertPreset(id, {
     model: props.config.aiModel,
+    imageModel: (props.config as any).aiImageModel || "",
+    videoModel: (props.config as any).aiVideoModel || "",
     baseUrl: props.config.aiBaseUrl,
     apiKey: props.config.aiApiKey,
     maxTokens: props.config.aiMaxTokens,
@@ -261,7 +250,7 @@ function syncCurrentToPreset() {
 
 // 监听编辑字段变化，实时同步到当前提供商的预设
 watch(
-  () => [props.config.aiModel, props.config.aiBaseUrl, props.config.aiApiKey, props.config.aiMaxTokens],
+  () => [props.config.aiModel, (props.config as any).aiImageModel, (props.config as any).aiVideoModel, props.config.aiBaseUrl, props.config.aiApiKey, props.config.aiMaxTokens],
   () => { if (props.config.aiProvider) syncCurrentToPreset(); },
   { deep: true }
 );
@@ -288,8 +277,6 @@ watch(
 .form-empty { padding: 40px; text-align: center; color: var(--text-dim); }
 .field-hint { font-size: 12px; color: var(--text-secondary); margin-top: 4px; }
 .webhook-section { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border-light); }
-.media-models { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border-light); }
-.media-models h3 { margin: 0 0 4px; font-size: 14px; }
 .section-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
 .section-title { font-weight: 600; font-size: 14px; }
 .save-bar { display: flex; gap: 10px; margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border-light); }
