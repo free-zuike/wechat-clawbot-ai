@@ -121,9 +121,11 @@
                   <option value="cloudflare">Cloudflare</option>
                 </select>
               </div>
-              <div class="field"><label>模型名称</label><input v-model="modalModel" class="input" placeholder="glm-4-flash" /></div>
-              <div class="field"><label>API 地址</label><input v-model="modalBaseUrl" class="input" placeholder="https://api.example.com" /></div>
-              <div class="field"><label>API 密钥</label><input v-model="modalApiKey" class="input" type="password" placeholder="sk-..." /></div>
+              <div class="field"><label>模型名称</label><input v-model="modalModel" class="input" :placeholder="modalProvider === 'openai' ? 'glm-4-flash' : '@cf/meta/llama-3-8b-instruct'" /></div>
+              <template v-if="modalProvider === 'openai'">
+                <div class="field"><label>API 地址</label><input v-model="modalBaseUrl" class="input" placeholder="https://api.example.com" /></div>
+                <div class="field"><label>API 密钥</label><input v-model="modalApiKey" class="input" type="password" placeholder="sk-..." /></div>
+              </template>
               <div class="field"><label>最大 Token 数</label><input v-model.number="modalMaxTokens" class="input" type="number" min="1" max="32000" /></div>
             </template>
             <template v-else>
