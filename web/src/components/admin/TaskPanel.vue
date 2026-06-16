@@ -47,12 +47,6 @@
           </button>
           <button v-if="qrImage" class="task-btn secondary" @click="$emit('resetQR')">重新获取</button>
         </div>
-        <div class="task-actions" style="margin-top: 8px">
-          <button v-if="!qrImage" class="task-btn" :disabled="qrLoading" @click="$emit('getQR')">
-            {{ qrLoading ? '加载中...' : '➕ 绑定新账号' }}
-          </button>
-          <button v-if="qrImage" class="task-btn secondary" @click="$emit('resetQR')">重新获取</button>
-        </div>
       </div>
 
       <!-- WebSocket -->
