@@ -228,14 +228,19 @@ function saveModal() {
   if (modalMode.value === "add") {
     const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
     if (!props.config.aiPresets) props.config.aiPresets = [];
-    const newPreset = {
+    props.config.aiPresets.push({
       id, name: modalName.value,
       provider: modalProvider.value, model: modalModel.value,
       baseUrl: modalBaseUrl.value, apiKey: modalApiKey.value, maxTokens: modalMaxTokens.value,
-    };
-    props.config.aiPresets.push(newPreset);
+    });
+    // 直接设置字段和选中状态
     props.config.aiActivePresetId = id;
-    selectPreset(newPreset);
+    props.config.aiProvider = modalProvider.value;
+    props.config.aiModel = modalModel.value;
+    props.config.aiBaseUrl = modalBaseUrl.value;
+    props.config.aiApiKey = modalApiKey.value;
+    props.config.aiMaxTokens = modalMaxTokens.value;
+    emit("save");
   } else {
     const p = presets.value.find(x => x.id === modalEditId.value);
     if (p) p.name = modalName.value;

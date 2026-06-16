@@ -302,7 +302,11 @@ async function handleSaveConfig() {
   configSaving.value = true; configResult.value = "保存中...";
   try {
     const d = await saveConfig(config);
-    if (d.ok) configResult.value = "✅ " + (d.message || "配置已保存");
+    if (d.ok) {
+      configResult.value = "✅ " + (d.message || "配置已保存");
+      // 保存成功后重新加载配置，确保预设等数据同步
+      await handleLoadConfig();
+    }
     else if (d.error === "VALIDATION_ERROR") configResult.value = "⚠️ 验证失败: " + (d.errors || []).join("; ");
     else configResult.value = "❌ " + (d.error || "保存失败");
   } catch (e: any) { configResult.value = "❌ 保存失败: " + handleApiError(e, "保存失败"); } finally { configSaving.value = false; }
