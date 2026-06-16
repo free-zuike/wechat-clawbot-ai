@@ -174,20 +174,21 @@ export async function callAIWithContext(
 
   Logger.info(`[ai] AI reply for ${userId}`, { replyLength: reply.length, provider: config.provider });
 
+  // 始终保存上下文（即使 AI 未返回内容，也要保存用户消息）
+  const now = Date.now();
+  context.messages.push({ role: "user", content: cleanMsg.slice(0, 500), timestamp: now });
   if (reply) {
-    const now = Date.now();
-    context.messages.push({ role: "user", content: cleanMsg.slice(0, 500), timestamp: now });
     context.messages.push({ role: "assistant", content: reply.slice(0, 500), timestamp: now });
-    if (context.messages.length > 10) {
-      context.messages = context.messages.slice(-10);
-    }
-    context.lastUpdated = now;
-    try {
-      await saveContextToSQLite(storage, userId, context);
-      Logger.info(`[ai] Context saved for ${userId}`, { messageCount: context.messages.length });
-    } catch (e) {
-      Logger.error(`[ai] Context save failed for ${userId}`, { error: (e as Error).message });
-    }
+  }
+  if (context.messages.length > 10) {
+    context.messages = context.messages.slice(-10);
+  }
+  context.lastUpdated = now;
+  try {
+    await saveContextToSQLite(storage, userId, context);
+    Logger.info(`[ai] Context saved for ${userId}`, { messageCount: context.messages.length });
+  } catch (e) {
+    Logger.error(`[ai] Context save failed for ${userId}`, { error: (e as Error).message });
   }
 
   return (reply || "").slice(0, 700) || "（AI 没有返回内容）";
