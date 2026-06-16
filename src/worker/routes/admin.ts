@@ -145,21 +145,18 @@ export async function handleSessions(request: Request, env: Env): Promise<Respon
     try {
       const doId = env.ILINK_CONNECTION.idFromName("main");
       const doStub = env.ILINK_CONNECTION.get(doId);
-      const resp = await doStub.fetch(new Request("http://localhost/status"), { signal: AbortSignal.timeout(3000) });
-      const doStatus = await resp.json() as any;
 
-      // 从 DO 的 WebSocket 广播记录或 pendingMessages 获取会话信息
-      // 简化：直接从 DO SQLite 读取
-      const sqlResp = await doStub.fetch(new Request("http://localhost/sqlite/contexts"), { signal: AbortSignal.timeout(3000) });
-      const sqlData = await sqlResp.json() as { rows?: Array<{ user_id: string; last_updated: number }> };
+      const sqlResp = await doStub.fetch(new Request("http://localhost/sqlite/contexts"), { signal: AbortSignal.timeout(5000) });
+      const sqlData = await sqlResp.json() as { rows?: Array<{ user_id: string; message_count: number; last_updated: number }> };
 
       if (sqlData?.rows) {
         sessions = sqlData.rows.map((row) => ({
           from_user_id: row.user_id,
-          message_count: 0,
+          message_count: row.message_count || 0,
           last_message_at: new Date(row.last_updated).toISOString(),
         }));
       }
+      Logger.info("[Admin] sessions query", { rows: sqlData?.rows?.length || 0, sessions: sessions.length });
     } catch (e) {
       Logger.warn("[Admin] DO sessions query failed", { error: (e as Error).message });
     }
