@@ -669,10 +669,14 @@ export class ILinkConnectionDO implements DurableObject {
     try {
       await this.initSQLite();
       const cursor = this.state.storage.sql.exec(
-        `SELECT user_id, last_updated FROM contexts ORDER BY last_updated DESC`
+        `SELECT user_id, messages, last_updated FROM contexts ORDER BY last_updated DESC`
       ).toArray();
       return new Response(JSON.stringify({
-        rows: cursor.map((r: any) => ({ user_id: r.user_id, last_updated: r.last_updated })),
+        rows: cursor.map((r: any) => {
+          let messageCount = 0;
+          try { messageCount = JSON.parse(r.messages as string).length; } catch {}
+          return { user_id: r.user_id, message_count: messageCount, last_updated: r.last_updated };
+        }),
       }), { headers: { "Content-Type": "application/json" } });
     } catch (e: any) {
       Logger.warn("[DO] SQLite contexts query failed", { error: e.message });
