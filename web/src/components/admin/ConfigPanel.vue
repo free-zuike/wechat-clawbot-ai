@@ -267,11 +267,6 @@ function closeModal() {
   modalApiKey.value = "";
   modalMaxTokens.value = 1024;
 }
-
-function getHost(url: string) {
-  if (!url) return "-";
-  try { return new URL(url).hostname; } catch { return url.slice(0, 25); }
-}
 </script>
 
 <style scoped>
