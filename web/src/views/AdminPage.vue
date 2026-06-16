@@ -36,7 +36,6 @@
 
       <section v-if="activeSection === 'control'">
         <TaskPanel
-          ref="taskPanelRef"
           :status="status"
           :bound="qrCodeBound"
           :is-polling="isPolling"
@@ -191,9 +190,6 @@ const configSaving = ref(false);
 const chatMessages = ref<Array<{ role: string; text: string }>>([]);
 const chatInput = ref("");
 const chatLoading = ref(false);
-
-// ===== Task Panel =====
-const taskPanelRef = ref<InstanceType<typeof TaskPanel> | null>(null);
 
 // ===== QR =====
 const qrCode = ref(""); const qrImage = ref(""); const qrStatus = ref("");
