@@ -37,9 +37,15 @@
             <button class="btn-link" @click="handleUnbind(acc.accountId)">解绑</button>
           </div>
         </div>
-        <div v-if="!bound && qrImage" class="qr-inline">
+        <div v-if="qrImage" class="qr-inline">
           <img :src="qrImage" alt="QR" style="width: 120px; border-radius: 8px" />
           <div class="task-meta" style="margin-top: 4px">{{ qrStatus }}</div>
+        </div>
+        <div class="task-actions" style="margin-top: 8px">
+          <button v-if="!qrImage" class="task-btn" :disabled="qrLoading" @click="$emit('getQR')">
+            {{ qrLoading ? '加载中...' : '+ 绑定新账号' }}
+          </button>
+          <button v-if="qrImage" class="task-btn secondary" @click="$emit('resetQR')">重新获取</button>
         </div>
         <div class="task-actions" style="margin-top: 8px">
           <button v-if="!qrImage" class="task-btn" :disabled="qrLoading" @click="$emit('getQR')">
