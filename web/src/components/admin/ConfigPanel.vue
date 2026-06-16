@@ -207,17 +207,6 @@ function getCurrentProviderName() {
   return p ? p.name : "OpenAI 兼容";
 }
 
-function renameProvider(id: string, event: Event) {
-  event.stopPropagation();
-  const provider = props.config.aiCustomProviders.find(p => p.id === id);
-  if (!provider) return;
-  const newName = prompt("修改提供商名称", provider.name);
-  if (newName !== null && newName.trim()) {
-    provider.name = newName.trim();
-    emit("save");
-  }
-}
-
 const showAddModal = ref(false);
 const showRenameModal = ref(false);
 const renameTarget = ref<{ id: string; name: string } | null>(null);
