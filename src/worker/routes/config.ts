@@ -89,8 +89,8 @@ export async function handleConfig(request: Request, env: Env): Promise<Response
         }
       }
 
-      if (updated.aiProvider && !["cloudflare", "openai"].includes(updated.aiProvider as string)) {
-        return json({ error: "VALIDATION_ERROR", message: "aiProvider 必须是 cloudflare 或 openai" }, 400);
+      if (updated.aiProvider && !["cloudflare", "openai"].includes(updated.aiProvider as string) && !(updated.aiProvider as string).startsWith("custom_")) {
+        return json({ error: "VALIDATION_ERROR", message: "aiProvider 必须是 cloudflare、openai 或 custom_* 格式" }, 400);
       }
       if (updated.aiProvider === "openai" && !updated.aiBaseUrl) {
         return json({ error: "VALIDATION_ERROR", message: "使用 OpenAI 兼容 API 时，API 地址为必填" }, 400);
