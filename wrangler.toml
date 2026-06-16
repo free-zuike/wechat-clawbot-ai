@@ -34,13 +34,6 @@ binding = "CLAWBOT_KV"
 id = "2fac06f019ce476084f5066e432a1183"
 preview_id = "2fac06f019ce476084f5066e432a1183"
 
-# ===== D1 数据库 =====
-# messages / sessions / stats 持久化存储
-[[d1_databases]]
-binding = "CLAWBOT_DB"
-database_name = "clawbot-db"
-database_id = "f430014e-6323-4318-b7b3-ea6f83f17541"
-
 # ===== Durable Objects =====
 # iLink 长轮询连接管理，实现实时消息接收
 [[durable_objects.bindings]]
