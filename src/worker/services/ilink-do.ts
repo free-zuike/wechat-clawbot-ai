@@ -6,7 +6,6 @@ import { Logger } from "../utils/error";
 import { generateSessionToken } from "../utils";
 import { getUpdates, sendTextMessage, sendTextChunked, sendTypingStatus, extractMessageText, getQRCodeStatus, MessageType } from "./ilink";
 import { callAIWithContext } from "./ai";
-import { D1Service } from "./d1";
 import { sendWebhook } from "./webhook";
 import { clearContextSQLite } from "./context";
 import type { ILinkCredentials, WeixinMessage } from "../types";
@@ -50,7 +49,6 @@ export class ILinkConnectionDO implements DurableObject {
     lastPollAt: string;
     pollLoopRunning: boolean;
   }> = new Map();
-  private d1: D1Service | null = null;
   private pollLoopRunning = false;
   private kv: KVNamespace | null = null;
   private websockets: Set<WebSocket> = new Set();
@@ -159,32 +157,10 @@ export class ILinkConnectionDO implements DurableObject {
     Logger.info("[DO] SQLite tables initialized");
   }
 
-  // ========== D1 初始化（独立方法，确保每次 fetch 都能建表）==========
-
-  private async initD1(): Promise<void> {
-    if (!this.env.CLAWBOT_DB) {
-      Logger.warn("[DO] CLAWBOT_DB binding not found, D1 disabled");
-      return;
-    }
-    if (this.d1) return; // 已初始化
-
-    try {
-      this.d1 = new D1Service(this.env.CLAWBOT_DB);
-      await this.d1.init(); // 执行 CREATE TABLE IF NOT EXISTS
-      Logger.info("[DO] D1 initialized successfully");
-    } catch (e: any) {
-      Logger.warn("[DO] D1 init failed — messages will NOT be persisted", { error: e.message });
-      this.d1 = null;
-    }
-  }
-
   // ========== HTTP 处理（长轮询入口）==========
 
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
-
-    // 优先初始化 D1（确保 messages/sessions/stats 表在第一条请求时就创建）
-    await this.initD1();
 
     // 初始化 DO SQLite（credentials / contexts / do_config 建表）
     await this.initSQLite();
@@ -926,42 +902,30 @@ export class ILinkConnectionDO implements DurableObject {
     let aiSuccessCount = 0;
     let aiFailCount = 0;
 
-    for (const msg of msgs) {
+    // 并行处理同一账号的多条消息（每条消息独立上下文，不互相干扰）
+    const processOne = async (msg: WeixinMessage) => {
       // 只处理用户消息
-      if (msg.message_type !== undefined && msg.message_type !== MessageType.USER) continue;
-      if (msg.message_type === undefined && !msg.from_user_id) continue;
+      if (msg.message_type !== undefined && msg.message_type !== MessageType.USER) return;
+      if (msg.message_type === undefined && !msg.from_user_id) return;
 
       const text = extractMessageText(msg);
-      if (!text) continue;
+      if (!text) return;
 
       const from = msg.from_user_id;
       const ctxToken = msg.context_token;
-      if (!from || !ctxToken) continue;
+      if (!from || !ctxToken) return;
 
       const createdAt = msg.create_time_ms
         ? new Date(msg.create_time_ms).toISOString()
         : new Date().toISOString();
 
-      // 先生成稳定 messageId，再做多层去重
-      const messageId = this.generateMessageId(msg, text);
+      // 按账号生成 messageId（避免跨账号去重冲突）
+      const messageId = `${useCreds?.accountId || "default"}:${this.generateMessageId(msg, text)}`;
 
-      // 第一层：DO 本地 SQLite 去重
+      // DO 本地 SQLite 去重
       if (await this.hasProcessedMessage(messageId)) {
-        if (this.d1) {
-          await this.persistMessageToD1(msg, messageId, text, createdAt);
-        }
         Logger.info("[DO] Message already processed (local dedup)", { messageId });
-        continue;
-      }
-
-      // 第二层：D1 去重，兼容历史已入库消息
-      if (this.d1) {
-        const existing = await this.d1.getMessageById(messageId);
-        if (existing) {
-          await this.markMessageProcessed(messageId);
-          Logger.info("[DO] Message already processed (D1 dedup)", { messageId });
-          continue;
-        }
+        return;
       }
 
       let replyContent = "";
@@ -975,7 +939,7 @@ export class ILinkConnectionDO implements DurableObject {
         await this.markMessageProcessed(messageId);
         processedCount++;
         Logger.info("[DO] Context reset", { from });
-        continue;
+        return;
       }
 
       try {
@@ -1011,15 +975,6 @@ export class ILinkConnectionDO implements DurableObject {
 
       processedCount++;
 
-      // 存储到 D1
-      if (this.d1) {
-        try {
-          await this.persistMessageToD1(msg, messageId, text, createdAt, replyContent, replyAt);
-        } catch (e: any) {
-          Logger.error("[DO] D1 insert failed", { error: e.message });
-        }
-      }
-
       // 添加到待处理队列
       const pendingMsg = {
         messageId,
@@ -1049,7 +1004,10 @@ export class ILinkConnectionDO implements DurableObject {
           });
         }
       }
-    }
+    };
+
+    // 并行处理所有消息
+    await Promise.all(msgs.map(processOne));
 
     // 更新运行时统计
     this.runtimeStats.handled += processedCount;
@@ -1060,40 +1018,6 @@ export class ILinkConnectionDO implements DurableObject {
     if (msgs.length > 0 || processedCount > 0) {
       await this.updateStats(msgs.length, processedCount, aiSuccessCount, aiFailCount);
     }
-  }
-
-  private async persistMessageToD1(
-    msg: WeixinMessage,
-    messageId: string,
-    text: string,
-    createdAt: string,
-    replyContent: string = "",
-    replyAt: string = "",
-  ): Promise<void> {
-    if (!this.d1 || !msg.from_user_id) return;
-
-    const existingMessage = await this.d1.getMessageById(messageId);
-    if (existingMessage) {
-      const existingSession = await this.d1.getSession(msg.from_user_id);
-      if (!existingSession) {
-        await this.d1.upsertSession(msg.from_user_id, existingMessage.created_at || createdAt);
-      }
-      return;
-    }
-
-    await this.d1.insertMessage({
-      message_id: messageId,
-      from_user_id: msg.from_user_id,
-      to_user_id: msg.to_user_id,
-      content: text,
-      message_type: msg.message_type,
-      context_token: msg.context_token,
-      created_at: createdAt,
-      processed: true,
-      reply_content: replyContent,
-      reply_at: replyAt,
-    });
-    await this.d1.upsertSession(msg.from_user_id, createdAt);
   }
 
   // ========== 凭证管理（DO SQLite 版）==========
@@ -1281,16 +1205,7 @@ export class ILinkConnectionDO implements DurableObject {
   }
 
   private async updateStats(polls: number, handled: number, aiCalls: number, aiFails: number): Promise<void> {
-    const today = new Date().toISOString().split("T")[0];
-
-    // 只更新 D1，不再写 KV stats
-    if (this.d1) {
-      try {
-        await this.d1.incrementStats(today, polls, handled, aiCalls, aiFails, 0);
-      } catch (e) {
-        Logger.error("[DO] Failed to write D1 stats", { error: (e as Error).message });
-      }
-    }
+    // 统计数据由 runtimeStats 追踪，持久化到 DO storage
   }
 
   private async hasProcessedMessage(messageId: string): Promise<boolean> {
