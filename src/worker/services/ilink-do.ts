@@ -671,13 +671,19 @@ export class ILinkConnectionDO implements DurableObject {
       const cursor = this.state.storage.sql.exec(
         `SELECT user_id, messages, last_updated FROM contexts ORDER BY last_updated DESC`
       ).toArray();
-      return new Response(JSON.stringify({
-        rows: cursor.map((r: any) => {
-          let messageCount = 0;
-          try { messageCount = JSON.parse(r.messages as string).length; } catch {}
-          return { user_id: r.user_id, message_count: messageCount, last_updated: r.last_updated };
-        }),
-      }), { headers: { "Content-Type": "application/json" } });
+      const rows = cursor.map((r: any) => {
+        let messageCount = 0;
+        let rawMessages = r.messages;
+        try {
+          const parsed = JSON.parse(typeof rawMessages === 'string' ? rawMessages : JSON.stringify(rawMessages || "[]"));
+          messageCount = Array.isArray(parsed) ? parsed.length : 0;
+        } catch (e) {
+          Logger.warn(`[DO] Failed to parse context messages for ${r.user_id}`, { error: (e as Error).message, rawType: typeof rawMessages });
+        }
+        return { user_id: r.user_id, message_count: messageCount, last_updated: r.last_updated };
+      });
+      Logger.info(`[DO] SQLite contexts: ${rows.length} users, message_counts: ${rows.map(r => r.message_count).join(",")}`);
+      return new Response(JSON.stringify({ rows }), { headers: { "Content-Type": "application/json" } });
     } catch (e: any) {
       Logger.warn("[DO] SQLite contexts query failed", { error: e.message });
       return new Response(JSON.stringify({ rows: [] }), { headers: { "Content-Type": "application/json" } });
