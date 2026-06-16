@@ -183,7 +183,7 @@ const statusLoading = ref(false);
 const firstLoadDone = ref(false);
 
 // ===== Config =====
-const config = reactive({ aiProvider: "cloudflare", aiModel: "", aiBaseUrl: "", aiApiKey: "", aiMaxTokens: 1024, aiSystemPrompt: "", webhookEnabled: false, webhookUrl: "", webhookTitle: "", webhookApiKey: "", webhookChannels: [] as string[], aiPresets: [] as Array<{ id: string; name: string; provider: string; model: string; baseUrl: string; apiKey: string; maxTokens: number }>, aiActivePresetId: "cloudflare" });
+const config = reactive({ aiProvider: "cloudflare", aiModel: "", aiBaseUrl: "", aiApiKey: "", aiMaxTokens: 1024, aiSystemPrompt: "", webhookEnabled: false, webhookUrl: "", webhookTitle: "", webhookApiKey: "", webhookChannels: [] as string[], aiCustomProviders: [] as Array<{ id: string; name: string; icon: string }> });
 const configResult = ref("");
 const configSaving = ref(false);
 
@@ -288,13 +288,7 @@ async function handleLoadConfig() {
     config.webhookTitle = d.webhookTitle || "";
     config.webhookApiKey = d.webhookApiKey || "";
     config.webhookChannels = d.webhookChannels || [];
-    config.aiPresets = d.aiPresets || [];
-    config.aiActivePresetId = d.aiActivePresetId || "";
-    // 如果没有设置活跃预设，根据当前 aiProvider 自动匹配
-    if (!config.aiActivePresetId && config.aiProvider === "openai" && config.aiModel) {
-      const match = config.aiPresets.find((p: any) => p.model === config.aiModel && p.baseUrl === config.aiBaseUrl);
-      if (match) config.aiActivePresetId = match.id;
-    }
+    config.aiCustomProviders = d.aiCustomProviders || [];
     configResult.value = d.hasEnvOverride ? "✅ 已加载当前配置（注意：当前有环境变量覆盖）" : "✅ 已加载当前配置";
   } catch (e: any) { if (e instanceof ApiError && e.isCancelled) return; configResult.value = "❌ 加载失败: " + handleApiError(e, "加载失败"); }
 }
