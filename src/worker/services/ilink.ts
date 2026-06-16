@@ -292,6 +292,128 @@ export async function sendTextChunked(
   return chunks.length;
 }
 
+// ========== 媒体上传 ==========
+export async function getUploadUrl(
+  creds: ILinkCredentials,
+  fileType: number,
+  fileName: string,
+  fileSize: number,
+): Promise<{ upload_url: string; file_id: string }> {
+  const resp = await post(creds, "ilink/bot/getuploadurl", {
+    file_type: fileType,
+    file_name: fileName,
+    file_size: fileSize,
+  }, DEFAULT_API_MS);
+  return { upload_url: resp.upload_url, file_id: resp.file_id };
+}
+
+export async function uploadFile(
+  uploadUrl: string,
+  fileData: ArrayBuffer,
+  contentType: string,
+): Promise<void> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 30000);
+
+  try {
+    const resp = await fetch(uploadUrl, {
+      method: "PUT",
+      headers: { "Content-Type": contentType },
+      body: fileData,
+      signal: ctrl.signal,
+    });
+    clearTimeout(timer);
+    if (!resp.ok) {
+      throw new ClawBotError('ILINK_UPLOAD_FAILED', `Upload failed: ${resp.status}`, 502);
+    }
+    Logger.info("[iLink] File uploaded successfully");
+  } catch (e) {
+    clearTimeout(timer);
+    if (e instanceof ClawBotError) throw e;
+    throw new ClawBotError('ILINK_UPLOAD_FAILED', `Upload error: ${(e as Error).message}`, 502);
+  }
+}
+
+export async function sendMediaMessage(
+  creds: ILinkCredentials,
+  toUserId: string,
+  contextToken: string,
+  item: MessageItem,
+): Promise<void> {
+  const msg: WeixinMessage = {
+    from_user_id: "",
+    to_user_id: toUserId,
+    client_id: generateClientId(),
+    message_type: MessageType.BOT,
+    message_state: MessageState.FINISH,
+    context_token: contextToken,
+    item_list: [item],
+  };
+
+  await withRetry(
+    () => post(creds, "ilink/bot/sendmessage", { msg }, DEFAULT_API_MS),
+    {
+      retries: 2,
+      baseDelayMs: 500,
+      shouldRetry: (error) => !(error instanceof ClawBotError && error.code === 'ILINK_SESSION_TIMEOUT')
+    }
+  );
+
+  Logger.debug("[iLink] Media message sent");
+}
+
+// ========== 高级媒体发送（获取上传URL → 上传 → 发送）==========
+export async function uploadAndSendMedia(
+  creds: ILinkCredentials,
+  toUserId: string,
+  contextToken: string,
+  fileType: number,
+  fileName: string,
+  fileData: ArrayBuffer,
+  contentType: string,
+): Promise<void> {
+  // 1. 获取预签名上传 URL
+  const { upload_url } = await getUploadUrl(creds, fileType, fileName, fileData.byteLength);
+
+  // 2. 上传文件到 CDN
+  await uploadFile(upload_url, fileData, contentType);
+
+  // 3. 构造媒体消息
+  let item: MessageItem;
+  if (fileType === MessageItemType.IMAGE) {
+    item = { type: MessageItemType.IMAGE, image_item: { cdn_url: upload_url, url: upload_url, width: 0, height: 0 } };
+  } else if (fileType === MessageItemType.FILE) {
+    item = { type: MessageItemType.FILE, file_item: { url: upload_url, file_name: fileName, file_size: fileData.byteLength } };
+  } else if (fileType === MessageItemType.VOICE) {
+    item = { type: MessageItemType.VOICE, voice_item: { text: "", encode_type: 0, playtime: 0 } };
+  } else if (fileType === MessageItemType.VIDEO) {
+    item = { type: MessageItemType.VIDEO, video_item: { url: upload_url, thumb_url: "", width: 0, height: 0, duration: 0 } };
+  } else {
+    throw new ClawBotError('ILINK_INVALID_MEDIA', `Unsupported file type: ${fileType}`);
+  }
+
+  // 4. 发送媒体消息
+  await sendMediaMessage(creds, toUserId, contextToken, item);
+}
+
+// ========== 从 URL 下载并发送 ==========
+export async function sendFileFromUrl(
+  creds: ILinkCredentials,
+  toUserId: string,
+  contextToken: string,
+  fileUrl: string,
+  fileType: number,
+  fileName: string,
+): Promise<void> {
+  // 下载文件
+  const resp = await fetch(fileUrl, { signal: AbortSignal.timeout(30000) });
+  if (!resp.ok) throw new ClawBotError('ILINK_DOWNLOAD_FAILED', `Download failed: ${resp.status}`);
+  const buffer = await resp.arrayBuffer();
+  const contentType = resp.headers.get("content-type") || "application/octet-stream";
+
+  await uploadAndSendMedia(creds, toUserId, contextToken, fileType, fileName, buffer, contentType);
+}
+
 // ========== 工具 ==========
 function generateClientId(): string {
   const arr = new Uint8Array(6);
