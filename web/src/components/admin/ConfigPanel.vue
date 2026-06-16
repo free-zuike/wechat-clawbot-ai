@@ -100,7 +100,31 @@ const webhookChannelsStr = computed({
 const customProviders = computed(() => props.config.aiCustomProviders || []);
 
 function selectProvider(id: string) {
+  // 先保存当前提供商的配置到 aiPresets
+  const currentPreset = (props.config as any).aiPresets?.find((p: any) => p.id === props.config.aiProvider);
+  if (currentPreset) {
+    currentPreset.model = props.config.aiModel;
+    currentPreset.baseUrl = props.config.aiBaseUrl;
+    currentPreset.apiKey = props.config.aiApiKey;
+    currentPreset.maxTokens = props.config.aiMaxTokens;
+  }
+  // 切换提供商
   props.config.aiProvider = id;
+  // 加载新提供商的配置
+  if (id !== "cloudflare") {
+    const preset = (props.config as any).aiPresets?.find((p: any) => p.id === id);
+    if (preset) {
+      props.config.aiModel = preset.model || "";
+      props.config.aiBaseUrl = preset.baseUrl || "";
+      props.config.aiApiKey = preset.apiKey || "";
+      props.config.aiMaxTokens = preset.maxTokens || 1024;
+    }
+  } else {
+    props.config.aiModel = "";
+    props.config.aiBaseUrl = "";
+    props.config.aiApiKey = "";
+    props.config.aiMaxTokens = 1024;
+  }
   emit("save");
 }
 
@@ -112,6 +136,12 @@ function deleteProvider(id: string, event: Event) {
   }
   const idx = customProviders.value.findIndex(p => p.id === id);
   if (idx !== -1) props.config.aiCustomProviders.splice(idx, 1);
+  // 同步删除 aiPresets 中的条目
+  const presets = (props.config as any).aiPresets;
+  if (Array.isArray(presets)) {
+    const pidx = presets.findIndex((p: any) => p.id === id);
+    if (pidx !== -1) presets.splice(pidx, 1);
+  }
   emit("save");
 }
 
@@ -130,6 +160,13 @@ function addProvider() {
   const id = "custom_" + Date.now();
   if (!props.config.aiCustomProviders) props.config.aiCustomProviders = [];
   props.config.aiCustomProviders.push({ id, name: newName.value.trim(), icon: newIcon.value });
+  // 同时保存到 aiPresets
+  if (!(props.config as any).aiPresets) (props.config as any).aiPresets = [];
+  (props.config as any).aiPresets.push({
+    id, name: newName.value.trim(),
+    provider: "openai", model: "",
+    baseUrl: "", apiKey: "", maxTokens: 1024,
+  });
   props.config.aiProvider = id;
   newName.value = "";
   newIcon.value = "🤖";

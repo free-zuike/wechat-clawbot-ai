@@ -289,6 +289,12 @@ async function handleLoadConfig() {
     config.webhookApiKey = d.webhookApiKey || "";
     config.webhookChannels = d.webhookChannels || [];
     config.aiCustomProviders = d.aiCustomProviders || [];
+    // 从旧的 aiPresets 迁移到 aiCustomProviders
+    if (config.aiCustomProviders.length === 0 && d.aiPresets && d.aiPresets.length > 0) {
+      config.aiCustomProviders = d.aiPresets.map((p: any) => ({
+        id: p.id, name: p.name, icon: "🤖",
+      }));
+    }
     configResult.value = d.hasEnvOverride ? "✅ 已加载当前配置（注意：当前有环境变量覆盖）" : "✅ 已加载当前配置";
   } catch (e: any) { if (e instanceof ApiError && e.isCancelled) return; configResult.value = "❌ 加载失败: " + handleApiError(e, "加载失败"); }
 }
