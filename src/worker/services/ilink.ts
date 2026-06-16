@@ -266,6 +266,32 @@ export async function sendTextMessage(
   Logger.debug(`[iLink] Message sent successfully`);
 }
 
+// ========== 分段发送长消息 ==========
+export async function sendTextChunked(
+  creds: ILinkCredentials,
+  toUserId: string,
+  contextToken: string,
+  text: string,
+  maxLength: number = 4000,
+): Promise<number> {
+  if (text.length <= maxLength) {
+    await sendTextMessage(creds, toUserId, contextToken, text);
+    return 1;
+  }
+
+  const chunks: string[] = [];
+  for (let i = 0; i < text.length; i += maxLength) {
+    chunks.push(text.slice(i, i + maxLength));
+  }
+
+  for (const chunk of chunks) {
+    await sendTextMessage(creds, toUserId, contextToken, chunk);
+  }
+
+  Logger.info(`[iLink] Message chunked`, { total: text.length, chunks: chunks.length });
+  return chunks.length;
+}
+
 // ========== 工具 ==========
 function generateClientId(): string {
   const arr = new Uint8Array(6);

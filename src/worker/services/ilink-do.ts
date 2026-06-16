@@ -4,10 +4,11 @@
 
 import { Logger } from "../utils/error";
 import { generateSessionToken } from "../utils";
-import { getUpdates, sendTextMessage, sendTypingStatus, extractMessageText, getQRCodeStatus, MessageType } from "./ilink";
+import { getUpdates, sendTextMessage, sendTextChunked, sendTypingStatus, extractMessageText, getQRCodeStatus, MessageType } from "./ilink";
 import { callAIWithContext } from "./ai";
 import { D1Service } from "./d1";
 import { sendWebhook } from "./webhook";
+import { clearContextSQLite } from "./context";
 import type { ILinkCredentials, WeixinMessage } from "../types";
 
 export interface ILINKSessionState {
@@ -780,6 +781,17 @@ export class ILinkConnectionDO implements DurableObject {
       let replyContent = "";
       let replyAt = "";
 
+      // 检查重置命令
+      const RESET_COMMANDS = new Set(["新对话", "/reset", "/clear", "重置", "清空"]);
+      if (RESET_COMMANDS.has(text.trim())) {
+        await clearContextSQLite(this.state.storage.sql, from);
+        await sendTextMessage(this.ilinkCreds!, from, ctxToken, "✅ 已开始新对话");
+        await this.markMessageProcessed(messageId);
+        processedCount++;
+        Logger.info("[DO] Context reset", { from });
+        continue;
+      }
+
       try {
         // 发送"对方正在输入"状态
         sendTypingStatus(this.ilinkCreds!, from, ctxToken, true).catch(() => {});
@@ -795,14 +807,17 @@ export class ILinkConnectionDO implements DurableObject {
           { provider: cfg.aiProvider, baseUrl: cfg.aiBaseUrl, apiKey: cfg.aiApiKey, maxTokens: cfg.aiMaxTokens }
         );
 
-        // 发送回复
-        await sendTextMessage(this.ilinkCreds!, from, ctxToken, reply);
+        // 发送回复（自动分段）
+        const chunks = await sendTextChunked(this.ilinkCreds!, from, ctxToken, reply);
         replyContent = reply;
         replyAt = new Date().toISOString();
         aiSuccessCount++;
         await this.markMessageProcessed(messageId);
 
-        Logger.info("[DO] Message processed", { from, replyLength: reply.length });
+        // 取消 typing 状态
+        sendTypingStatus(this.ilinkCreds!, from, ctxToken, false).catch(() => {});
+
+        Logger.info("[DO] Message processed", { from, replyLength: reply.length, chunks });
       } catch (e: any) {
         aiFailCount++;
         Logger.error("[DO] AI processing failed", { error: e.message, from });
