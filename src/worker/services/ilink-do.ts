@@ -661,6 +661,18 @@ export class ILinkConnectionDO implements DurableObject {
       pollLoopRunning: a.pollLoopRunning,
     }));
 
+    // 兼容：如果没有 accounts 但有 ilinkCreds，构造一个
+    if (accountsList.length === 0 && this.ilinkCreds) {
+      accountsList.push({
+        accountId: this.ilinkCreds.accountId,
+        baseUrl: this.ilinkCreds.baseUrl,
+        userId: this.ilinkCreds.userId || "",
+        lastPollAt: this.state.lastPollAt,
+        consecutiveErrors: this.state.consecutiveErrors,
+        pollLoopRunning: this.pollLoopRunning,
+      });
+    }
+
     return new Response(JSON.stringify({
       success: true,
       isRunning: this.pollLoopRunning,
@@ -1152,6 +1164,17 @@ export class ILinkConnectionDO implements DurableObject {
             userId: creds.userId || "",
           };
           this.state.syncBuf = creds.syncBuf || "";
+          // 同步到 accounts Map（兼容旧格式迁移）
+          if (!this.accounts.has(creds.accountId)) {
+            this.accounts.set(creds.accountId, {
+              creds: this.ilinkCreds!,
+              syncBuf: creds.syncBuf || "",
+              consecutiveErrors: 0,
+              lastPollAt: "",
+              pollLoopRunning: false,
+            });
+            this.saveAccounts().catch(() => {});
+          }
           return;
         }
       }
