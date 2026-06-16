@@ -727,10 +727,10 @@ export class ILinkConnectionDO implements DurableObject {
         this.runtimeStats.polls++;
         this.runtimeStats.lastLatencyMs = Date.now() - pollStart;
 
-        // 处理消息
+        // 处理消息（传入当前账号的凭证）
         if (result.msgs && result.msgs.length > 0) {
-          Logger.info("[DO] Received messages", { count: result.msgs.length });
-          await this.processMessages(result.msgs);
+          Logger.info("[DO] Received messages", { accountId, count: result.msgs.length });
+          await this.processMessages(result.msgs, account.creds);
         }
 
         // 持久化运行时统计到 DO storage
@@ -907,7 +907,8 @@ export class ILinkConnectionDO implements DurableObject {
     return cfg;
   }
 
-  private async processMessages(msgs: WeixinMessage[]): Promise<void> {
+  private async processMessages(msgs: WeixinMessage[], creds?: ILinkCredentials): Promise<void> {
+    const useCreds = creds || this.ilinkCreds;
     const cfg = await this.getConfigCached();
     const { aiSystemPrompt: systemPrompt, aiModel } = cfg;
     let processedCount = 0;
@@ -959,7 +960,7 @@ export class ILinkConnectionDO implements DurableObject {
       const RESET_COMMANDS = new Set(["新对话", "/reset", "/clear", "重置", "清空"]);
       if (RESET_COMMANDS.has(text.trim())) {
         await clearContextSQLite(this.state.storage.sql, from);
-        await sendTextMessage(this.ilinkCreds!, from, ctxToken, "✅ 已开始新对话");
+        await sendTextMessage(useCreds!, from, ctxToken, "✅ 已开始新对话");
         await this.markMessageProcessed(messageId);
         processedCount++;
         Logger.info("[DO] Context reset", { from });
@@ -968,7 +969,7 @@ export class ILinkConnectionDO implements DurableObject {
 
       try {
         // 发送"对方正在输入"状态
-        sendTypingStatus(this.ilinkCreds!, from, ctxToken, true).catch(() => {});
+        sendTypingStatus(useCreds!, from, ctxToken, true).catch(() => {});
 
         // 调用 AI 生成回复（使用 DO SQLite 存储上下文，不再走 KV）
         const reply = await callAIWithContext(
@@ -982,14 +983,14 @@ export class ILinkConnectionDO implements DurableObject {
         );
 
         // 发送回复（自动分段）
-        const chunks = await sendTextChunked(this.ilinkCreds!, from, ctxToken, reply);
+        const chunks = await sendTextChunked(useCreds!, from, ctxToken, reply);
         replyContent = reply;
         replyAt = new Date().toISOString();
         aiSuccessCount++;
         await this.markMessageProcessed(messageId);
 
         // 取消 typing 状态
-        sendTypingStatus(this.ilinkCreds!, from, ctxToken, false).catch(() => {});
+        sendTypingStatus(useCreds!, from, ctxToken, false).catch(() => {});
 
         Logger.info("[DO] Message processed", { from, replyLength: reply.length, chunks });
       } catch (e: any) {
