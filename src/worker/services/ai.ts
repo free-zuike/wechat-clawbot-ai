@@ -172,6 +172,8 @@ export async function callAIWithContext(
     return `AI调用失败: ${e?.message || String(e)}`;
   }
 
+  Logger.info(`[ai] AI reply for ${userId}`, { replyLength: reply.length, provider: config.provider });
+
   if (reply) {
     const now = Date.now();
     context.messages.push({ role: "user", content: cleanMsg.slice(0, 500), timestamp: now });
