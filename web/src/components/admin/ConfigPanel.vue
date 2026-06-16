@@ -208,7 +208,7 @@ function openAddModal() {
   modalMode.value = "add";
   modalEditId.value = "";
   modalName.value = "";
-  modalProvider.value = "openai";
+  modalProvider.value = "cloudflare";
   modalModel.value = "";
   modalBaseUrl.value = "";
   modalApiKey.value = "";
