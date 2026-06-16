@@ -185,8 +185,8 @@ export class ILinkConnectionDO implements DurableObject {
       return this.handleWebSocket(request);
     }
 
-    // /status、/qr-poll、/check-session、/save-creds、/get-creds：不检查凭证
-    if (url.pathname === "/status") {
+    // /status、/sqlite/contexts 等路径不检查凭证
+    if (url.pathname === "/status" || url.pathname === "/sqlite/contexts") {
       return this.handleStatus();
     }
     if (url.pathname === "/qr-poll") {
