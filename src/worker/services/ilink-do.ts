@@ -804,7 +804,7 @@ export class ILinkConnectionDO implements DurableObject {
 
   private async getConfigCached() {
     const now = Date.now();
-    if (this.cache.config && now - this.cache.configLoadedAt < 30 * 1000) {
+    if (this.cache.config && now - this.cache.configLoadedAt < 10 * 1000) {
       return this.cache.config;
     }
 

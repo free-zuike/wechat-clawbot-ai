@@ -128,11 +128,15 @@ export async function callAIWithContext(
 
   const config: AIConfig = {
     provider: aiConfig?.provider || "cloudflare",
-    model: aiModel || aiConfig?.model || "@cf/meta/llama-3.2-3b-instruct",
+    model: aiModel || aiConfig?.model || (aiConfig?.provider === "cloudflare" || !aiConfig?.provider ? "@cf/meta/llama-3.2-3b-instruct" : ""),
     baseUrl: aiConfig?.baseUrl || "",
     apiKey: aiConfig?.apiKey || "",
     maxTokens: aiConfig?.maxTokens || 1024,
   };
+
+  if (config.provider !== "cloudflare" && !config.model) {
+    return "AI调用失败: 未配置模型名称，请在管理后台设置 AI 模型";
+  }
 
   const system = systemPrompt || DEFAULT_SYSTEM_PROMPT;
   const context = await getContextFromSQLite(storage, userId);
@@ -194,11 +198,15 @@ export async function callAI(
 
   const config: AIConfig = {
     provider: aiConfig?.provider || "cloudflare",
-    model: aiConfig?.model || "@cf/meta/llama-3.2-3b-instruct",
+    model: aiConfig?.model || (aiConfig?.provider === "cloudflare" || !aiConfig?.provider ? "@cf/meta/llama-3.2-3b-instruct" : ""),
     baseUrl: aiConfig?.baseUrl || "",
     apiKey: aiConfig?.apiKey || "",
     maxTokens: aiConfig?.maxTokens || 1024,
   };
+
+  if (config.provider !== "cloudflare" && !config.model) {
+    return "AI调用失败: 未配置模型名称，请在管理后台设置 AI 模型";
+  }
 
   const system = systemPrompt || DEFAULT_SYSTEM_PROMPT;
 
