@@ -205,6 +205,7 @@ function deleteProvider(id: string, event: Event) {
     selectProvider("cloudflare");
   }
   syncToProps();
+  emit("save");
 }
 
 function getCurrentProviderName() {
