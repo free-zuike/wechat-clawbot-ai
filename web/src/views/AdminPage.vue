@@ -38,6 +38,7 @@
         <TaskPanel
           :status="status"
           :bound="qrCodeBound"
+          :accounts="accountsList"
           :is-polling="isPolling"
           :poll-result="pollResult"
           :ws-connected="wsConnected"
@@ -48,7 +49,7 @@
           @trigger-poll="handleTriggerPoll"
           @get-q-r="handleGetQRCode"
           @reset-q-r="resetQR"
-          @unbind="handleUnbindWeChat"
+          @unbind="(id: string) => handleUnbindWeChatById(id)"
           @clear-messages="wsMessages = []"
         />
         <!-- WebSocket 实时消息列表 -->
@@ -218,6 +219,9 @@ const sessions = ref<any[]>([]); const sessionsLoading = ref(false);
 const sessionsSearch = ref(""); const sessionsPage = ref(1);
 const sessionsTotalPages = ref(1); const sessionsTotal = ref(0);
 
+// ===== Accounts =====
+const accountsList = ref<Array<{ accountId: string; baseUrl: string; lastPollAt: string; pollLoopRunning: boolean }>>([]);
+
 // ===== Health =====
 const healthData = reactive({
   kv: "—", loggedIn: false, totalPolls: 0, totalHandled: 0, totalAICalls: 0, totalAIFails: 0,
@@ -248,6 +252,7 @@ async function handleRefreshStatus() {
       status.lastPollAt = statusData.stats?.lastPollAt ? new Date(statusData.stats.lastPollAt).toLocaleString() : "从未";
       status.lastLatencyMs = statusData.stats?.lastLatencyMs == null ? "—" : statusData.stats.lastLatencyMs + " ms";
       qrCodeBound.value = !!statusData.hasBotCredentials;
+      accountsList.value = statusData.accounts || [];
       healthData.kv = statusData.kv || "—";
       healthData.loggedIn = statusData.loggedIn;
       healthData.unresolvedAlerts = statusData.alerts?.unresolved || 0;
@@ -334,6 +339,16 @@ function resetQR() { if (qrPollTimer) clearTimeout(qrPollTimer); qrCode.value = 
 async function handleUnbindWeChat() {
   if (!confirm("确定要解绑微信吗？解绑后需要重新扫码绑定。")) return;
   try { await fetch("/api/unbind-wechat", { method: "POST" }); qrCodeBound.value = false; qrCode.value = ""; qrImage.value = ""; } catch (e: any) { alert("解绑失败: " + (e.message || "未知错误")); }
+}
+async function handleUnbindWeChatById(accountId: string) {
+  try {
+    await fetch("/api/unbind-wechat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ accountId }),
+    });
+    handleRefreshStatus();
+  } catch (e: any) { alert("解绑失败: " + (e.message || "未知错误")); }
 }
 
 // ===== WebSocket =====

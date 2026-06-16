@@ -42,7 +42,14 @@ interface RuntimeCache {
 export class ILinkConnectionDO implements DurableObject {
   private state: ILINKSessionState;
   private env: any;
-  private ilinkCreds: ILinkCredentials | null = null;
+  private ilinkCreds: ILinkCredentials | null = null; // 当前活跃账号（兼容）
+  private accounts: Map<string, {
+    creds: ILinkCredentials;
+    syncBuf: string;
+    consecutiveErrors: number;
+    lastPollAt: string;
+    pollLoopRunning: boolean;
+  }> = new Map();
   private d1: D1Service | null = null;
   private pollLoopRunning = false;
   private kv: KVNamespace | null = null;
@@ -75,6 +82,27 @@ export class ILinkConnectionDO implements DurableObject {
     // 恢复运行时统计
     state.storage.get<typeof this.runtimeStats>("runtime_stats")
       .then((s) => { if (s) this.runtimeStats = { ...this.runtimeStats, ...s }; })
+      .catch(() => {});
+
+    // 恢复多账号数据
+    state.storage.get<Array<{ accountId: string; creds: ILinkCredentials; syncBuf: string }>>("accounts")
+      .then((accs) => {
+        if (accs) {
+          for (const a of accs) {
+            this.accounts.set(a.accountId, {
+              creds: a.creds,
+              syncBuf: a.syncBuf || "",
+              consecutiveErrors: 0,
+              lastPollAt: "",
+              pollLoopRunning: false,
+            });
+          }
+          // 兼容：设 ilinkCreds 为第一个账号
+          if (!this.ilinkCreds && accs.length > 0) {
+            this.ilinkCreds = accs[0].creds;
+          }
+        }
+      })
       .catch(() => {});
   }
 
@@ -153,13 +181,25 @@ export class ILinkConnectionDO implements DurableObject {
     // 初始化凭证（从 SQLite → KV fallback 迁移）
     await this.initCredentials();
 
-    // 有凭证就尝试启动轮询（DO eviction 后自动恢复，不依赖特定路径触发）
-    if (this.ilinkCreds && !this.pollLoopRunning) {
-      this.pollLoopRunning = true;
-      this.runPollLoop().catch((e) => {
-        Logger.error("[DO] Poll loop error", { error: e.message });
-        this.pollLoopRunning = false;
-      });
+    // 有凭证就尝试启动轮询（DO eviction 后自动恢复）
+    if (this.accounts.size > 0) {
+      for (const [accountId, account] of this.accounts) {
+        if (!account.pollLoopRunning) {
+          account.pollLoopRunning = true;
+          this.runAccountPollLoop(accountId).catch((e) => {
+            Logger.error("[DO] Poll loop error", { accountId, error: e.message });
+            account.pollLoopRunning = false;
+          });
+        }
+      }
+      // 兼容：保持旧的轮询逻辑
+      if (this.ilinkCreds && !this.pollLoopRunning) {
+        this.pollLoopRunning = true;
+        this.runPollLoop().catch((e) => {
+          Logger.error("[DO] Poll loop error", { error: e.message });
+          this.pollLoopRunning = false;
+        });
+      }
     }
 
     // WebSocket 升级
@@ -386,26 +426,52 @@ export class ILinkConnectionDO implements DurableObject {
     });
   }
 
+  // ========== 持久化所有账号 ==========
+  private async saveAccounts(): Promise<void> {
+    const arr = Array.from(this.accounts.entries()).map(([accountId, a]) => ({
+      accountId,
+      creds: a.creds,
+      syncBuf: a.syncBuf,
+    }));
+    await this.state.storage.put("accounts", arr);
+  }
+
   // ========== 清除凭证（解绑微信）==========
 
-  private async handleClearCreds(): Promise<Response> {
+  private async handleClearCreds(request?: Request): Promise<Response> {
     try {
-      await this.state.storage.delete("credentials");
-      this.ilinkCreds = null;
-      this.cache.credentials = null;
-      this.pollLoopRunning = false;
+      let targetAccountId: string | null = null;
 
-      Logger.info("[DO] Credentials cleared (WeChat unbound)");
-      return new Response(JSON.stringify({ ok: true }), {
-        headers: { "Content-Type": "application/json" },
-      });
+      // 支持指定 accountId 解绑
+      if (request) {
+        try {
+          const body = await request.json().catch(() => ({}));
+          targetAccountId = body.accountId || null;
+        } catch {}
+      }
+
+      if (targetAccountId) {
+        // 解绑指定账号
+        this.accounts.delete(targetAccountId);
+        Logger.info("[DO] Account unbound", { accountId: targetAccountId, remaining: this.accounts.size });
+      } else {
+        // 兼容：解绑全部
+        this.accounts.clear();
+        this.ilinkCreds = null;
+        Logger.info("[DO] All accounts unbound");
+      }
+
+      // 更新 ilinkCreds 为第一个剩余账号
+      const first = this.accounts.values().next().value;
+      this.ilinkCreds = first ? first.creds : null;
+
+      await this.saveAccounts();
     } catch (e: any) {
       Logger.error("[DO] /clear-creds error", { error: e.message });
-      return new Response(JSON.stringify({ error: e.message }), {
-        status: 500,
-        headers: { "Content-Type": "application/json" },
-      });
     }
+    return new Response(JSON.stringify({ ok: true, remaining: this.accounts.size }), {
+      headers: { "Content-Type": "application/json" },
+    });
   }
 
   // ========== 保存凭证（登录确认时调用，绕过KV）==========
@@ -421,25 +487,31 @@ export class ILinkConnectionDO implements DurableObject {
         });
       }
 
-      // 直接存到 DO KV storage（最可靠，不依赖外部 KV 配额）
-      await this.state.storage.put("credentials", JSON.stringify({
-        botToken, accountId, userId: userId || "",
+      const creds: ILinkCredentials = {
+        botToken, accountId,
         baseUrl: baseUrl || "https://ilinkai.weixin.qq.com",
-        syncBuf: syncBuf || "", createdAt: createdAt || Date.now(),
-      }));
+        userId: userId || "",
+      };
 
-      // 同时更新内存状态，让 handleStatus 能检测到
-      this.ilinkCreds = { botToken, accountId, baseUrl: baseUrl || "https://ilinkai.weixin.qq.com", userId: userId || "" };
+      // 添加到多账号 Map
+      this.accounts.set(accountId, {
+        creds,
+        syncBuf: syncBuf || "",
+        consecutiveErrors: 0,
+        lastPollAt: "",
+        pollLoopRunning: false,
+      });
 
-      // 同时存 session token
+      // 保持兼容：设 ilinkCreds
+      this.ilinkCreds = creds;
+
+      // 持久化所有账号
+      await this.saveAccounts();
+
       const sessionToken = generateSessionToken();
 
-      // 同步到内存
-      this.ilinkCreds = { botToken, accountId, baseUrl: baseUrl || "https://ilinkai.weixin.qq.com", userId: userId || "" };
-      this.cache.credentials = { ...body };
-
-      Logger.info("[DO] Credentials saved via /save-creds", { accountId });
-      return new Response(JSON.stringify({ ok: true, sessionToken }), {
+      Logger.info("[DO] Account saved", { accountId, totalAccounts: this.accounts.size });
+      return new Response(JSON.stringify({ ok: true, sessionToken, accountId, totalAccounts: this.accounts.size }), {
         headers: { "Content-Type": "application/json" },
       });
     } catch (e: any) {
@@ -554,6 +626,15 @@ export class ILinkConnectionDO implements DurableObject {
   // ========== 查询状态 ==========
 
   private async handleStatus(): Promise<Response> {
+    const accountsList = Array.from(this.accounts.entries()).map(([id, a]) => ({
+      accountId: id,
+      baseUrl: a.creds.baseUrl,
+      userId: a.creds.userId,
+      lastPollAt: a.lastPollAt,
+      consecutiveErrors: a.consecutiveErrors,
+      pollLoopRunning: a.pollLoopRunning,
+    }));
+
     return new Response(JSON.stringify({
       success: true,
       isRunning: this.pollLoopRunning,
@@ -564,6 +645,8 @@ export class ILinkConnectionDO implements DurableObject {
       accountId: this.ilinkCreds?.accountId,
       needsReLogin: !this.ilinkCreds,
       stats: this.runtimeStats,
+      accounts: accountsList,
+      totalAccounts: this.accounts.size,
     }), {
       headers: { "Content-Type": "application/json" },
     });
@@ -684,6 +767,72 @@ export class ILinkConnectionDO implements DurableObject {
     }
 
     Logger.info("[DO] Poll loop stopped");
+  }
+
+  // ========== 单账号轮询循环 ==========
+
+  private async runAccountPollLoop(accountId: string): Promise<void> {
+    const account = this.accounts.get(accountId);
+    if (!account) return;
+
+    Logger.info("[DO] Account poll loop started", { accountId });
+
+    while (account.pollLoopRunning) {
+      try {
+        const pollStart = Date.now();
+        const result = await getUpdates(account.creds, account.syncBuf);
+
+        if (result.get_updates_buf && result.get_updates_buf !== account.syncBuf) {
+          account.syncBuf = result.get_updates_buf;
+          await this.saveAccounts();
+        }
+
+        account.consecutiveErrors = 0;
+        account.lastPollAt = new Date().toISOString();
+        this.runtimeStats.polls++;
+        this.runtimeStats.lastLatencyMs = Date.now() - pollStart;
+
+        if (result.msgs && result.msgs.length > 0) {
+          Logger.info("[DO] Received messages", { accountId, count: result.msgs.length });
+          await this.processMessages(result.msgs);
+        }
+
+        this.state.storage.put("runtime_stats", this.runtimeStats);
+        await new Promise((resolve) => setTimeout(resolve, 30000));
+
+      } catch (e: any) {
+        Logger.error("[DO] Account poll error", { accountId, error: e.message });
+
+        if (e.code === "ILINK_SESSION_TIMEOUT" || e.message?.includes("ILINK_SESSION_TIMEOUT")) {
+          account.consecutiveErrors++;
+          try {
+            const refreshResult = await getQRCodeStatus(account.creds.accountId);
+            if (refreshResult.status === "confirmed" && refreshResult.bot_token) {
+              account.creds.botToken = refreshResult.botToken || refreshResult.bot_token;
+              account.syncBuf = "";
+              Logger.info("[DO] Token refreshed", { accountId });
+              account.consecutiveErrors = 0;
+              await this.saveAccounts();
+              continue;
+            }
+          } catch {}
+
+          account.pollLoopRunning = false;
+          await this.saveAccounts();
+          return;
+        }
+
+        account.consecutiveErrors++;
+        if (account.consecutiveErrors > 10) {
+          Logger.error("[DO] Account too many errors, stopping", { accountId });
+          account.pollLoopRunning = false;
+          return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 30000));
+      }
+    }
+
+    Logger.info("[DO] Account poll loop stopped", { accountId });
   }
 
   // ========== 处理消息 ==========
