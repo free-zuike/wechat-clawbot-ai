@@ -1006,15 +1006,16 @@ export class ILinkConnectionDO implements DurableObject {
         replyAt,
         processed: true,
       };
-      this.state.pendingMessages.push(pendingMsg);
-
-      // 广播到 WebSocket 客户端
-      if (this.websockets.size > 0) {
-        this.broadcastToWebSockets({ type: "message", data: pendingMsg });
-      }
-
-      // Webhook 推送（fire and forget）
+      // 只在成功回复时才广播和入队
       if (replyContent) {
+        this.state.pendingMessages.push(pendingMsg);
+
+        // 广播到 WebSocket 客户端
+        if (this.websockets.size > 0) {
+          this.broadcastToWebSockets({ type: "message", data: pendingMsg });
+        }
+
+        // Webhook 推送（fire and forget）
         const webhookConfig = this.cache.config?.webhook;
         Logger.info("[DO] Webhook check", { enabled: webhookConfig?.enabled, hasUrl: !!webhookConfig?.url, url: webhookConfig?.url?.slice(0, 50), replyLength: replyContent.length });
         if (webhookConfig?.enabled && webhookConfig?.url) {
@@ -1270,11 +1271,11 @@ export class ILinkConnectionDO implements DurableObject {
 
   private async hasProcessedMessage(messageId: string): Promise<boolean> {
     try {
-      const row = this.state.storage.sql.exec(
+      const rows = this.state.storage.sql.exec(
         `SELECT 1 as found FROM processed_messages WHERE message_id = ? LIMIT 1`,
         messageId
-      ).one();
-      return !!row;
+      ).toArray();
+      return rows.length > 0;
     } catch (e) {
       Logger.warn("[DO] Failed to query processed_messages", { error: (e as Error).message, messageId });
       return false;
