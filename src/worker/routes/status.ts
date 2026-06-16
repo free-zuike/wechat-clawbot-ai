@@ -45,6 +45,8 @@ export async function handleStatus(request: Request, env: Env): Promise<Response
     alerts: { unresolved: alertSummary.unresolved, critical: alertSummary.byLevel.critical, error: alertSummary.byLevel.error, warning: alertSummary.byLevel.warning },
     kv: "OK",
     hasBotCredentials: !!doStatus?.hasCredentials,
+    accounts: doStatus?.accounts || [],
+    totalAccounts: doStatus?.totalAccounts || 0,
     timestamp: new Date().toISOString(),
   };
 
