@@ -83,6 +83,28 @@ export class ILinkConnectionDO implements DurableObject {
     state.storage.get<typeof this.runtimeStats>("runtime_stats")
       .then((s) => { if (s) this.runtimeStats = { ...this.runtimeStats, ...s }; })
       .catch(() => {});
+
+    // 异步加载多账号数据
+    state.storage.get<Array<{ accountId: string; creds: ILinkCredentials; syncBuf: string }>>("accounts")
+      .then((accs) => {
+        if (accs && accs.length > 0) {
+          for (const a of accs) {
+            if (!this.accounts.has(a.accountId)) {
+              this.accounts.set(a.accountId, {
+                creds: a.creds,
+                syncBuf: a.syncBuf || "",
+                consecutiveErrors: 0,
+                lastPollAt: "",
+                pollLoopRunning: false,
+              });
+            }
+          }
+          if (!this.ilinkCreds && accs.length > 0) {
+            this.ilinkCreds = accs[0].creds;
+          }
+        }
+      })
+      .catch(() => {});
   }
 
   // ========== SQLite 初始化 ==========
