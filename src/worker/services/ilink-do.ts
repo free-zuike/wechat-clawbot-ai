@@ -186,8 +186,11 @@ export class ILinkConnectionDO implements DurableObject {
     }
 
     // /status、/sqlite/contexts 等路径不检查凭证
-    if (url.pathname === "/status" || url.pathname === "/sqlite/contexts") {
+    if (url.pathname === "/status") {
       return this.handleStatus();
+    }
+    if (url.pathname === "/sqlite/contexts") {
+      return this.handleSQLiteContexts();
     }
     if (url.pathname === "/qr-poll") {
       return this.handleQRPoll(url);
