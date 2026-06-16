@@ -330,7 +330,7 @@ async function handleGetQRCode() {
 async function pollQRStatus() {
   try {
     const data = await getQRCodeStatus("", qrCode.value);
-    if (data.ok || data.status === "confirmed") { qrStatus.value = "绑定成功！"; qrCodeBound.value = true; qrCode.value = ""; qrImage.value = ""; return; }
+    if (data.ok || data.status === "confirmed") { qrStatus.value = "绑定成功！"; qrCodeBound.value = true; qrCode.value = ""; qrImage.value = ""; handleRefreshStatus(); return; }
     if (data.status === "expired") { qrStatus.value = "二维码已过期，请重新获取"; return; }
     qrStatus.value = "等待扫码..."; qrPollTimer = window.setTimeout(pollQRStatus, 2000);
   } catch { qrPollTimer = window.setTimeout(pollQRStatus, 3000); }
