@@ -135,32 +135,33 @@ export async function handleSessions(request: Request, env: Env): Promise<Respon
     const search = url.searchParams.get("search")?.toLowerCase() || "";
     const offset = (page - 1) * limit;
 
-    const sessions: Array<{
+    // 从 DO SQLite contexts 表读取会话
+    let sessions: Array<{
       from_user_id: string;
       message_count: number;
       last_message_at: string;
-      first_message_at?: string;
     }> = [];
 
-    const { keys } = await env.CLAWBOT_KV.list({ prefix: "clawbot:context:" });
+    try {
+      const doId = env.ILINK_CONNECTION.idFromName("main");
+      const doStub = env.ILINK_CONNECTION.get(doId);
+      const resp = await doStub.fetch(new Request("http://localhost/status"), { signal: AbortSignal.timeout(3000) });
+      const doStatus = await resp.json() as any;
 
-    for (const key of keys) {
-      const data = await env.CLAWBOT_KV.get(key.name);
-      if (!data) continue;
+      // 从 DO 的 WebSocket 广播记录或 pendingMessages 获取会话信息
+      // 简化：直接从 DO SQLite 读取
+      const sqlResp = await doStub.fetch(new Request("http://localhost/sqlite/contexts"), { signal: AbortSignal.timeout(3000) });
+      const sqlData = await sqlResp.json() as { rows?: Array<{ user_id: string; last_updated: number }> };
 
-      let context: any = null;
-      try {
-        context = JSON.parse(data);
-      } catch {
-        continue;
+      if (sqlData?.rows) {
+        sessions = sqlData.rows.map((row) => ({
+          from_user_id: row.user_id,
+          message_count: 0,
+          last_message_at: new Date(row.last_updated).toISOString(),
+        }));
       }
-
-      sessions.push({
-        from_user_id: context.userId || key.name.replace("clawbot:context:", ""),
-        message_count: Array.isArray(context.messages) ? context.messages.length : 0,
-        last_message_at: context.lastUpdated || new Date().toISOString(),
-        first_message_at: context.firstMessageAt,
-      });
+    } catch (e) {
+      Logger.warn("[Admin] DO sessions query failed", { error: (e as Error).message });
     }
 
     sessions.sort((a, b) => new Date(b.last_message_at).getTime() - new Date(a.last_message_at).getTime());

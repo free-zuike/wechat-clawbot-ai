@@ -224,6 +224,8 @@ export class ILinkConnectionDO implements DurableObject {
         return this.handleSend(request);
       case "/status":
         return this.handleStatus();
+      case "/sqlite/contexts":
+        return this.handleSQLiteContexts();
       case "/flush":
         return this.handleFlush();
       case "/qr-poll":
@@ -659,6 +661,23 @@ export class ILinkConnectionDO implements DurableObject {
     }), {
       headers: { "Content-Type": "application/json" },
     });
+  }
+
+  // ========== SQLite contexts 查询（供管理面板使用）==========
+
+  private async handleSQLiteContexts(): Promise<Response> {
+    try {
+      await this.initSQLite();
+      const cursor = this.state.storage.sql.exec(
+        `SELECT user_id, last_updated FROM contexts ORDER BY last_updated DESC`
+      ).toArray();
+      return new Response(JSON.stringify({
+        rows: cursor.map((r: any) => ({ user_id: r.user_id, last_updated: r.last_updated })),
+      }), { headers: { "Content-Type": "application/json" } });
+    } catch (e: any) {
+      Logger.warn("[DO] SQLite contexts query failed", { error: e.message });
+      return new Response(JSON.stringify({ rows: [] }), { headers: { "Content-Type": "application/json" } });
+    }
   }
 
   // ========== 立即触发一次轮询（用于发送消息后）==========
