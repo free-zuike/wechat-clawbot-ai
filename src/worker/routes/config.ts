@@ -100,17 +100,28 @@ function getConfigResponse(kvConfig: Record<string, unknown>) {
 }
 
 // 从配置中解析出实际的 AI 调用配置（供 chat / trigger 使用）
+// 自动修复旧数据中预设 apiKey 被掩码的问题
 export function resolveAIConfig(kvConfig: Record<string, unknown>) {
   const provider = (kvConfig.aiProvider as string) || "cloudflare";
+  const topApiKey = (kvConfig.aiApiKey as string) || "";
   const presets = (kvConfig.aiPresets as Preset[]) || [];
   const active = findPreset(presets, provider);
 
   if (active && provider !== "cloudflare") {
+    // 自动修复：如果预设中的 apiKey 是掩码值，用顶层 apiKey 替代
+    let apiKey = active.apiKey || "";
+    if (isMaskedKey(apiKey)) {
+      apiKey = topApiKey;
+    }
+    let baseUrl = active.baseUrl || "";
+    if (!baseUrl) {
+      baseUrl = (kvConfig.aiBaseUrl as string) || "";
+    }
     return {
       provider,
       model: active.model || "",
-      baseUrl: active.baseUrl || "",
-      apiKey: active.apiKey || "",
+      baseUrl,
+      apiKey,
       maxTokens: active.maxTokens || 1024,
     };
   }

@@ -845,7 +845,8 @@ export class ILinkConnectionDO implements DurableObject {
       aiProvider = activeProvider;
       aiModel = activePreset.model || aiModel;
       aiBaseUrl = activePreset.baseUrl || "";
-      aiApiKey = activePreset.apiKey || "";
+      // 自动修复：如果预设 apiKey 是掩码值（含 ***），用顶层字段替代
+      aiApiKey = (activePreset.apiKey || "").includes("***") ? ((kvConfig.aiApiKey as string) || "") : (activePreset.apiKey || "");
       aiMaxTokens = activePreset.maxTokens || 1024;
     } else {
       // cloudflare 或无预设：回退到顶层字段
