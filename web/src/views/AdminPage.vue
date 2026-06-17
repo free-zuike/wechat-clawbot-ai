@@ -315,9 +315,22 @@ async function handleSaveConfig() {
     const d = await saveConfig({ ...config, _version: config.version });
     if (d.ok) {
       configResult.value = "✅ " + (d.message || "配置已保存");
-      // 保存成功后重新加载配置，确保预设等数据同步
       await handleLoadConfig();
     }
+    else if (d.error === "CONFLICT") {
+      configResult.value = "⚠️ " + (d.message || "配置已被其他人修改，正在重新加载...");
+      await handleLoadConfig();
+    }
+    else if (d.error === "VALIDATION_ERROR") configResult.value = "⚠️ 验证失败: " + (d.message || "请检查配置项");
+    else configResult.value = "❌ " + (d.error || "保存失败");
+  } catch (e: any) {
+    if (e instanceof ApiError && e.isAuthError) {
+      configResult.value = "❌ 登录已过期，请刷新页面重新登录";
+    } else {
+      configResult.value = "❌ 保存失败: " + handleApiError(e, "保存失败");
+    }
+  } finally { configSaving.value = false; }
+}
     else if (d.error === "CONFLICT") {
       configResult.value = "⚠️ " + (d.message || "配置已被其他人修改，正在重新加载...");
       await handleLoadConfig();
