@@ -73,7 +73,13 @@ export async function handleChat(request: Request, env: Env): Promise<Response> 
       } else {
         const imageData = await generateImage(env.AI, prompt, imageModel, aiConfig.provider, aiConfig.baseUrl, aiConfig.apiKey);
         if (imageData) {
-          const base64 = btoa(String.fromCharCode(...imageData));
+          // 分块转 base64，避免大数组展开爆栈
+          let base64 = "";
+          const chunkSize = 8192;
+          for (let i = 0; i < imageData.length; i += chunkSize) {
+            base64 += String.fromCharCode(...imageData.slice(i, i + chunkSize));
+          }
+          base64 = btoa(base64);
           const dataUrl = `data:image/png;base64,${base64}`;
           return json({ reply: `图片已生成！\n\n![生成的图片](${dataUrl})`, source: "ai" } satisfies ChatResponse);
         }
