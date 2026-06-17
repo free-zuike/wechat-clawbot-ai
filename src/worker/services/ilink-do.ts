@@ -4,7 +4,7 @@
 
 import { Logger } from "../utils/error";
 import { generateSessionToken } from "../utils";
-import { getUpdates, sendTextMessage, sendTextChunked, sendTypingStatus, extractMessageText, getQRCodeStatus, uploadAndSendMedia, MessageType, MessageItemType } from "./ilink";
+import { getUpdates, sendTextMessage, sendTextChunked, sendTypingStatus, extractMessageText, getQRCodeStatus, sendImageMessage, uploadAndSendMedia, MessageType, MessageItemType } from "./ilink";
 import { callAIWithContext, isImageGenerationRequest, isVideoGenerationRequest, extractMediaPrompt, generateImage, generateVideo } from "./ai";
 import { sendWebhook } from "./webhook";
 import { clearContextSQLite } from "./context";
@@ -951,19 +951,12 @@ export class ILinkConnectionDO implements DurableObject {
               Logger.info("[DO] Image generation result", { success: !!imageData, type: typeof imageData });
               if (imageData) {
                 if (typeof imageData === "string") {
-                  // 返回的是 URL，先下载再通过 uploadAndSendMedia 发送
+                  // 返回的是 URL，通过 sendImageMessage 发送
                   try {
-                    const imgResp = await fetch(imageData, { signal: AbortSignal.timeout(30000) });
-                    if (imgResp.ok) {
-                      const buffer = await imgResp.arrayBuffer();
-                      const contentType = imgResp.headers.get("content-type") || "image/png";
-                      await uploadAndSendMedia(useCreds!, from, ctxToken, MessageItemType.IMAGE, "generated.png", buffer, contentType);
-                      replyContent = `[图片生成] ${mediaPrompt}`;
-                    } else {
-                      throw new Error(`Download failed: ${imgResp.status}`);
-                    }
+                    await sendImageMessage(useCreds!, from, ctxToken, imageData);
+                    replyContent = `[图片生成] ${mediaPrompt}`;
                   } catch (sendErr: any) {
-                    Logger.warn("[DO] Image send failed, sending URL as text", { error: sendErr?.message });
+                    Logger.warn("[DO] Image send failed", { error: sendErr?.message });
                     await sendTextMessage(useCreds!, from, ctxToken, `图片已生成，请点击查看：\n${imageData}`);
                     replyContent = `[图片生成] ${mediaPrompt}`;
                   }

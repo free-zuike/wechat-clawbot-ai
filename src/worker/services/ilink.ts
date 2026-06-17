@@ -401,7 +401,43 @@ export async function uploadAndSendMedia(
   await sendMediaMessage(creds, toUserId, contextToken, item);
 }
 
-// ========== 从 URL 下载并发送 ==========
+// ========== 发送图片消息（尝试多种方式）==========
+export async function sendImageMessage(
+  creds: ILinkCredentials,
+  toUserId: string,
+  contextToken: string,
+  imageUrl: string,
+): Promise<void> {
+  // 方式1：直接发送带 URL 的图片消息
+  const item: MessageItem = {
+    type: MessageItemType.IMAGE,
+    image_item: { url: imageUrl, cdn_url: imageUrl, width: 0, height: 0 },
+  };
+  try {
+    await sendMediaMessage(creds, toUserId, contextToken, item);
+    Logger.info("[iLink] Image sent via direct URL");
+    return;
+  } catch (e: any) {
+    Logger.warn("[iLink] Direct image URL send failed", { error: e?.message });
+  }
+
+  // 方式2：下载图片后通过 getuploadurl 上传
+  try {
+    const imgResp = await fetch(imageUrl, { signal: AbortSignal.timeout(30000) });
+    if (imgResp.ok) {
+      const buffer = await imgResp.arrayBuffer();
+      const contentType = imgResp.headers.get("content-type") || "image/png";
+      await uploadAndSendMedia(creds, toUserId, contextToken, MessageItemType.IMAGE, "generated.png", buffer, contentType);
+      Logger.info("[iLink] Image sent via upload");
+      return;
+    }
+  } catch (e: any) {
+    Logger.warn("[iLink] Upload image failed", { error: e?.message });
+  }
+
+  // 方式3：全部失败，抛出错误
+  throw new ClawBotError('ILINK_IMAGE_SEND_FAILED', 'All image send methods failed');
+}
 export async function sendFileFromUrl(
   creds: ILinkCredentials,
   toUserId: string,
