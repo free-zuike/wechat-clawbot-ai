@@ -716,9 +716,10 @@ export class ILinkConnectionDO implements DurableObject {
   async checkPendingVideos(): Promise<void> {
     try {
       await this.initSQLite();
-      const pending = this.doState.storage.sql.exec(
+      const cursor = this.doState.storage.sql.exec(
         `SELECT task_id, prompt, model, provider, base_url, api_key FROM pending_videos WHERE status = 'queued'`
-      ).toArray();
+      );
+      const pending = cursor.toArray();
 
       if (pending.length === 0) return;
       Logger.info("[DO] Checking pending videos", { count: pending.length });
@@ -735,6 +736,7 @@ export class ILinkConnectionDO implements DurableObject {
 
           const statusData = await statusResp.json() as any;
           const status = statusData?.status || statusData?.data?.status;
+          Logger.info("[DO] Video task status", { taskId, status });
 
           if (status === "completed" || status === "COMPLETED" || status === "success" || status === "SUCCESS") {
             const videoUrl = statusData?.data?.remixed_from_video_id
@@ -743,22 +745,10 @@ export class ILinkConnectionDO implements DurableObject {
               || statusData?.video_url;
 
             if (videoUrl) {
-              // 更新状态
               this.doState.storage.sql.exec(
                 `UPDATE pending_videos SET status = 'completed', video_url = ? WHERE task_id = ?`,
                 videoUrl, taskId
               );
-
-              // 发送到微信
-              const creds = this.ilinkCreds;
-              if (creds) {
-                const modelInfo = `🤖 ${task.provider} · ${task.model}`;
-                try {
-                  await sendVideoMessage(creds, "", "", videoUrl);
-                } catch {
-                  // 没有用户上下文，通过 WebSocket 广播
-                }
-              }
 
               // WebSocket 广播到管理后台
               this.broadcastToWebSockets({
@@ -770,7 +760,7 @@ export class ILinkConnectionDO implements DurableObject {
                 prompt: task.prompt,
               });
 
-              Logger.info("[DO] Video completed and sent", { taskId, url: videoUrl.slice(0, 50) });
+              Logger.info("[DO] Video completed", { taskId, url: videoUrl.slice(0, 80) });
             }
           } else if (status === "failed" || status === "FAILED") {
             this.doState.storage.sql.exec(
@@ -1189,8 +1179,10 @@ export class ILinkConnectionDO implements DurableObject {
           { provider: cfg.aiProvider, model: aiModel, baseUrl: cfg.aiBaseUrl, apiKey: cfg.aiApiKey, maxTokens: cfg.aiMaxTokens }
         );
 
-        // 发送回复（自动分段）
-        const chunks = await sendTextChunked(useCreds!, from, ctxToken, reply);
+        // 发送回复（自动分段）+ AI 信息
+        const aiInfo = `🤖 ${cfg.aiProvider} · ${aiModel}`;
+        const fullReply = `${reply}\n\n— ${aiInfo}`;
+        const chunks = await sendTextChunked(useCreds!, from, ctxToken, fullReply);
         replyContent = reply;
         replyAt = new Date().toISOString();
         aiSuccessCount++;
