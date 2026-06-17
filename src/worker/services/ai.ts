@@ -402,9 +402,10 @@ export async function generateVideo(
     Logger.info("[ai] Using OpenAI compat for video", { baseUrl: baseUrl.slice(0, 30), apiKeyPrefix: apiKey.slice(0, 6), model: videoModel });
     try {
       let base = baseUrl.replace(/\/+$/, "");
-      base = base.replace(/\/v1\/(chat\/completions|images\/generations|videos\/generations)$/i, "");
-      const url = base + "/v1/videos/generations";
-      const resp = await fetch(url, {
+      base = base.replace(/\/v1\/(chat\/completions|images\/generations|video\/generations)$/i, "");
+      // 提交视频生成任务
+      const submitUrl = base + "/v1/video/generations";
+      const resp = await fetch(submitUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
         body: JSON.stringify({ model: videoModel, prompt, duration: 5 }),
@@ -414,13 +415,43 @@ export async function generateVideo(
         Logger.error("[ai] Video API error", { status: resp.status, body: errBody.slice(0, 200) });
         return null;
       }
-      const data = await resp.json() as any;
-      // 尝试多种响应格式
-      if (data?.result?.video) return data.result.video;
-      if (data?.data?.[0]?.url) return data.data[0].url;
-      if (data?.video) return data.video;
-      if (typeof data === "string" && data.startsWith("http")) return data;
-      Logger.warn("[ai] Unexpected video response", { keys: Object.keys(data || {}) });
+      const submitData = await resp.json() as any;
+      const taskId = submitData.task_id || submitData.id;
+      if (!taskId) {
+        // 同步返回 URL
+        if (submitData?.data?.[0]?.url) return submitData.data[0].url;
+        if (submitData?.video) return submitData.video;
+        Logger.warn("[ai] No task_id in video response", { keys: Object.keys(submitData || {}) });
+        return null;
+      }
+
+      Logger.info("[ai] Video task submitted", { taskId });
+      // 轮询等待完成（最多 180 秒）
+      for (let i = 0; i < 36; i++) {
+        await new Promise(r => setTimeout(r, 5000));
+        const statusUrl = `${base}/v1/video/generations/${taskId}`;
+        const statusResp = await fetch(statusUrl, {
+          headers: { "Authorization": `Bearer ${apiKey}` },
+        });
+        if (!statusResp.ok) continue;
+        const statusData = await statusResp.json() as any;
+        const status = statusData?.data?.status || statusData?.status;
+        const progress = statusData?.data?.progress || statusData?.progress || "0%";
+        Logger.info("[ai] Video status", { status, progress, attempt: i + 1 });
+
+        if (status === "completed" || status === "COMPLETED" || status === "success") {
+          const videoUrl = statusData?.data?.video_url || statusData?.data?.url || statusData?.video_url;
+          if (videoUrl) {
+            Logger.info("[ai] Video generated", { url: videoUrl });
+            return videoUrl;
+          }
+        }
+        if (status === "failed" || status === "FAILED" || status === "error") {
+          Logger.error("[ai] Video generation failed", { error: statusData?.data?.error || statusData?.fail_reason });
+          return null;
+        }
+      }
+      Logger.error("[ai] Video generation timeout");
       return null;
     } catch (e: any) {
       Logger.error("[ai] Video generation failed (OpenAI compat)", { error: e?.message });
