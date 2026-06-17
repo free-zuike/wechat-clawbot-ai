@@ -331,14 +331,6 @@ async function handleSaveConfig() {
     }
   } finally { configSaving.value = false; }
 }
-    else if (d.error === "CONFLICT") {
-      configResult.value = "⚠️ " + (d.message || "配置已被其他人修改，正在重新加载...");
-      await handleLoadConfig();
-    }
-    else if (d.error === "VALIDATION_ERROR") configResult.value = "⚠️ 验证失败: " + (d.message || "请检查配置项");
-    else configResult.value = "❌ " + (d.error || "保存失败");
-  } catch (e: any) { configResult.value = "❌ 保存失败: " + handleApiError(e, "保存失败"); } finally { configSaving.value = false; }
-}
 
 // ===== Chat =====
 async function handleSendChat() {
