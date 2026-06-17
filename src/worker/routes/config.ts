@@ -50,6 +50,8 @@ function getConfigResponse(kvConfig: Record<string, unknown>) {
 
   // 从预设中获取当前提供商的配置作为顶层回显字段
   let currentModel = (kvConfig.aiModel as string) || "";
+  let currentImageModel = (kvConfig.aiImageModel as string) || "";
+  let currentVideoModel = (kvConfig.aiVideoModel as string) || "";
   let currentBaseUrl = (kvConfig.aiBaseUrl as string) || "";
   let currentApiKey = (kvConfig.aiApiKey as string) || "";
   let currentMaxTokens = (kvConfig.aiMaxTokens as number) || 1024;
@@ -57,6 +59,8 @@ function getConfigResponse(kvConfig: Record<string, unknown>) {
   const activePreset = findPreset(rawPresets, currentProvider);
   if (activePreset) {
     currentModel = activePreset.model || currentModel;
+    currentImageModel = activePreset.imageModel || currentImageModel;
+    currentVideoModel = activePreset.videoModel || currentVideoModel;
     currentBaseUrl = activePreset.baseUrl || currentBaseUrl;
     currentApiKey = activePreset.apiKey || currentApiKey;
     currentMaxTokens = activePreset.maxTokens || currentMaxTokens;
@@ -77,6 +81,8 @@ function getConfigResponse(kvConfig: Record<string, unknown>) {
     version: (kvConfig._version as number) || 0,
     aiProvider: currentProvider,
     aiModel: currentModel,
+    aiImageModel: currentImageModel,
+    aiVideoModel: currentVideoModel,
     aiBaseUrl: currentBaseUrl,
     aiApiKey: maskKey(currentApiKey),
     aiMaxTokens: currentMaxTokens,

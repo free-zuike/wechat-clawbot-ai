@@ -101,6 +101,8 @@ const props = defineProps<{
   config: {
     aiProvider: string;
     aiModel: string;
+    aiImageModel: string;
+    aiVideoModel: string;
     aiBaseUrl: string;
     aiApiKey: string;
     aiMaxTokens: number;
@@ -155,8 +157,8 @@ function selectProvider(id: string) {
   if (currentId) {
     upsertPreset(currentId, {
       model: props.config.aiModel,
-      imageModel: (props.config as any).aiImageModel || "",
-      videoModel: (props.config as any).aiVideoModel || "",
+      imageModel: props.config.aiImageModel || "",
+      videoModel: props.config.aiVideoModel || "",
       baseUrl: props.config.aiBaseUrl,
       apiKey: props.config.aiApiKey,
       maxTokens: props.config.aiMaxTokens,
@@ -167,15 +169,15 @@ function selectProvider(id: string) {
   props.config.aiProvider = id;
   if (id === "cloudflare") {
     props.config.aiModel = preset?.model || "@cf/meta/llama-3.2-3b-instruct";
-    (props.config as any).aiImageModel = preset?.imageModel || "@cf/black-forest-labs/flux-1-schnell";
-    (props.config as any).aiVideoModel = preset?.videoModel || "bytedance/seedance-2.0-fast";
+    props.config.aiImageModel = preset?.imageModel || "@cf/black-forest-labs/flux-1-schnell";
+    props.config.aiVideoModel = preset?.videoModel || "bytedance/seedance-2.0-fast";
     props.config.aiBaseUrl = "";
     props.config.aiApiKey = "";
     props.config.aiMaxTokens = preset?.maxTokens || 1024;
   } else {
     props.config.aiModel = preset?.model || "";
-    (props.config as any).aiImageModel = preset?.imageModel || "";
-    (props.config as any).aiVideoModel = preset?.videoModel || "";
+    props.config.aiImageModel = preset?.imageModel || "";
+    props.config.aiVideoModel = preset?.videoModel || "";
     props.config.aiBaseUrl = preset?.baseUrl || "";
     props.config.aiApiKey = preset?.apiKey || "";
     props.config.aiMaxTokens = preset?.maxTokens || 1024;
@@ -240,8 +242,8 @@ function syncCurrentToPreset() {
   if (!id) return;
   upsertPreset(id, {
     model: props.config.aiModel,
-    imageModel: (props.config as any).aiImageModel || "",
-    videoModel: (props.config as any).aiVideoModel || "",
+    imageModel: props.config.aiImageModel || "",
+    videoModel: props.config.aiVideoModel || "",
     baseUrl: props.config.aiBaseUrl,
     apiKey: props.config.aiApiKey,
     maxTokens: props.config.aiMaxTokens,
@@ -250,7 +252,7 @@ function syncCurrentToPreset() {
 
 // 监听编辑字段变化，实时同步到当前提供商的预设
 watch(
-  () => [props.config.aiModel, (props.config as any).aiImageModel, (props.config as any).aiVideoModel, props.config.aiBaseUrl, props.config.aiApiKey, props.config.aiMaxTokens],
+  () => [props.config.aiModel, props.config.aiImageModel, props.config.aiVideoModel, props.config.aiBaseUrl, props.config.aiApiKey, props.config.aiMaxTokens],
   () => { if (props.config.aiProvider) syncCurrentToPreset(); },
   { deep: true }
 );
