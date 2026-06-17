@@ -58,6 +58,7 @@ export class ILinkConnectionDO implements DurableObject {
     configLoadedAt: 0,
   };
   private sqliteInitialized = false;
+  private pendingVideosColumnsEnsured = false;
 
   constructor(state: DurableObjectState, env: any) {
     this.doState = state;
@@ -177,27 +178,37 @@ export class ILinkConnectionDO implements DurableObject {
         created_at INTEGER NOT NULL
       )
     `);
-    // 迁移：旧表缺少 to_user_id / context_token / account_id 时添加
-    try {
-      const cols = new Set(
-        sql.exec("PRAGMA table_info(pending_videos)").toArray().map((r: any) => r.name as string)
-      );
-      const needAdd = [
-        ["to_user_id", "TEXT"],
-        ["context_token", "TEXT"],
-        ["account_id", "TEXT"],
-      ] as const;
-      for (const [col, type] of needAdd) {
-        if (!cols.has(col)) {
-          await sql.exec(`ALTER TABLE pending_videos ADD COLUMN ${col} ${type}`);
-        }
-      }
-    } catch (e: any) {
-      Logger.warn("[DO] pending_videos migration skipped", { error: e?.message });
-    }
 
     this.sqliteInitialized = true;
     Logger.info("[DO] SQLite tables initialized");
+  }
+
+  // 确保 pending_videos 表包含 to_user_id / context_token / account_id 列
+  // Durable Object 实例是长生命周期的，旧代码创建的表缺少这些列，
+  // 这个方法用独立的缓存标志避免受 sqliteInitialized 影响。
+  private async ensurePendingVideosColumns(): Promise<void> {
+    if (this.pendingVideosColumnsEnsured) return;
+    try {
+      const sql = this.doState.storage.sql;
+      const info = await sql.exec("PRAGMA table_info(pending_videos)");
+      if (!info) return;
+      const rows = (info as any).toArray ? (info as any).toArray() : ((info as any[])[0] && (info as any[])[0].toArray ? (info as any[])[0].toArray() : []);
+      const cols = new Set(rows.map((r: any) => r.name as string));
+      const needAdd: [string, string][] = [
+        ["to_user_id", "TEXT"],
+        ["context_token", "TEXT"],
+        ["account_id", "TEXT"],
+      ];
+      for (const [col, type] of needAdd) {
+        if (!cols.has(col)) {
+          await sql.exec(`ALTER TABLE pending_videos ADD COLUMN ${col} ${type}`);
+          Logger.info("[DO] pending_videos column added", { column: col });
+        }
+      }
+      this.pendingVideosColumnsEnsured = true;
+    } catch (e: any) {
+      Logger.warn("[DO] pending_videos column check failed", { error: e?.message });
+    }
   }
 
   // ========== HTTP 处理（长轮询入口）==========
@@ -715,6 +726,7 @@ export class ILinkConnectionDO implements DurableObject {
   private async handleStorePendingVideo(request: Request): Promise<Response> {
     try {
       await this.initSQLite();
+      await this.ensurePendingVideosColumns();
       const body = await request.json() as { taskId: string; prompt: string; model: string; provider: string; baseUrl: string; apiKey: string; toUserId?: string; contextToken?: string; accountId?: string };
       this.doState.storage.sql.exec(
         `INSERT OR REPLACE INTO pending_videos (task_id, prompt, model, provider, base_url, api_key, status, to_user_id, context_token, account_id, created_at)
@@ -737,6 +749,7 @@ export class ILinkConnectionDO implements DurableObject {
   async checkPendingVideos(): Promise<void> {
     try {
       await this.initSQLite();
+      await this.ensurePendingVideosColumns();
       const cursor = this.doState.storage.sql.exec(
         `SELECT task_id, prompt, model, provider, base_url, api_key, to_user_id, context_token, account_id FROM pending_videos WHERE status = 'queued'`
       );
@@ -1205,6 +1218,7 @@ export class ILinkConnectionDO implements DurableObject {
                   }
                 } else {
                   // 异步任务：存储到 pending_videos，稍后由 checkPendingVideos 处理
+                  await this.ensurePendingVideosColumns();
                   this.doState.storage.sql.exec(
                     `INSERT OR REPLACE INTO pending_videos (task_id, prompt, model, provider, base_url, api_key, status, to_user_id, context_token, account_id, created_at)
                      VALUES (?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?)`,
