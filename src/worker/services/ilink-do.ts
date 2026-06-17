@@ -177,6 +177,24 @@ export class ILinkConnectionDO implements DurableObject {
         created_at INTEGER NOT NULL
       )
     `);
+    // 迁移：旧表缺少 to_user_id / context_token / account_id 时添加
+    try {
+      const cols = new Set(
+        sql.exec("PRAGMA table_info(pending_videos)").toArray().map((r: any) => r.name as string)
+      );
+      const needAdd = [
+        ["to_user_id", "TEXT"],
+        ["context_token", "TEXT"],
+        ["account_id", "TEXT"],
+      ] as const;
+      for (const [col, type] of needAdd) {
+        if (!cols.has(col)) {
+          await sql.exec(`ALTER TABLE pending_videos ADD COLUMN ${col} ${type}`);
+        }
+      }
+    } catch (e: any) {
+      Logger.warn("[DO] pending_videos migration skipped", { error: e?.message });
+    }
 
     this.sqliteInitialized = true;
     Logger.info("[DO] SQLite tables initialized");
