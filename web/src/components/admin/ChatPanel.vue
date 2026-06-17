@@ -49,8 +49,8 @@ defineProps<{
 defineEmits(["send", "update:input"]);
 
 function renderMessage(text: string): { isImage: boolean; html: string; text: string } {
-  // 检测 markdown 图片：![alt](data:image/...)
-  const imgMatch = text.match(/!\[([^\]]*)\]\((data:image\/[^)]+)\)/);
+  // 检测 markdown 图片：![alt](url) — 支持 data: URL 和普通 http URL
+  const imgMatch = text.match(/!\[([^\]]*)\]\(([^)]+)\)/);
   if (imgMatch) {
     const alt = imgMatch[1] || "生成的图片";
     const src = imgMatch[2];
