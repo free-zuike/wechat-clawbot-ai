@@ -71,7 +71,7 @@ export default {
             const doStub = env.ILINK_CONNECTION.get(doId);
             await doStub.fetch(new Request("http://localhost/send-video", {
               method: "POST",
-              body: JSON.stringify({ videoUrl, model, provider }),
+              body: JSON.stringify({ videoUrl, model, provider, prompt }),
             }));
             Logger.info("[queue] Video generated and sent");
           } else {

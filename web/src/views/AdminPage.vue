@@ -390,7 +390,23 @@ function connectWebSocket() {
   ws.onopen = () => { wsConnected.value = true; wsRetryCount = 0; };
   ws.onclose = () => { wsConnected.value = false; wsRetryCount++; setTimeout(connectWebSocket, Math.min(wsRetryCount * 3000, 30000)); };
   ws.onerror = () => { ws.close(); };
-  ws.onmessage = (e) => { try { const msg = JSON.parse(e.data); if (msg.type === "connected") return; wsMessages.value.push(msg); if (wsMessages.value.length > 200) wsMessages.value.shift(); } catch {} };
+  ws.onmessage = (e) => {
+    try {
+      const msg = JSON.parse(e.data);
+      if (msg.type === "connected") return;
+      wsMessages.value.push(msg);
+      if (wsMessages.value.length > 200) wsMessages.value.shift();
+      // 视频/图片生成完成 → 添加到聊天
+      if (msg.type === "media_generated" && msg.url) {
+        const icon = msg.mediaType === "video" ? "🎬" : "🎨";
+        const modelInfo = `${msg.provider || "unknown"} · ${msg.model || "unknown"}`;
+        chatMessages.value.push({
+          role: "b",
+          text: `${icon} ${modelInfo}\n\n${msg.mediaType === "video" ? "视频已生成！" : "图片已生成！"}\n\n${msg.mediaType === "video" ? `<video src="${msg.url}" controls style="max-width:100%;border-radius:8px"></video>` : `![生成的图片](${msg.url})`}`,
+        });
+      }
+    } catch {}
+  };
 }
 
 // ===== Debug =====

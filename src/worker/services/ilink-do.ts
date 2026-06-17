@@ -618,7 +618,7 @@ export class ILinkConnectionDO implements DurableObject {
 
   private async handleSendVideo(request: Request): Promise<Response> {
     try {
-      const body = await request.json() as { videoUrl: string; toUserId: string; contextToken: string; accountId?: string; model?: string; provider?: string };
+      const body = await request.json() as { videoUrl: string; toUserId: string; contextToken: string; accountId?: string; model?: string; provider?: string; prompt?: string };
       const { videoUrl, toUserId, contextToken, model, provider } = body;
 
       if (!videoUrl || !toUserId) {
@@ -646,6 +646,16 @@ export class ILinkConnectionDO implements DurableObject {
       } catch {
         await sendTextMessage(creds, toUserId, contextToken, `🎬 ${modelInfo}\n\n视频已生成：\n${videoUrl}`);
       }
+
+      // 通过 WebSocket 广播到管理后台
+      this.broadcastToWebSockets({
+        type: "media_generated",
+        mediaType: "video",
+        url: videoUrl,
+        model: model,
+        provider: provider,
+        prompt: body.prompt || "",
+      });
 
       return new Response(JSON.stringify({ success: true }), {
         headers: { "Content-Type": "application/json" },
