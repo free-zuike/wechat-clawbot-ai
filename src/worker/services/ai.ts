@@ -244,10 +244,10 @@ export function getDefaultSystemPrompt(): string {
 
 // ========== 图片/视频生成（Cloudflare Workers AI）==========
 
-const IMAGE_KEYWORDS = /画|描绘|绘制|生成图片|生成一张|帮我画|给我画|画一个|画一幅|画张|来一张|来幅|draw|generate image|create image/i;
-const VIDEO_KEYWORDS = /生成视频|制作视频|做一个视频|帮我做视频|帮我生成视频|录一段|拍一段|成一个视频|做个视频|拍个视频|录个视频|generate video|create video|make a video/i;
+const IMAGE_KEYWORDS = /画|描绘|绘制|生成.*图片|生成.*一张|帮我.*画|给我.*画|画.*一个|画.*一幅|来.*一张|来.*幅|draw|generate image|create image/i;
+const VIDEO_KEYWORDS = /生成.*视频|制作.*视频|做.*视频|帮我.*视频|录.*视频|拍.*视频|generate video|create video|make a video/i;
 const IMAGE_PROMPT_PREFIXES = ["画", "描绘", "绘制", "生成图片", "生成一张", "帮我画", "给我画", "画一个", "画一幅", "画张", "来一张", "来幅"];
-const VIDEO_PROMPT_PREFIXES = ["生成视频", "制作视频", "做一个视频", "帮我做视频", "帮我生成视频", "录一段", "拍一段", "成一个视频", "做个视频", "拍个视频", "录个视频"];
+const VIDEO_PROMPT_PREFIXES = ["生成视频", "制作视频", "做一个视频", "帮我做视频", "帮我生成视频", "录一段", "拍一段", "成一个视频", "做个视频", "拍个视频", "录个视频", "生成一个视频"];
 
 export function isImageGenerationRequest(text: string): boolean {
   return IMAGE_KEYWORDS.test(text.trim());
