@@ -426,9 +426,9 @@ export async function generateVideo(
       }
 
       Logger.info("[ai] Video task submitted", { taskId });
-      // 轮询等待完成（最多 8 分钟，每 15 秒检查一次）
-      for (let i = 0; i < 32; i++) {
-        await new Promise(r => setTimeout(r, 15000));
+      // 轮询等待完成（最多 3 分钟，每 10 秒检查一次）
+      for (let i = 0; i < 18; i++) {
+        await new Promise(r => setTimeout(r, 10000));
         try {
           const statusUrl = `${base}/v1/video/generations/${taskId}`;
           const statusResp = await fetch(statusUrl, {
@@ -462,11 +462,7 @@ export async function generateVideo(
           Logger.warn("[ai] Video poll error", { error: pollErr?.message, attempt: i + 1 });
         }
       }
-      Logger.error("[ai] Video generation timeout after 8 minutes");
-      return null;
-        }
-      }
-      Logger.error("[ai] Video generation timeout");
+      Logger.error("[ai] Video generation timeout after 3 minutes");
       return null;
     } catch (e: any) {
       Logger.error("[ai] Video generation failed (OpenAI compat)", { error: e?.message });
