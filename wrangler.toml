@@ -30,11 +30,11 @@ binding = "AI"
 
 # ===== Queues（异步任务）=====
 [[queues.producers]]
-queue = "video-generation"
-binding = "VIDEO_QUEUE"
+queue = "clawbot-tasks"
+binding = "CLAWBOT_QUEUE"
 
 [[queues.consumers]]
-queue = "video-generation"
+queue = "clawbot-tasks"
 max_retries = 2
 max_batch_size = 1
 

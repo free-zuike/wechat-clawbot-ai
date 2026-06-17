@@ -69,7 +69,7 @@ export async function handleChat(request: Request, env: Env): Promise<Response> 
       if (isVideo) {
         // 视频生成耗时长（~2分钟），通过 Queue 异步处理
         try {
-          await env.VIDEO_QUEUE.send({
+          await env.CLAWBOT_QUEUE.send({
             type: "video_generation",
             prompt,
             videoModel,
