@@ -63,16 +63,16 @@ export async function handleChat(request: Request, env: Env): Promise<Response> 
     if (isImageGenerationRequest(trimmed) || isVideoGenerationRequest(trimmed)) {
       const isVideo = isVideoGenerationRequest(trimmed);
       const prompt = extractMediaPrompt(trimmed, isVideo ? "video" : "image");
-      const usedModel = isVideo ? videoModel : imageModel;
-      Logger.info(`[chat][${requestId}] ${isVideo ? "video" : "image"} generation`, { prompt: prompt.slice(0, 50), model: usedModel });
+      const modelUsed = isVideo ? videoModel : imageModel;
+      Logger.info(`[chat][${requestId}] ${isVideo ? "video" : "image"} generation`, { prompt: prompt.slice(0, 50), model: modelUsed });
 
       if (isVideo) {
-        // 视频生成耗时长（~2分钟），通过 Queue 异步处理
+        // 视频生成慢，走 Queue 异步处理
         try {
           await env.CLAWBOT_QUEUE.send({
             type: "video_generation",
             prompt,
-            videoModel,
+            model: videoModel,
             provider: aiConfig.provider,
             baseUrl: aiConfig.baseUrl,
             apiKey: aiConfig.apiKey,
@@ -84,6 +84,7 @@ export async function handleChat(request: Request, env: Env): Promise<Response> 
         }
         return json({ reply: `🎬 ${modelInfo}${videoModel}\n\n视频已加入生成队列（约 1-2 分钟），生成完成后会自动发送到微信。`, source: "ai" } satisfies ChatResponse);
       } else {
+        // 图片生成快，同步处理
         const imageData = await generateImage(env.AI, prompt, imageModel, aiConfig.provider, aiConfig.baseUrl, aiConfig.apiKey);
         if (imageData) {
           if (typeof imageData === "string") {

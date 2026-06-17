@@ -59,29 +59,27 @@ export default {
   // 队列消费者：处理视频生成等长任务
   async queue(batch: MessageBatch<any>, env: Env): Promise<void> {
     for (const msg of batch.messages) {
-      const { type, prompt, videoModel, provider, baseUrl, apiKey, toUserId, contextToken, accountId } = msg.body;
-      Logger.info("[queue] Processing video generation", { type, prompt: prompt?.slice(0, 50) });
+      const { type, prompt, model, provider, baseUrl, apiKey } = msg.body;
+      Logger.info("[queue] Processing task", { type, prompt: prompt?.slice(0, 50) });
 
-      if (type === "video_generation") {
-        try {
+      try {
+        if (type === "video_generation") {
           const { generateVideo } = await import("./services/ai");
-          const videoUrl = await generateVideo(env.AI, prompt, videoModel, provider, baseUrl, apiKey);
-
+          const videoUrl = await generateVideo(env.AI, prompt, model, provider, baseUrl, apiKey);
           if (videoUrl) {
-            // 通过 DO 发送视频消息
             const doId = env.ILINK_CONNECTION.idFromName("main");
             const doStub = env.ILINK_CONNECTION.get(doId);
             await doStub.fetch(new Request("http://localhost/send-video", {
               method: "POST",
-              body: JSON.stringify({ videoUrl, toUserId, contextToken, accountId, model: videoModel, provider }),
+              body: JSON.stringify({ videoUrl, model, provider }),
             }));
-            Logger.info("[queue] Video generated and sent", { videoUrl: videoUrl.slice(0, 50) });
+            Logger.info("[queue] Video generated and sent");
           } else {
             Logger.error("[queue] Video generation failed");
           }
-        } catch (e: any) {
-          Logger.error("[queue] Video generation error", { error: e?.message });
         }
+      } catch (e: any) {
+        Logger.error("[queue] Task error", { error: e?.message });
       }
     }
   },
