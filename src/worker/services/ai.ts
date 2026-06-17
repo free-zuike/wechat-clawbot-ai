@@ -297,7 +297,7 @@ export async function generateImage(
   provider?: string,
   baseUrl?: string,
   apiKey?: string,
-): Promise<Uint8Array | null> {
+): Promise<Uint8Array | string | null> {
   const imageModel = model || DEFAULT_IMAGE_MODEL;
   Logger.info("[ai] Generating image", { prompt: prompt.slice(0, 80), model: imageModel, provider: provider || "cloudflare" });
 
@@ -305,7 +305,6 @@ export async function generateImage(
   if (provider && provider !== "cloudflare" && baseUrl && apiKey) {
     Logger.info("[ai] Using OpenAI compat for image", { baseUrl: baseUrl.slice(0, 30), apiKeyPrefix: apiKey.slice(0, 6), model: imageModel });
     try {
-      // 从完整 URL 中提取 base（去掉 /v1/chat/completions 等路径）
       let base = baseUrl.replace(/\/+$/, "");
       base = base.replace(/\/v1\/(chat\/completions|images\/generations|videos\/generations)$/i, "");
       const url = base + "/v1/images/generations";
@@ -320,7 +319,6 @@ export async function generateImage(
         return null;
       }
       const data = await resp.json() as any;
-      // OpenAI 格式：data.data[0].b64_json 或 data.data[0].url
       const item = data?.data?.[0];
       if (item?.b64_json) {
         const binary = atob(item.b64_json);
@@ -329,8 +327,9 @@ export async function generateImage(
         return bytes;
       }
       if (item?.url) {
-        const imgResp = await fetch(item.url);
-        if (imgResp.ok) return new Uint8Array(await imgResp.arrayBuffer());
+        // 直接返回 URL，避免下载转换
+        Logger.info("[ai] Image URL received", { url: item.url });
+        return item.url;
       }
       Logger.warn("[ai] Unexpected image response", { keys: Object.keys(data || {}) });
       return null;

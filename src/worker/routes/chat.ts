@@ -73,6 +73,10 @@ export async function handleChat(request: Request, env: Env): Promise<Response> 
       } else {
         const imageData = await generateImage(env.AI, prompt, imageModel, aiConfig.provider, aiConfig.baseUrl, aiConfig.apiKey);
         if (imageData) {
+          // 如果返回的是字符串（URL），直接使用
+          if (typeof imageData === "string") {
+            return json({ reply: `图片已生成！\n\n![生成的图片](${imageData})`, source: "ai" } satisfies ChatResponse);
+          }
           // 分块转 base64，避免大数组展开爆栈
           let base64 = "";
           const chunkSize = 8192;
