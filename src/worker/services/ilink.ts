@@ -407,6 +407,7 @@ export async function sendImageMessage(
   toUserId: string,
   contextToken: string,
   imageUrl: string,
+  apiKey?: string,
 ): Promise<void> {
   // 方式1：直接发送带 URL 的图片消息（不需要上传）
   const msg: WeixinMessage = {
@@ -437,9 +438,11 @@ export async function sendImageMessage(
     Logger.warn("[iLink] Direct image URL send failed, trying upload", { error: e?.message });
   }
 
-  // 方式2：下载图片后通过 getuploadurl 上传
+  // 方式2：下载图片后通过 getuploadurl 上传（带 API Key 认证）
   try {
-    const imgResp = await fetch(imageUrl, { signal: AbortSignal.timeout(30000) });
+    const dlHeaders: Record<string, string> = {};
+    if (apiKey) dlHeaders["Authorization"] = `Bearer ${apiKey}`;
+    const imgResp = await fetch(imageUrl, { headers: dlHeaders, signal: AbortSignal.timeout(60000) });
     if (imgResp.ok) {
       const buffer = await imgResp.arrayBuffer();
       const contentType = imgResp.headers.get("content-type") || "image/png";
@@ -459,10 +462,11 @@ export async function sendVideoMessage(
   toUserId: string,
   contextToken: string,
   videoUrl: string,
+  apiKey?: string,
 ): Promise<void> {
   // iLink 协议不支持直接用外部 URL 发送视频，需要先下载再上传到 CDN
   try {
-    await sendFileFromUrl(creds, toUserId, contextToken, videoUrl, MessageItemType.VIDEO, "generated_video.mp4");
+    await sendFileFromUrl(creds, toUserId, contextToken, videoUrl, MessageItemType.VIDEO, "generated_video.mp4", apiKey);
     Logger.info("[iLink] Video message sent (download + upload)");
   } catch (e: any) {
     Logger.warn("[iLink] Video download+upload failed, falling back to direct URL", { error: e?.message });
@@ -499,9 +503,12 @@ export async function sendFileFromUrl(
   fileUrl: string,
   fileType: number,
   fileName: string,
+  apiKey?: string,
 ): Promise<void> {
-  // 下载文件
-  const resp = await fetch(fileUrl, { signal: AbortSignal.timeout(30000) });
+  // 下载文件（带 API Key 认证，部分提供商的媒体 URL 需要鉴权）
+  const headers: Record<string, string> = {};
+  if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
+  const resp = await fetch(fileUrl, { headers, signal: AbortSignal.timeout(60000) });
   if (!resp.ok) throw new ClawBotError('ILINK_DOWNLOAD_FAILED', `Download failed: ${resp.status}`);
   const buffer = await resp.arrayBuffer();
   const contentType = resp.headers.get("content-type") || "application/octet-stream";

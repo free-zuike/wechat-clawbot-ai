@@ -879,13 +879,15 @@ export class ILinkConnectionDO implements DurableObject {
             // 发送视频给微信用户
             if (creds && toUserId && contextToken) {
               // 先发文本消息确保用户收到通知（cron 有时间限制，文本消息快）
+              // 不暴露需要认证的 URL，只告知已生成
               try {
-                await sendTextMessage(creds, toUserId, contextToken, `🎬 ${modelInfo}\n\n视频已生成！\n${videoUrl}`);
+                await sendTextMessage(creds, toUserId, contextToken, `🎬 ${modelInfo}\n\n视频已生成，正在发送中...`);
               } catch (e2: any) {
                 Logger.error("[DO] Text notification failed", { taskId, error: e2?.message });
               }
               // 异步尝试发送视频文件（下载+上传到 CDN，可能超时）
-              sendVideoMessage(creds, toUserId, contextToken, videoUrl)
+              const apiKey = task.api_key as string;
+              sendVideoMessage(creds, toUserId, contextToken, videoUrl, apiKey)
                 .then(() => Logger.info("[DO] Video file sent to WeChat", { taskId, toUserId: toUserId.slice(0, 10) }))
                 .catch((e: any) => Logger.warn("[DO] Video file send failed (text already sent)", { taskId, error: e?.message }));
             } else {
@@ -1269,9 +1271,9 @@ export class ILinkConnectionDO implements DurableObject {
               if (result) {
                 if (result.url) {
                   // 同步返回了 URL：先发文本通知，再异步尝试发送视频文件
-                  await sendTextMessage(useCreds!, from, ctxToken, `🎬 ${modelInfo}\n\n视频已生成！\n${result.url}`);
+                  await sendTextMessage(useCreds!, from, ctxToken, `🎬 ${modelInfo}\n\n视频已生成，正在发送中...`);
                   replyContent = `[视频生成] ${mediaPrompt}`;
-                  sendVideoMessage(useCreds!, from, ctxToken, result.url)
+                  sendVideoMessage(useCreds!, from, ctxToken, result.url, cfg.aiApiKey)
                     .then(() => Logger.info("[DO] Sync video file sent to WeChat"))
                     .catch((e: any) => Logger.warn("[DO] Sync video file send failed", { error: e?.message }));
                 } else {
@@ -1294,13 +1296,17 @@ export class ILinkConnectionDO implements DurableObject {
               Logger.info("[DO] Image generation result", { success: !!imageData, type: typeof imageData });
               if (imageData) {
                 if (typeof imageData === "string") {
-                  // 返回的是 URL
+                  // 返回的是 URL：带 API Key 下载后上传发送
                   try {
-                    await sendImageMessage(useCreds!, from, ctxToken, imageData);
+                    await sendImageMessage(useCreds!, from, ctxToken, imageData, cfg.aiApiKey);
                     replyContent = `[图片生成] ${mediaPrompt}`;
                   } catch {
-                    await sendTextMessage(useCreds!, from, ctxToken, `🎨 ${modelInfo}\n\n图片已生成：\n${imageData}`);
+                    await sendTextMessage(useCreds!, from, ctxToken, `🎨 ${modelInfo}\n\n图片已生成，正在发送中...`);
                     replyContent = `[图片生成] ${mediaPrompt}`;
+                    // 异步重试发送图片
+                    sendImageMessage(useCreds!, from, ctxToken, imageData, cfg.aiApiKey)
+                      .then(() => Logger.info("[DO] Image retry sent to WeChat"))
+                      .catch(() => {});
                   }
                 } else {
                   // Uint8Array：通过 uploadAndSendMedia 发送
