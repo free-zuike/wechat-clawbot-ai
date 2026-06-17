@@ -4,7 +4,7 @@
 
 import { Logger } from "../utils/error";
 import { generateSessionToken } from "../utils";
-import { getUpdates, sendTextMessage, sendTextChunked, sendTypingStatus, extractMessageText, getQRCodeStatus, uploadAndSendMedia, sendFileFromUrl, MessageType, MessageItemType } from "./ilink";
+import { getUpdates, sendTextMessage, sendTextChunked, sendTypingStatus, extractMessageText, getQRCodeStatus, MessageType } from "./ilink";
 import { callAIWithContext, isImageGenerationRequest, isVideoGenerationRequest, extractMediaPrompt, generateImage, generateVideo } from "./ai";
 import { sendWebhook } from "./webhook";
 import { clearContextSQLite } from "./context";
@@ -940,11 +940,7 @@ export class ILinkConnectionDO implements DurableObject {
               const videoUrl = await generateVideo(this.env.AI, mediaPrompt, cfg.aiVideoModel, cfg.aiProvider, cfg.aiBaseUrl, cfg.aiApiKey);
               Logger.info("[DO] Video generation result", { success: !!videoUrl });
               if (videoUrl) {
-                try {
-                  await sendFileFromUrl(useCreds!, from, ctxToken, videoUrl, MessageItemType.VIDEO, "generated.mp4");
-                } catch {
-                  await sendTextMessage(useCreds!, from, ctxToken, `视频已生成，但发送失败。视频链接：${videoUrl}`);
-                }
+                await sendTextMessage(useCreds!, from, ctxToken, `视频已生成：\n${videoUrl}`);
                 replyContent = `[视频生成] ${mediaPrompt}`;
               } else {
                 await sendTextMessage(useCreds!, from, ctxToken, "视频生成失败，请稍后重试或换个描述试试");
@@ -953,7 +949,7 @@ export class ILinkConnectionDO implements DurableObject {
               const imageData = await generateImage(this.env.AI, mediaPrompt, cfg.aiImageModel, cfg.aiProvider, cfg.aiBaseUrl, cfg.aiApiKey);
               Logger.info("[DO] Image generation result", { success: !!imageData, size: imageData?.length });
               if (imageData) {
-                await uploadAndSendMedia(useCreds!, from, ctxToken, MessageItemType.IMAGE, "generated.png", imageData.buffer as ArrayBuffer, "image/png");
+                await sendTextMessage(useCreds!, from, ctxToken, "图片已生成，请在管理后台 AI 测试面板查看（微信暂不支持直接发送生成图片）");
                 replyContent = `[图片生成] ${mediaPrompt}`;
               } else {
                 await sendTextMessage(useCreds!, from, ctxToken, "图片生成失败，请稍后重试或换个描述试试");

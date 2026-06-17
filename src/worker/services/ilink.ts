@@ -304,7 +304,8 @@ export async function getUploadUrl(
     file_name: fileName,
     file_size: fileSize,
   }, DEFAULT_API_MS);
-  return { upload_url: resp.upload_url, file_id: resp.file_id };
+  Logger.info("[iLink] getUploadUrl response", { upload_url: resp.upload_url, file_id: resp.file_id, keys: Object.keys(resp || {}) });
+  return { upload_url: resp.upload_url || "", file_id: resp.file_id || "" };
 }
 
 export async function uploadFile(
