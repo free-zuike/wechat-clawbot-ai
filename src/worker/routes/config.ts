@@ -104,11 +104,20 @@ export function resolveAIConfig(kvConfig: Record<string, unknown>) {
   const active = findPreset(presets, provider);
 
   if (active && provider !== "cloudflare") {
+    // 检测掩码 key，回退到顶层字段
+    let apiKey = active.apiKey || "";
+    if (isMaskedKey(apiKey)) {
+      apiKey = (kvConfig.aiApiKey as string) || "";
+    }
+    let baseUrl = active.baseUrl || "";
+    if (!baseUrl) {
+      baseUrl = (kvConfig.aiBaseUrl as string) || "";
+    }
     return {
       provider,
       model: active.model || "",
-      baseUrl: active.baseUrl || "",
-      apiKey: active.apiKey || "",
+      baseUrl,
+      apiKey,
       maxTokens: active.maxTokens || 1024,
     };
   }
