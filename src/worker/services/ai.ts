@@ -439,8 +439,13 @@ export async function generateVideo(
         const progress = statusData?.data?.progress || statusData?.progress || "0%";
         Logger.info("[ai] Video status", { status, progress, attempt: i + 1 });
 
-        if (status === "completed" || status === "COMPLETED" || status === "success") {
-          const videoUrl = statusData?.data?.video_url || statusData?.data?.url || statusData?.video_url;
+        if (status === "completed" || status === "COMPLETED" || status === "success" || status === "SUCCESS") {
+          // 尝试多种字段获取视频 URL
+          const videoUrl = statusData?.data?.remixed_from_video_id
+            || statusData?.data?.video_url
+            || statusData?.data?.url
+            || statusData?.result_url
+            || statusData?.video_url;
           if (videoUrl) {
             Logger.info("[ai] Video generated", { url: videoUrl });
             return videoUrl;
