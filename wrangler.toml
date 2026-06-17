@@ -20,7 +20,7 @@ assets = { directory = "./dist", binding = "ASSETS" }
 strategy = "all_at_once"
 
 # ===== Cron 触发器 =====
-# 每 2 分钟自动拉取一次微信消息并回复
+# 每 2 分钟自动拉取一次微信消息，每分钟检查视频任务
 [triggers]
 crons = ["*/2 * * * *"]
 

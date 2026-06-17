@@ -45,10 +45,14 @@ export default {
       const doStub = env.ILINK_CONNECTION.get(doId);
 
       // 调用 DO 的 /poll 接口：会初始化凭证 + 启动轮询循环
-      // （之前调用 /status 只返回状态，不会启动轮询，导致 DO eviction 后消息永远不被拉取）
       const response = await doStub.fetch(new Request("http://localhost/poll"));
       const data = await response.json();
       console.log("[cron] DO /poll:", JSON.stringify(data));
+
+      // 检查待处理的视频生成任务
+      const videoCheckResponse = await doStub.fetch(new Request("http://localhost/check-pending-videos"));
+      const videoCheckData = await videoCheckResponse.json();
+      console.log("[cron] DO /check-pending-videos:", JSON.stringify(videoCheckData));
 
     } catch (e: any) {
       console.error("[cron] error:", e);
@@ -56,33 +60,47 @@ export default {
     }
   },
 
-  // 队列消费者：处理视频生成等长任务
+  // 队列消费者：提交视频生成任务（不等待完成）
   async queue(batch: MessageBatch<any>, env: Env): Promise<void> {
     for (const msg of batch.messages) {
       const { type, prompt, model, provider, baseUrl, apiKey } = msg.body;
-      Logger.info("[queue] Task received", { type, prompt: prompt?.slice(0, 50), model, provider, hasBaseUrl: !!baseUrl, hasApiKey: !!apiKey });
+      Logger.info("[queue] Task received", { type, prompt: prompt?.slice(0, 50), model, provider });
 
       try {
         if (type === "video_generation") {
-          Logger.info("[queue] Starting video generation", { model, provider });
-          const { generateVideo } = await import("./services/ai");
-          const videoUrl = await generateVideo(env.AI, prompt, model, provider, baseUrl, apiKey);
-          Logger.info("[queue] Video generation result", { success: !!videoUrl, url: videoUrl?.slice(0, 80) });
+          // 提交视频生成任务到 Agnes AI
+          const base = (baseUrl || "").replace(/\/+$/, "").replace(/\/v1\/(chat\/completions|video\/generations)$/i, "");
+          const resp = await fetch(`${base}/v1/video/generations`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
+            body: JSON.stringify({ model, prompt, duration: 5 }),
+          });
 
-          if (videoUrl) {
-            const doId = env.ILINK_CONNECTION.idFromName("main");
-            const doStub = env.ILINK_CONNECTION.get(doId);
-            await doStub.fetch(new Request("http://localhost/send-video", {
-              method: "POST",
-              body: JSON.stringify({ videoUrl, model, provider, prompt }),
-            }));
-            Logger.info("[queue] Video sent via DO");
-          } else {
-            Logger.error("[queue] Video generation returned null");
+          if (!resp.ok) {
+            const errBody = await resp.text().catch(() => "");
+            Logger.error("[queue] Video submit failed", { status: resp.status, body: errBody.slice(0, 200) });
+            continue;
           }
+
+          const data = await resp.json() as any;
+          const taskId = data.task_id || data.id;
+          if (!taskId) {
+            Logger.error("[queue] No task_id in response", { keys: Object.keys(data || {}) });
+            continue;
+          }
+
+          // 存储到 DO SQLite
+          const doId = env.ILINK_CONNECTION.idFromName("main");
+          const doStub = env.ILINK_CONNECTION.get(doId);
+          await doStub.fetch(new Request("http://localhost/store-pending-video", {
+            method: "POST",
+            body: JSON.stringify({ taskId, prompt, model, provider, baseUrl, apiKey }),
+          }));
+
+          Logger.info("[queue] Video task submitted and stored", { taskId });
         }
       } catch (e: any) {
-        Logger.error("[queue] Task error", { error: e?.message, stack: e?.stack?.slice(0, 200) });
+        Logger.error("[queue] Task error", { error: e?.message });
       }
     }
   },

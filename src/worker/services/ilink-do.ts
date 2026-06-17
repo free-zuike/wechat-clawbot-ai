@@ -160,6 +160,21 @@ export class ILinkConnectionDO implements DurableObject {
       )
     `);
 
+    // pending_videos 表：待处理的视频生成任务
+    await sql.exec(`
+      CREATE TABLE IF NOT EXISTS pending_videos (
+        task_id TEXT PRIMARY KEY,
+        prompt TEXT NOT NULL,
+        model TEXT NOT NULL,
+        provider TEXT NOT NULL,
+        base_url TEXT NOT NULL,
+        api_key TEXT NOT NULL,
+        status TEXT DEFAULT 'queued',
+        video_url TEXT,
+        created_at INTEGER NOT NULL
+      )
+    `);
+
     this.sqliteInitialized = true;
     Logger.info("[DO] SQLite tables initialized");
   }
@@ -214,6 +229,12 @@ export class ILinkConnectionDO implements DurableObject {
     }
     if (url.pathname === "/send-video") {
       return this.handleSendVideo(request);
+    }
+    if (url.pathname === "/store-pending-video") {
+      return this.handleStorePendingVideo(request);
+    }
+    if (url.pathname === "/check-pending-videos") {
+      return this.checkPendingVideos().then(() => new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } }));
     }
     if (url.pathname === "/get-creds") {
       return this.handleGetCreds();
@@ -665,6 +686,105 @@ export class ILinkConnectionDO implements DurableObject {
       return new Response(JSON.stringify({ error: e.message }), {
         status: 500, headers: { "Content-Type": "application/json" },
       });
+    }
+  }
+
+  // ========== 存储待处理的视频任务 ==========
+
+  private async handleStorePendingVideo(request: Request): Promise<Response> {
+    try {
+      await this.initSQLite();
+      const body = await request.json() as { taskId: string; prompt: string; model: string; provider: string; baseUrl: string; apiKey: string };
+      this.doState.storage.sql.exec(
+        `INSERT OR REPLACE INTO pending_videos (task_id, prompt, model, provider, base_url, api_key, status, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, 'queued', ?)`,
+        body.taskId, body.prompt, body.model, body.provider, body.baseUrl, body.apiKey, Date.now()
+      );
+      return new Response(JSON.stringify({ success: true }), {
+        headers: { "Content-Type": "application/json" },
+      });
+    } catch (e: any) {
+      Logger.error("[DO] Store pending video error", { error: e.message });
+      return new Response(JSON.stringify({ error: e.message }), {
+        status: 500, headers: { "Content-Type": "application/json" },
+      });
+    }
+  }
+
+  // ========== Cron 检查待处理的视频任务 ==========
+
+  async checkPendingVideos(): Promise<void> {
+    try {
+      await this.initSQLite();
+      const pending = this.doState.storage.sql.exec(
+        `SELECT task_id, prompt, model, provider, base_url, api_key FROM pending_videos WHERE status = 'queued'`
+      ).toArray();
+
+      if (pending.length === 0) return;
+      Logger.info("[DO] Checking pending videos", { count: pending.length });
+
+      for (const task of pending) {
+        const taskId = task.task_id as string;
+        const base = (task.base_url as string).replace(/\/+$/, "").replace(/\/v1\/(chat\/completions|video\/generations)$/i, "");
+
+        try {
+          const statusResp = await fetch(`${base}/v1/video/generations/${taskId}`, {
+            headers: { "Authorization": `Bearer ${task.api_key}` },
+          });
+          if (!statusResp.ok) continue;
+
+          const statusData = await statusResp.json() as any;
+          const status = statusData?.status || statusData?.data?.status;
+
+          if (status === "completed" || status === "COMPLETED" || status === "success" || status === "SUCCESS") {
+            const videoUrl = statusData?.data?.remixed_from_video_id
+              || statusData?.data?.video_url
+              || statusData?.result_url
+              || statusData?.video_url;
+
+            if (videoUrl) {
+              // 更新状态
+              this.doState.storage.sql.exec(
+                `UPDATE pending_videos SET status = 'completed', video_url = ? WHERE task_id = ?`,
+                videoUrl, taskId
+              );
+
+              // 发送到微信
+              const creds = this.ilinkCreds;
+              if (creds) {
+                const modelInfo = `🤖 ${task.provider} · ${task.model}`;
+                try {
+                  await sendVideoMessage(creds, "", "", videoUrl);
+                } catch {
+                  // 没有用户上下文，通过 WebSocket 广播
+                }
+              }
+
+              // WebSocket 广播到管理后台
+              this.broadcastToWebSockets({
+                type: "media_generated",
+                mediaType: "video",
+                url: videoUrl,
+                model: task.model,
+                provider: task.provider,
+                prompt: task.prompt,
+              });
+
+              Logger.info("[DO] Video completed and sent", { taskId, url: videoUrl.slice(0, 50) });
+            }
+          } else if (status === "failed" || status === "FAILED") {
+            this.doState.storage.sql.exec(
+              `UPDATE pending_videos SET status = 'failed' WHERE task_id = ?`,
+              taskId
+            );
+            Logger.error("[DO] Video generation failed", { taskId });
+          }
+        } catch (e: any) {
+          Logger.warn("[DO] Video status check error", { taskId, error: e?.message });
+        }
+      }
+    } catch (e: any) {
+      Logger.error("[DO] Check pending videos error", { error: e.message });
     }
   }
 
