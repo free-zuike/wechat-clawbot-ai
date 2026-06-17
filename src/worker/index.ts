@@ -60,12 +60,15 @@ export default {
   async queue(batch: MessageBatch<any>, env: Env): Promise<void> {
     for (const msg of batch.messages) {
       const { type, prompt, model, provider, baseUrl, apiKey } = msg.body;
-      Logger.info("[queue] Processing task", { type, prompt: prompt?.slice(0, 50) });
+      Logger.info("[queue] Task received", { type, prompt: prompt?.slice(0, 50), model, provider, hasBaseUrl: !!baseUrl, hasApiKey: !!apiKey });
 
       try {
         if (type === "video_generation") {
+          Logger.info("[queue] Starting video generation", { model, provider });
           const { generateVideo } = await import("./services/ai");
           const videoUrl = await generateVideo(env.AI, prompt, model, provider, baseUrl, apiKey);
+          Logger.info("[queue] Video generation result", { success: !!videoUrl, url: videoUrl?.slice(0, 80) });
+
           if (videoUrl) {
             const doId = env.ILINK_CONNECTION.idFromName("main");
             const doStub = env.ILINK_CONNECTION.get(doId);
@@ -73,13 +76,13 @@ export default {
               method: "POST",
               body: JSON.stringify({ videoUrl, model, provider, prompt }),
             }));
-            Logger.info("[queue] Video generated and sent");
+            Logger.info("[queue] Video sent via DO");
           } else {
-            Logger.error("[queue] Video generation failed");
+            Logger.error("[queue] Video generation returned null");
           }
         }
       } catch (e: any) {
-        Logger.error("[queue] Task error", { error: e?.message });
+        Logger.error("[queue] Task error", { error: e?.message, stack: e?.stack?.slice(0, 200) });
       }
     }
   },
