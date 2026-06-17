@@ -947,9 +947,14 @@ export class ILinkConnectionDO implements DurableObject {
               }
             } else {
               const imageData = await generateImage(this.env.AI, mediaPrompt, cfg.aiImageModel, cfg.aiProvider, cfg.aiBaseUrl, cfg.aiApiKey);
-              Logger.info("[DO] Image generation result", { success: !!imageData, size: imageData?.length });
+              Logger.info("[DO] Image generation result", { success: !!imageData, type: typeof imageData });
               if (imageData) {
-                await sendTextMessage(useCreds!, from, ctxToken, "图片已生成，请在管理后台 AI 测试面板查看（微信暂不支持直接发送生成图片）");
+                if (typeof imageData === "string") {
+                  // 返回的是 URL，直接发送
+                  await sendTextMessage(useCreds!, from, ctxToken, `图片已生成，请点击查看：\n${imageData}`);
+                } else {
+                  await sendTextMessage(useCreds!, from, ctxToken, "图片已生成，请在管理后台 AI 测试面板查看");
+                }
                 replyContent = `[图片生成] ${mediaPrompt}`;
               } else {
                 await sendTextMessage(useCreds!, from, ctxToken, "图片生成失败，请稍后重试或换个描述试试");
