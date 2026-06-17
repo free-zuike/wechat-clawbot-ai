@@ -925,7 +925,7 @@ export class ILinkConnectionDO implements DurableObject {
           const isVideo = isVideoGenerationRequest(text);
           const mediaType = isVideo ? "视频" : "图片";
           const mediaPrompt = extractMediaPrompt(text, isVideo ? "video" : "image");
-          Logger.info(`[DO] ${mediaType} generation request detected`, { from, prompt: mediaPrompt.slice(0, 50), provider: cfg.aiProvider, hasAIBinding: !!this.env.AI });
+          Logger.info(`[DO] ${mediaType} generation request detected`, { from, prompt: mediaPrompt.slice(0, 50), provider: cfg.aiProvider, hasAIBinding: !!this.env.AI, hasBaseUrl: !!cfg.aiBaseUrl, hasApiKey: !!cfg.aiApiKey, imageModel: cfg.aiImageModel });
 
           if (!this.env.AI) {
             Logger.error("[DO] AI binding not available for image/video generation");

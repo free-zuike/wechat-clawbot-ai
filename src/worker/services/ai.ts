@@ -302,6 +302,7 @@ export async function generateImage(
 
   // 非 Cloudflare 提供商：走 OpenAI 兼容 API
   if (provider && provider !== "cloudflare" && baseUrl && apiKey) {
+    Logger.info("[ai] Using OpenAI compat for image", { baseUrl: baseUrl.slice(0, 30), apiKeyPrefix: apiKey.slice(0, 6), model: imageModel });
     try {
       const base = baseUrl.replace(/\/+$/, "");
       const url = base.includes("/images/generations") ? base : base + "/v1/images/generations";
@@ -338,7 +339,7 @@ export async function generateImage(
 
   // Cloudflare Workers AI
   if (!aiBinding) {
-    Logger.warn("[ai] AI binding not available for image generation");
+    Logger.warn("[ai] AI binding not available, provider check failed", { provider, hasBaseUrl: !!baseUrl, hasApiKey: !!apiKey });
     return null;
   }
 
