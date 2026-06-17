@@ -293,14 +293,54 @@ export async function generateImage(
   aiBinding: any,
   prompt: string,
   model?: string,
+  provider?: string,
+  baseUrl?: string,
+  apiKey?: string,
 ): Promise<Uint8Array | null> {
+  const imageModel = model || DEFAULT_IMAGE_MODEL;
+  Logger.info("[ai] Generating image", { prompt: prompt.slice(0, 80), model: imageModel, provider: provider || "cloudflare" });
+
+  // 非 Cloudflare 提供商：走 OpenAI 兼容 API
+  if (provider && provider !== "cloudflare" && baseUrl && apiKey) {
+    try {
+      const base = baseUrl.replace(/\/+$/, "");
+      const url = base.includes("/images/generations") ? base : base + "/v1/images/generations";
+      const resp = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
+        body: JSON.stringify({ model: imageModel, prompt, n: 1, size: "1024x1024" }),
+      });
+      if (!resp.ok) {
+        const errBody = await resp.text().catch(() => "");
+        Logger.error("[ai] Image API error", { status: resp.status, body: errBody.slice(0, 200) });
+        return null;
+      }
+      const data = await resp.json() as any;
+      // OpenAI 格式：data.data[0].b64_json 或 data.data[0].url
+      const item = data?.data?.[0];
+      if (item?.b64_json) {
+        const binary = atob(item.b64_json);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+        return bytes;
+      }
+      if (item?.url) {
+        const imgResp = await fetch(item.url);
+        if (imgResp.ok) return new Uint8Array(await imgResp.arrayBuffer());
+      }
+      Logger.warn("[ai] Unexpected image response", { keys: Object.keys(data || {}) });
+      return null;
+    } catch (e: any) {
+      Logger.error("[ai] Image generation failed (OpenAI compat)", { error: e?.message });
+      return null;
+    }
+  }
+
+  // Cloudflare Workers AI
   if (!aiBinding) {
     Logger.warn("[ai] AI binding not available for image generation");
     return null;
   }
-
-  const imageModel = model || DEFAULT_IMAGE_MODEL;
-  Logger.info("[ai] Generating image", { prompt: prompt.slice(0, 80), model: imageModel });
 
   try {
     const response = await aiBinding.run(imageModel, { prompt });
@@ -347,15 +387,49 @@ export async function generateVideo(
   aiBinding: any,
   prompt: string,
   model?: string,
+  provider?: string,
+  baseUrl?: string,
+  apiKey?: string,
 ): Promise<string | null> {
+  const videoModel = model || DEFAULT_VIDEO_MODEL;
+  Logger.info("[ai] Generating video", { prompt: prompt.slice(0, 50), model: videoModel, provider: provider || "cloudflare" });
+
+  // 非 Cloudflare 提供商：走 OpenAI 兼容 API
+  if (provider && provider !== "cloudflare" && baseUrl && apiKey) {
+    try {
+      const base = baseUrl.replace(/\/+$/, "");
+      const url = base.includes("/videos/generations") ? base : base + "/v1/videos/generations";
+      const resp = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
+        body: JSON.stringify({ model: videoModel, prompt, duration: 5 }),
+      });
+      if (!resp.ok) {
+        const errBody = await resp.text().catch(() => "");
+        Logger.error("[ai] Video API error", { status: resp.status, body: errBody.slice(0, 200) });
+        return null;
+      }
+      const data = await resp.json() as any;
+      // 尝试多种响应格式
+      if (data?.result?.video) return data.result.video;
+      if (data?.data?.[0]?.url) return data.data[0].url;
+      if (data?.video) return data.video;
+      if (typeof data === "string" && data.startsWith("http")) return data;
+      Logger.warn("[ai] Unexpected video response", { keys: Object.keys(data || {}) });
+      return null;
+    } catch (e: any) {
+      Logger.error("[ai] Video generation failed (OpenAI compat)", { error: e?.message });
+      return null;
+    }
+  }
+
+  // Cloudflare Workers AI
   if (!aiBinding) {
     Logger.warn("[ai] AI binding not available for video generation");
     return null;
   }
 
   try {
-    const videoModel = model || DEFAULT_VIDEO_MODEL;
-    Logger.info("[ai] Generating video", { prompt: prompt.slice(0, 50), model: videoModel });
     const response = await aiBinding.run(videoModel, {
       prompt,
       aspect_ratio: "16:9",

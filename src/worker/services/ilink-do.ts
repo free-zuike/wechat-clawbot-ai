@@ -937,7 +937,7 @@ export class ILinkConnectionDO implements DurableObject {
 
           try {
             if (isVideo) {
-              const videoUrl = await generateVideo(this.env.AI, mediaPrompt, cfg.aiVideoModel);
+              const videoUrl = await generateVideo(this.env.AI, mediaPrompt, cfg.aiVideoModel, cfg.aiProvider, cfg.aiBaseUrl, cfg.aiApiKey);
               Logger.info("[DO] Video generation result", { success: !!videoUrl });
               if (videoUrl) {
                 try {
@@ -950,7 +950,7 @@ export class ILinkConnectionDO implements DurableObject {
                 await sendTextMessage(useCreds!, from, ctxToken, "视频生成失败，请稍后重试或换个描述试试");
               }
             } else {
-              const imageData = await generateImage(this.env.AI, mediaPrompt, cfg.aiImageModel);
+              const imageData = await generateImage(this.env.AI, mediaPrompt, cfg.aiImageModel, cfg.aiProvider, cfg.aiBaseUrl, cfg.aiApiKey);
               Logger.info("[DO] Image generation result", { success: !!imageData, size: imageData?.length });
               if (imageData) {
                 await uploadAndSendMedia(useCreds!, from, ctxToken, MessageItemType.IMAGE, "generated.png", imageData.buffer as ArrayBuffer, "image/png");
