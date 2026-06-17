@@ -386,6 +386,90 @@ export async function generateImage(
   }
 }
 
+// 只提交视频生成任务，不轮询，返回 { taskId, baseUrl, provider, apiKey, model, prompt, url? }
+// 用于微信消息处理中的异步视频生成：先提交任务，后续由 checkPendingVideos 轮询完成
+export async function submitVideoTask(
+  aiBinding: any,
+  prompt: string,
+  model?: string,
+  provider?: string,
+  baseUrl?: string,
+  apiKey?: string,
+): Promise<{ taskId: string; baseUrl: string; provider: string; apiKey: string; model: string; prompt: string; url?: string } | null> {
+  const videoModel = model || DEFAULT_VIDEO_MODEL;
+  const effectiveProvider = provider || "cloudflare";
+  Logger.info("[ai] Submitting video task", { prompt: prompt.slice(0, 50), model: videoModel, provider: effectiveProvider });
+
+  // 非 Cloudflare 提供商：走 OpenAI 兼容 API，只提交任务，不轮询
+  if (effectiveProvider !== "cloudflare" && baseUrl && apiKey) {
+    try {
+      let base = baseUrl.replace(/\/+$/, "");
+      base = base.replace(/\/v1\/(chat\/completions|images\/generations|video\/generations)$/i, "");
+      const submitUrl = base + "/v1/video/generations";
+      const resp = await fetch(submitUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
+        body: JSON.stringify({ model: videoModel, prompt, duration: 5 }),
+      });
+      if (!resp.ok) {
+        const errBody = await resp.text().catch(() => "");
+        Logger.error("[ai] Video task submit error", { status: resp.status, body: errBody.slice(0, 200) });
+        return null;
+      }
+      const submitData = await resp.json() as any;
+      const taskId = submitData.task_id || submitData.id;
+      if (!taskId) {
+        // 同步返回 URL（某些提供商立即返回结果）
+        const url = submitData?.data?.[0]?.url || submitData?.video;
+        if (url) {
+          Logger.info("[ai] Video task returned immediate URL", { url: url.slice(0, 80) });
+          return { taskId: `sync_${Date.now()}`, baseUrl: base, provider: effectiveProvider, apiKey, model: videoModel, prompt, url };
+        }
+        Logger.warn("[ai] No task_id in video response", { keys: Object.keys(submitData || {}) });
+        return null;
+      }
+      Logger.info("[ai] Video task submitted", { taskId });
+      return { taskId, baseUrl: base, provider: effectiveProvider, apiKey, model: videoModel, prompt };
+    } catch (e: any) {
+      Logger.error("[ai] Video task submit failed", { error: e?.message });
+      return null;
+    }
+  }
+
+  // Cloudflare AI：尝试一次调用，如果是异步则返回 taskId
+  if (!aiBinding) {
+    Logger.warn("[ai] AI binding not available for video");
+    return null;
+  }
+  try {
+    const response = await aiBinding.run(videoModel, {
+      prompt,
+      aspect_ratio: "16:9",
+      duration: 5,
+      resolution: "720p",
+    });
+    if (response?.state === "Processing" || response?.state === "Queued") {
+      const jobId = response.id || response.job_id;
+      if (jobId) {
+        Logger.info("[ai] Cloudflare video task submitted", { jobId });
+        return { taskId: jobId, baseUrl: `cf://${videoModel}`, provider: "cloudflare", apiKey: "", model: videoModel, prompt };
+      }
+    }
+    if (response?.result?.video) {
+      Logger.info("[ai] Cloudflare video returned immediately", { url: response.result.video.slice(0, 80) });
+      return { taskId: `sync_${Date.now()}`, baseUrl: `cf://${videoModel}`, provider: "cloudflare", apiKey: "", model: videoModel, prompt, url: response.result.video };
+    }
+    if (typeof response === "string" && response.startsWith("http")) {
+      return { taskId: `sync_${Date.now()}`, baseUrl: `cf://${videoModel}`, provider: "cloudflare", apiKey: "", model: videoModel, prompt, url: response };
+    }
+    Logger.warn("[ai] Unexpected Cloudflare video response", { keys: Object.keys(response || {}) });
+    return null;
+  } catch (e: any) {
+    Logger.error("[ai] Cloudflare video submit failed", { error: e?.message });
+    return null;
+  }
+}
+
 export async function generateVideo(
   aiBinding: any,
   prompt: string,

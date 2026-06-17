@@ -5,7 +5,7 @@
 import { Logger } from "../utils/error";
 import { generateSessionToken } from "../utils";
 import { getUpdates, sendTextMessage, sendTextChunked, sendTypingStatus, extractMessageText, getQRCodeStatus, sendImageMessage, sendVideoMessage, uploadAndSendMedia, MessageType, MessageItemType } from "./ilink";
-import { callAIWithContext, isImageGenerationRequest, isVideoGenerationRequest, extractMediaPrompt, generateImage, generateVideo } from "./ai";
+import { callAIWithContext, isImageGenerationRequest, isVideoGenerationRequest, extractMediaPrompt, generateImage, generateVideo, submitVideoTask } from "./ai";
 import { sendWebhook } from "./webhook";
 import { clearContextSQLite } from "./context";
 import type { ILinkCredentials, WeixinMessage } from "../types";
@@ -171,6 +171,9 @@ export class ILinkConnectionDO implements DurableObject {
         api_key TEXT NOT NULL,
         status TEXT DEFAULT 'queued',
         video_url TEXT,
+        to_user_id TEXT,
+        context_token TEXT,
+        account_id TEXT,
         created_at INTEGER NOT NULL
       )
     `);
@@ -694,11 +697,11 @@ export class ILinkConnectionDO implements DurableObject {
   private async handleStorePendingVideo(request: Request): Promise<Response> {
     try {
       await this.initSQLite();
-      const body = await request.json() as { taskId: string; prompt: string; model: string; provider: string; baseUrl: string; apiKey: string };
+      const body = await request.json() as { taskId: string; prompt: string; model: string; provider: string; baseUrl: string; apiKey: string; toUserId?: string; contextToken?: string; accountId?: string };
       this.doState.storage.sql.exec(
-        `INSERT OR REPLACE INTO pending_videos (task_id, prompt, model, provider, base_url, api_key, status, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, 'queued', ?)`,
-        body.taskId, body.prompt, body.model, body.provider, body.baseUrl, body.apiKey, Date.now()
+        `INSERT OR REPLACE INTO pending_videos (task_id, prompt, model, provider, base_url, api_key, status, to_user_id, context_token, account_id, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?)`,
+        body.taskId, body.prompt, body.model, body.provider, body.baseUrl, body.apiKey, body.toUserId || null, body.contextToken || null, body.accountId || null, Date.now()
       );
       return new Response(JSON.stringify({ success: true }), {
         headers: { "Content-Type": "application/json" },
@@ -717,7 +720,7 @@ export class ILinkConnectionDO implements DurableObject {
     try {
       await this.initSQLite();
       const cursor = this.doState.storage.sql.exec(
-        `SELECT task_id, prompt, model, provider, base_url, api_key FROM pending_videos WHERE status = 'queued'`
+        `SELECT task_id, prompt, model, provider, base_url, api_key, to_user_id, context_token, account_id FROM pending_videos WHERE status = 'queued'`
       );
       const pending = cursor.toArray();
 
@@ -727,46 +730,97 @@ export class ILinkConnectionDO implements DurableObject {
       for (const task of pending) {
         const taskId = task.task_id as string;
         const base = (task.base_url as string).replace(/\/+$/, "").replace(/\/v1\/(chat\/completions|video\/generations)$/i, "");
+        const toUserId = task.to_user_id as string | undefined;
+        const contextToken = task.context_token as string | undefined;
+        const accountId = task.account_id as string | undefined;
+        const modelInfo = `🤖 ${task.provider} · ${task.model}`;
+
+        let creds: ILinkCredentials | null = null;
+        if (accountId && this.accounts.has(accountId)) {
+          creds = this.accounts.get(accountId)!.creds;
+        } else if (this.ilinkCreds) {
+          creds = this.ilinkCreds;
+        }
+
+        const isCloudflare = task.provider === "cloudflare" || (task.base_url as string).startsWith("cf://");
+        let videoUrl: string | null = null;
+        let taskFailed = false;
 
         try {
-          const statusResp = await fetch(`${base}/v1/video/generations/${taskId}`, {
-            headers: { "Authorization": `Bearer ${task.api_key}` },
-          });
-          if (!statusResp.ok) continue;
-
-          const statusData = await statusResp.json() as any;
-          const status = statusData?.status || statusData?.data?.status;
-          Logger.info("[DO] Video task status", { taskId, status });
-
-          if (status === "completed" || status === "COMPLETED" || status === "success" || status === "SUCCESS") {
-            const videoUrl = statusData?.data?.remixed_from_video_id
-              || statusData?.data?.video_url
-              || statusData?.result_url
-              || statusData?.video_url;
-
-            if (videoUrl) {
-              this.doState.storage.sql.exec(
-                `UPDATE pending_videos SET status = 'completed', video_url = ? WHERE task_id = ?`,
-                videoUrl, taskId
-              );
-
-              // WebSocket 广播到管理后台
-              this.broadcastToWebSockets({
-                type: "media_generated",
-                mediaType: "video",
-                url: videoUrl,
-                model: task.model,
-                provider: task.provider,
-                prompt: task.prompt,
-              });
-
-              Logger.info("[DO] Video completed", { taskId, url: videoUrl.slice(0, 80) });
+          if (isCloudflare) {
+            // Cloudflare AI：通过 aiBinding 查状态
+            const cfModel = (task.base_url as string).replace(/^cf:\/\//, "");
+            const status = this.env.AI
+              ? await this.env.AI.run(cfModel, { jobId: taskId })
+              : null;
+            if (status?.state === "Completed" && status?.result?.video) {
+              videoUrl = status.result.video;
+            } else if (status?.state === "Failed") {
+              taskFailed = true;
+              Logger.warn("[DO] Cloudflare video task failed", { taskId });
             }
-          } else if (status === "failed" || status === "FAILED") {
+            // 否则继续下次轮询（状态仍是 Processing/Queued）
+            if (!videoUrl && !taskFailed) {
+              Logger.info("[DO] Cloudflare video task still processing", { taskId, state: status?.state });
+              continue;
+            }
+          } else {
+            // OpenAI 兼容 API：通过 HTTP 查状态
+            const statusResp = await fetch(`${base}/v1/video/generations/${taskId}`, {
+              headers: { "Authorization": `Bearer ${task.api_key}` },
+            });
+            if (!statusResp.ok) continue;
+
+            const statusData = await statusResp.json() as any;
+            const status = statusData?.status || statusData?.data?.status;
+            Logger.info("[DO] Video task status", { taskId, status });
+
+            if (status === "completed" || status === "COMPLETED" || status === "success" || status === "SUCCESS") {
+              videoUrl = statusData?.data?.remixed_from_video_id
+                || statusData?.data?.video_url
+                || statusData?.result_url
+                || statusData?.video_url;
+            } else if (status === "failed" || status === "FAILED" || status === "error" || status === "ERROR") {
+              taskFailed = true;
+            }
+          }
+
+          if (videoUrl) {
+            this.doState.storage.sql.exec(
+              `UPDATE pending_videos SET status = 'completed', video_url = ? WHERE task_id = ?`,
+              videoUrl, taskId
+            );
+
+            // 发送视频给微信用户
+            if (creds && toUserId && contextToken) {
+              try {
+                await sendVideoMessage(creds, toUserId, contextToken, videoUrl);
+              } catch {
+                try {
+                  await sendTextMessage(creds, toUserId, contextToken, `🎬 ${modelInfo}\n\n视频已生成：\n${videoUrl}`);
+                } catch {}
+              }
+            }
+
+            // WebSocket 广播到管理后台
+            this.broadcastToWebSockets({
+              type: "media_generated",
+              mediaType: "video",
+              url: videoUrl,
+              model: task.model,
+              provider: task.provider,
+              prompt: task.prompt,
+            });
+
+            Logger.info("[DO] Video completed", { taskId, url: videoUrl.slice(0, 80) });
+          } else if (taskFailed) {
             this.doState.storage.sql.exec(
               `UPDATE pending_videos SET status = 'failed' WHERE task_id = ?`,
               taskId
             );
+            if (creds && toUserId && contextToken) {
+              await sendTextMessage(creds, toUserId, contextToken, `❌ 视频生成失败 (${modelInfo})\n请稍后重试或换个描述试试`).catch(() => {});
+            }
             Logger.error("[DO] Video generation failed", { taskId });
           }
         } catch (e: any) {
@@ -1117,15 +1171,28 @@ export class ILinkConnectionDO implements DurableObject {
 
           try {
             if (isVideo) {
-              const videoUrl = await generateVideo(this.env.AI, mediaPrompt, cfg.aiVideoModel, cfg.aiProvider, cfg.aiBaseUrl, cfg.aiApiKey);
+              // 异步提交视频任务：先提交 taskId，存到 pending_videos
+              // 之后由 checkPendingVideos 轮询完成后发送视频
+              const result = await submitVideoTask(this.env.AI, mediaPrompt, cfg.aiVideoModel, cfg.aiProvider, cfg.aiBaseUrl, cfg.aiApiKey);
               const modelInfo = `🤖 ${cfg.aiProvider} · ${cfg.aiVideoModel}`;
-              Logger.info("[DO] Video generation result", { success: !!videoUrl });
-              if (videoUrl) {
-                try {
-                  await sendVideoMessage(useCreds!, from, ctxToken, videoUrl);
-                  replyContent = `[视频生成] ${mediaPrompt}`;
-                } catch {
-                  await sendTextMessage(useCreds!, from, ctxToken, `🎬 ${modelInfo}\n\n视频已生成：\n${videoUrl}`);
+              if (result) {
+                if (result.url) {
+                  // 同步返回了 URL，直接发送
+                  try {
+                    await sendVideoMessage(useCreds!, from, ctxToken, result.url);
+                    replyContent = `[视频生成] ${mediaPrompt}`;
+                  } catch {
+                    await sendTextMessage(useCreds!, from, ctxToken, `🎬 ${modelInfo}\n\n视频已生成：\n${result.url}`);
+                    replyContent = `[视频生成] ${mediaPrompt}`;
+                  }
+                } else {
+                  // 异步任务：存储到 pending_videos，稍后由 checkPendingVideos 处理
+                  this.doState.storage.sql.exec(
+                    `INSERT OR REPLACE INTO pending_videos (task_id, prompt, model, provider, base_url, api_key, status, to_user_id, context_token, account_id, created_at)
+                     VALUES (?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?)`,
+                    result.taskId, result.prompt, result.model, result.provider, result.baseUrl, result.apiKey, from, ctxToken, useCreds?.accountId || null, Date.now()
+                  );
+                  await sendTextMessage(useCreds!, from, ctxToken, `🎬 ${modelInfo}\n\n视频生成任务已提交，稍后生成完成后会自动发送给您。`);
                   replyContent = `[视频生成] ${mediaPrompt}`;
                 }
               } else {
@@ -1146,8 +1213,14 @@ export class ILinkConnectionDO implements DurableObject {
                     replyContent = `[图片生成] ${mediaPrompt}`;
                   }
                 } else {
-                  await sendTextMessage(useCreds!, from, ctxToken, `🎨 ${modelInfo}\n\n图片已生成，请在管理后台查看`);
-                  replyContent = `[图片生成] ${mediaPrompt}`;
+                  // Uint8Array：通过 uploadAndSendMedia 发送
+                  try {
+                    await uploadAndSendMedia(useCreds!, from, ctxToken, MessageItemType.IMAGE, "generated.png", imageData.buffer as ArrayBuffer, "image/png");
+                    replyContent = `[图片生成] ${mediaPrompt}`;
+                  } catch {
+                    await sendTextMessage(useCreds!, from, ctxToken, `🎨 ${modelInfo}\n\n图片已生成，请在管理后台查看`);
+                    replyContent = `[图片生成] ${mediaPrompt}`;
+                  }
                 }
               } else {
                 await sendTextMessage(useCreds!, from, ctxToken, `❌ 图片生成失败 (${modelInfo})\n请稍后重试或换个描述试试`);
