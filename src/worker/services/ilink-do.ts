@@ -760,59 +760,111 @@ export class ILinkConnectionDO implements DurableObject {
 
       for (const task of pending) {
         const taskId = task.task_id as string;
-        const base = (task.base_url as string).replace(/\/+$/, "").replace(/\/v1\/(chat\/completions|video\/generations)$/i, "");
+        const base = (task.base_url as string).replace(/\/+$/, "").replace(/\/v1\/(chat\/completions|images\/generations|video\/generations)$/i, "");
         const toUserId = task.to_user_id as string | undefined;
         const contextToken = task.context_token as string | undefined;
         const accountId = task.account_id as string | undefined;
         const modelInfo = `🤖 ${task.provider} · ${task.model}`;
 
+        // 凭证解析：先按 accountId 找，找不到时尝试所有账号，最后用 ilinkCreds
         let creds: ILinkCredentials | null = null;
         if (accountId && this.accounts.has(accountId)) {
           creds = this.accounts.get(accountId)!.creds;
-        } else if (this.ilinkCreds) {
-          creds = this.ilinkCreds;
+        } else {
+          const allAccounts = Array.from(this.accounts.values());
+          if (allAccounts.length > 0) {
+            creds = allAccounts[0].creds;
+          } else if (this.ilinkCreds) {
+            creds = this.ilinkCreds;
+          }
+        }
+        if (!creds) {
+          Logger.warn("[DO] No credentials available for video delivery", { taskId, accountId, toUserId: toUserId?.slice(0, 10) });
         }
 
         const isCloudflare = task.provider === "cloudflare" || (task.base_url as string).startsWith("cf://");
         let videoUrl: string | null = null;
         let taskFailed = false;
+        let stillProcessing = false;
 
         try {
           if (isCloudflare) {
             // Cloudflare AI：通过 aiBinding 查状态
             const cfModel = (task.base_url as string).replace(/^cf:\/\//, "");
-            const status = this.env.AI
-              ? await this.env.AI.run(cfModel, { jobId: taskId })
-              : null;
+            if (!this.env.AI) {
+              Logger.warn("[DO] Cloudflare AI binding not available", { taskId });
+              continue;
+            }
+            const status = await this.env.AI.run(cfModel, { jobId: taskId });
+            Logger.info("[DO] Cloudflare video status", { taskId, state: status?.state, keys: status ? Object.keys(status).slice(0, 10) : [] });
+
             if (status?.state === "Completed" && status?.result?.video) {
               videoUrl = status.result.video;
             } else if (status?.state === "Failed") {
               taskFailed = true;
-              Logger.warn("[DO] Cloudflare video task failed", { taskId });
-            }
-            // 否则继续下次轮询（状态仍是 Processing/Queued）
-            if (!videoUrl && !taskFailed) {
+              Logger.warn("[DO] Cloudflare video task failed", { taskId, response: JSON.stringify(status).slice(0, 200) });
+            } else {
+              stillProcessing = true;
               Logger.info("[DO] Cloudflare video task still processing", { taskId, state: status?.state });
               continue;
             }
           } else {
             // OpenAI 兼容 API：通过 HTTP 查状态
-            const statusResp = await fetch(`${base}/v1/video/generations/${taskId}`, {
+            const checkUrl = `${base}/v1/video/generations/${taskId}`;
+            const statusResp = await fetch(checkUrl, {
               headers: { "Authorization": `Bearer ${task.api_key}` },
             });
-            if (!statusResp.ok) continue;
+            if (!statusResp.ok) {
+              const errBody = await statusResp.text().catch(() => "");
+              Logger.warn("[DO] Video status check HTTP failed", { taskId, status: statusResp.status, body: errBody.slice(0, 200), url: checkUrl });
+              continue;
+            }
 
             const statusData = await statusResp.json() as any;
-            const status = statusData?.status || statusData?.data?.status;
-            Logger.info("[DO] Video task status", { taskId, status });
+            Logger.info("[DO] Video status check raw response", { taskId, keys: Object.keys(statusData || {}).slice(0, 10), preview: JSON.stringify(statusData).slice(0, 300) });
 
-            if (status === "completed" || status === "COMPLETED" || status === "success" || status === "SUCCESS") {
-              videoUrl = statusData?.data?.remixed_from_video_id
-                || statusData?.data?.video_url
+            // 从更多可能的字段读取状态
+            const status = statusData?.status
+              || statusData?.data?.status
+              || statusData?.state
+              || statusData?.data?.state
+              || (statusData?.code !== undefined ? String(statusData.code) : undefined)
+              || (typeof statusData?.data === "string" ? "completed" : undefined);
+
+            const COMPLETED_STATES = new Set(["completed", "COMPLETED", "success", "SUCCESS", "done", "DONE", "finished", "200", "ok", "OK"]);
+            const FAILED_STATES = new Set(["failed", "FAILED", "error", "ERROR", "cancelled", "CANCELLED", "rejected", "500", "400"]);
+            const PROCESSING_STATES = new Set(["processing", "in_progress", "queued", "pending", "running", "scheduled", "submitted"]);
+
+            const statusLower = status ? String(status).toLowerCase() : "";
+
+            if (COMPLETED_STATES.has(statusLower)) {
+              // 从更多字段中提取 URL
+              const d = statusData?.data;
+              videoUrl = d?.remixed_from_video_id
+                || d?.video_url
+                || d?.url
+                || d?.video
+                || d?.output_url
+                || d?.output
                 || statusData?.result_url
-                || statusData?.video_url;
-            } else if (status === "failed" || status === "FAILED" || status === "error" || status === "ERROR") {
+                || statusData?.video_url
+                || statusData?.url
+                || statusData?.video
+                || statusData?.output
+                || (Array.isArray(d) && d[0]?.url)
+                || (Array.isArray(statusData?.result) && statusData.result[0]?.url)
+                || null;
+              Logger.info("[DO] Video task completed", { taskId, urlFound: !!videoUrl, url: videoUrl?.slice(0, 80) });
+            } else if (FAILED_STATES.has(statusLower)) {
               taskFailed = true;
+              Logger.warn("[DO] Video task failed (provider)", { taskId, status, response: JSON.stringify(statusData).slice(0, 200) });
+            } else if (statusLower && PROCESSING_STATES.has(statusLower)) {
+              stillProcessing = true;
+              Logger.info("[DO] Video task still processing", { taskId, status });
+            } else {
+              // 未知状态 — 也可能是 API 响应结构完全不同
+              stillProcessing = true;
+              Logger.warn("[DO] Video task unknown status — treating as processing", { taskId, status, statusType: typeof status, keys: Object.keys(statusData || {}).slice(0, 10) });
             }
           }
 
@@ -826,11 +878,17 @@ export class ILinkConnectionDO implements DurableObject {
             if (creds && toUserId && contextToken) {
               try {
                 await sendVideoMessage(creds, toUserId, contextToken, videoUrl);
-              } catch {
+                Logger.info("[DO] Video message sent to WeChat", { taskId, toUserId: toUserId.slice(0, 10) });
+              } catch (e: any) {
+                Logger.warn("[DO] sendVideoMessage failed — falling back to text URL", { taskId, error: e?.message });
                 try {
                   await sendTextMessage(creds, toUserId, contextToken, `🎬 ${modelInfo}\n\n视频已生成：\n${videoUrl}`);
-                } catch {}
+                } catch (e2: any) {
+                  Logger.error("[DO] Fallback text message also failed", { taskId, error: e2?.message });
+                }
               }
+            } else {
+              Logger.warn("[DO] Cannot send video — credentials/user info missing", { taskId, hasCreds: !!creds, hasToUserId: !!toUserId, hasContextToken: !!contextToken });
             }
 
             // WebSocket 广播到管理后台
@@ -854,6 +912,7 @@ export class ILinkConnectionDO implements DurableObject {
             }
             Logger.error("[DO] Video generation failed", { taskId });
           }
+          // stillProcessing: 什么也不做，下次 cron 再检查
         } catch (e: any) {
           Logger.warn("[DO] Video status check error", { taskId, error: e?.message });
         }

@@ -413,14 +413,31 @@ export async function submitVideoTask(
       });
       if (!resp.ok) {
         const errBody = await resp.text().catch(() => "");
-        Logger.error("[ai] Video task submit error", { status: resp.status, body: errBody.slice(0, 200) });
+        Logger.error("[ai] Video task submit error", { status: resp.status, body: errBody.slice(0, 200), url: submitUrl });
         return null;
       }
       const submitData = await resp.json() as any;
-      const taskId = submitData.task_id || submitData.id;
+      Logger.info("[ai] Video task submit raw response", { keys: Object.keys(submitData || {}).slice(0, 10), preview: JSON.stringify(submitData).slice(0, 300) });
+
+      const taskId = submitData.task_id
+        || submitData.id
+        || submitData.taskId
+        || submitData.data?.id
+        || submitData.data?.task_id
+        || (typeof submitData.data === "string" ? null : submitData.data?.taskId)
+        || null;
       if (!taskId) {
         // 同步返回 URL（某些提供商立即返回结果）
-        const url = submitData?.data?.[0]?.url || submitData?.video;
+        const url = submitData?.data?.[0]?.url
+          || submitData?.data?.url
+          || submitData?.data?.video_url
+          || submitData?.data?.video
+          || submitData?.video
+          || submitData?.video_url
+          || submitData?.url
+          || submitData?.result_url
+          || submitData?.output
+          || null;
         if (url) {
           Logger.info("[ai] Video task returned immediate URL", { url: url.slice(0, 80) });
           return { taskId: `sync_${Date.now()}`, baseUrl: base, provider: effectiveProvider, apiKey, model: videoModel, prompt, url };
@@ -428,7 +445,7 @@ export async function submitVideoTask(
         Logger.warn("[ai] No task_id in video response", { keys: Object.keys(submitData || {}) });
         return null;
       }
-      Logger.info("[ai] Video task submitted", { taskId });
+      Logger.info("[ai] Video task submitted", { taskId, baseUrl: base.slice(0, 60) });
       return { taskId, baseUrl: base, provider: effectiveProvider, apiKey, model: videoModel, prompt };
     } catch (e: any) {
       Logger.error("[ai] Video task submit failed", { error: e?.message });
@@ -448,6 +465,8 @@ export async function submitVideoTask(
       duration: 5,
       resolution: "720p",
     });
+    Logger.info("[ai] Cloudflare video submit response", { keys: Object.keys(response || {}).slice(0, 10), state: response?.state, preview: JSON.stringify(response).slice(0, 300) });
+
     if (response?.state === "Processing" || response?.state === "Queued") {
       const jobId = response.id || response.job_id;
       if (jobId) {
