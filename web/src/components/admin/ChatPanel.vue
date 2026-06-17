@@ -49,7 +49,6 @@ defineProps<{
 defineEmits(["send", "update:input"]);
 
 function renderMessage(text: string): { isImage: boolean; html: string; text: string } {
-  // 检测 markdown 图片：![alt](url) — 支持 data: URL 和普通 http URL
   const imgMatch = text.match(/!\[([^\]]*)\]\(([^)]+)\)/);
   if (imgMatch) {
     const alt = imgMatch[1] || "生成的图片";
@@ -58,10 +57,17 @@ function renderMessage(text: string): { isImage: boolean; html: string; text: st
     const suffix = text.slice(text.indexOf(imgMatch[0]) + imgMatch[0].length);
     return {
       isImage: true,
-      html: `${prefix ? `<div style="margin-bottom:8px">${prefix}</div>` : ''}<img src="${src}" alt="${alt}" style="max-width:100%;border-radius:8px;margin:4px 0" />${suffix ? `<div style="margin-top:8px">${suffix}</div>` : ''}`,
+      html: `${prefix ? `<div style="margin-bottom:8px">${prefix}</div>` : ''}<img src="${src}" alt="${alt}" style="max-width:100%;max-height:400px;border-radius:8px;margin:4px 0;object-fit:contain" />${suffix ? `<div style="margin-top:8px">${suffix}</div>` : ''}`,
       text,
     };
   }
   return { isImage: false, html: "", text };
 }
 </script>
+
+<style scoped>
+.chat-box {
+  max-height: 500px;
+  overflow-y: auto;
+}
+</style>

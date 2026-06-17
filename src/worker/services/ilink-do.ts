@@ -4,11 +4,11 @@
 
 import { Logger } from "../utils/error";
 import { generateSessionToken } from "../utils";
-import { getUpdates, sendTextMessage, sendTextChunked, sendTypingStatus, extractMessageText, getQRCodeStatus, sendMediaMessage, MessageType, MessageItemType } from "./ilink";
+import { getUpdates, sendTextMessage, sendTextChunked, sendTypingStatus, extractMessageText, getQRCodeStatus, uploadAndSendMedia, MessageType, MessageItemType } from "./ilink";
 import { callAIWithContext, isImageGenerationRequest, isVideoGenerationRequest, extractMediaPrompt, generateImage, generateVideo } from "./ai";
 import { sendWebhook } from "./webhook";
 import { clearContextSQLite } from "./context";
-import type { ILinkCredentials, WeixinMessage, MessageItem } from "../types";
+import type { ILinkCredentials, WeixinMessage } from "../types";
 
 export interface ILINKSessionState {
   syncBuf: string;
@@ -951,19 +951,30 @@ export class ILinkConnectionDO implements DurableObject {
               Logger.info("[DO] Image generation result", { success: !!imageData, type: typeof imageData });
               if (imageData) {
                 if (typeof imageData === "string") {
-                  // 返回的是 URL，尝试直接发送图片消息
+                  // 返回的是 URL，先下载再通过 uploadAndSendMedia 发送
                   try {
-                    const item: MessageItem = { type: MessageItemType.IMAGE, image_item: { cdn_url: imageData, url: imageData, width: 0, height: 0 } };
-                    await sendMediaMessage(useCreds!, from, ctxToken, item);
-                    replyContent = `[图片生成] ${mediaPrompt}`;
+                    const imgResp = await fetch(imageData, { signal: AbortSignal.timeout(30000) });
+                    if (imgResp.ok) {
+                      const buffer = await imgResp.arrayBuffer();
+                      const contentType = imgResp.headers.get("content-type") || "image/png";
+                      await uploadAndSendMedia(useCreds!, from, ctxToken, MessageItemType.IMAGE, "generated.png", buffer, contentType);
+                      replyContent = `[图片生成] ${mediaPrompt}`;
+                    } else {
+                      throw new Error(`Download failed: ${imgResp.status}`);
+                    }
                   } catch (sendErr: any) {
-                    Logger.warn("[DO] Direct image send failed, sending URL as text", { error: sendErr?.message });
+                    Logger.warn("[DO] Image send failed, sending URL as text", { error: sendErr?.message });
                     await sendTextMessage(useCreds!, from, ctxToken, `图片已生成，请点击查看：\n${imageData}`);
                     replyContent = `[图片生成] ${mediaPrompt}`;
                   }
                 } else {
-                  await sendTextMessage(useCreds!, from, ctxToken, "图片已生成，请在管理后台 AI 测试面板查看");
-                  replyContent = `[图片生成] ${mediaPrompt}`;
+                  try {
+                    await uploadAndSendMedia(useCreds!, from, ctxToken, MessageItemType.IMAGE, "generated.png", imageData.buffer as ArrayBuffer, "image/png");
+                    replyContent = `[图片生成] ${mediaPrompt}`;
+                  } catch {
+                    await sendTextMessage(useCreds!, from, ctxToken, "图片已生成，请在管理后台 AI 测试面板查看");
+                    replyContent = `[图片生成] ${mediaPrompt}`;
+                  }
                 }
               } else {
                 await sendTextMessage(useCreds!, from, ctxToken, "图片生成失败，请稍后重试或换个描述试试");
