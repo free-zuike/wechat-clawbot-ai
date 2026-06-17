@@ -243,10 +243,10 @@ export function getDefaultSystemPrompt(): string {
 
 // ========== 图片/视频生成（Cloudflare Workers AI）==========
 
-const IMAGE_KEYWORDS = /^(画|绘制|生成图片|生成一张|帮我画|给我画|画一个|画一幅|draw|generate image|create image)/i;
-const VIDEO_KEYWORDS = /^(生成视频|制作视频|做一个视频|帮我做视频|帮我生成视频|录一段|generate video|create video|make a video)/i;
-const IMAGE_PROMPT_PREFIXES = ["画", "绘制", "生成图片", "生成一张", "帮我画", "给我画", "画一个", "画一幅"];
-const VIDEO_PROMPT_PREFIXES = ["生成视频", "制作视频", "做一个视频", "帮我做视频", "帮我生成视频", "录一段"];
+const IMAGE_KEYWORDS = /画|描绘|绘制|生成图片|生成一张|帮我画|给我画|画一个|画一幅|画张|来一张|来幅|draw|generate image|create image/i;
+const VIDEO_KEYWORDS = /生成视频|制作视频|做一个视频|帮我做视频|帮我生成视频|录一段|拍一段|generate video|create video|make a video/i;
+const IMAGE_PROMPT_PREFIXES = ["画", "描绘", "绘制", "生成图片", "生成一张", "帮我画", "给我画", "画一个", "画一幅", "画张", "来一张", "来幅"];
+const VIDEO_PROMPT_PREFIXES = ["生成视频", "制作视频", "做一个视频", "帮我做视频", "帮我生成视频", "录一段", "拍一段"];
 
 export function isImageGenerationRequest(text: string): boolean {
   return IMAGE_KEYWORDS.test(text.trim());
@@ -259,15 +259,29 @@ export function isVideoGenerationRequest(text: string): boolean {
 export function extractMediaPrompt(text: string, type: "image" | "video"): string {
   const prefixes = type === "image" ? IMAGE_PROMPT_PREFIXES : VIDEO_PROMPT_PREFIXES;
   let prompt = text.trim();
+
+  // 尝试从开头匹配前缀
   for (const prefix of prefixes) {
     if (prompt.startsWith(prefix)) {
       prompt = prompt.slice(prefix.length).trim();
       break;
     }
   }
+
+  // 如果开头没匹配到，尝试在整段文字中查找并提取前缀后面的内容
+  if (prompt === text.trim()) {
+    for (const prefix of prefixes) {
+      const idx = prompt.indexOf(prefix);
+      if (idx !== -1) {
+        prompt = prompt.slice(idx + prefix.length).trim();
+        break;
+      }
+    }
+  }
+
   // 移除开头的量词：一个、一幅、一张、一段 等
   prompt = prompt.replace(/^(一个|一幅|一张|一段)/, "").trim();
-  // 移除结尾的标点
+  // 移除结尾的标点和多余文字
   prompt = prompt.replace(/[。！？.!?,，]+$/, "").trim();
   return prompt || text.trim();
 }
