@@ -80,7 +80,7 @@
           :result="configResult"
           :saving="configSaving"
           @load="handleLoadConfig"
-          @save="handleSaveConfig"
+          @save="debouncedSaveConfig"
         />
       </section>
 
@@ -276,6 +276,12 @@ async function handleTriggerPoll() {
 }
 
 // ===== Config =====
+let saveTimer: number | null = null;
+function debouncedSaveConfig() {
+  if (saveTimer) clearTimeout(saveTimer);
+  saveTimer = window.setTimeout(() => { handleSaveConfig(); }, 300);
+}
+
 async function handleLoadConfig() {
   configResult.value = "加载中...";
   try {
