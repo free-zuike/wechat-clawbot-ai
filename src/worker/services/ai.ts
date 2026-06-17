@@ -426,37 +426,44 @@ export async function generateVideo(
       }
 
       Logger.info("[ai] Video task submitted", { taskId });
-      // 轮询等待完成（最多 5 分钟，每 10 秒检查一次）
-      for (let i = 0; i < 30; i++) {
-        await new Promise(r => setTimeout(r, 10000));
-        const statusUrl = `${base}/v1/video/generations/${taskId}`;
-        const statusResp = await fetch(statusUrl, {
-          headers: { "Authorization": `Bearer ${apiKey}` },
-        });
-        if (!statusResp.ok) {
-          Logger.warn("[ai] Video status check failed", { status: statusResp.status, attempt: i + 1 });
-          continue;
-        }
-        const statusData = await statusResp.json() as any;
-        const status = statusData?.status || statusData?.data?.status;
-        const progress = statusData?.progress ?? statusData?.data?.progress ?? "0%";
-        Logger.info("[ai] Video status", { status, progress, attempt: i + 1, taskId });
-
-        if (status === "completed" || status === "COMPLETED" || status === "success" || status === "SUCCESS") {
-          // 尝试多种字段获取视频 URL
-          const videoUrl = statusData?.data?.remixed_from_video_id
-            || statusData?.data?.video_url
-            || statusData?.data?.url
-            || statusData?.result_url
-            || statusData?.video_url;
-          if (videoUrl) {
-            Logger.info("[ai] Video generated", { url: videoUrl });
-            return videoUrl;
+      // 轮询等待完成（最多 8 分钟，每 15 秒检查一次）
+      for (let i = 0; i < 32; i++) {
+        await new Promise(r => setTimeout(r, 15000));
+        try {
+          const statusUrl = `${base}/v1/video/generations/${taskId}`;
+          const statusResp = await fetch(statusUrl, {
+            headers: { "Authorization": `Bearer ${apiKey}` },
+          });
+          if (!statusResp.ok) {
+            Logger.warn("[ai] Video status check failed", { status: statusResp.status, attempt: i + 1 });
+            continue;
           }
+          const statusData = await statusResp.json() as any;
+          const status = statusData?.status || statusData?.data?.status;
+          const progress = statusData?.progress ?? statusData?.data?.progress ?? "0%";
+          Logger.info("[ai] Video status", { status, progress, attempt: i + 1, taskId });
+
+          if (status === "completed" || status === "COMPLETED" || status === "success" || status === "SUCCESS") {
+            const videoUrl = statusData?.data?.remixed_from_video_id
+              || statusData?.data?.video_url
+              || statusData?.data?.url
+              || statusData?.result_url
+              || statusData?.video_url;
+            if (videoUrl) {
+              Logger.info("[ai] Video generated", { url: videoUrl });
+              return videoUrl;
+            }
+          }
+          if (status === "failed" || status === "FAILED" || status === "error" || status === "ERROR") {
+            Logger.error("[ai] Video generation failed", { error: statusData?.data?.error || statusData?.fail_reason || statusData?.error });
+            return null;
+          }
+        } catch (pollErr: any) {
+          Logger.warn("[ai] Video poll error", { error: pollErr?.message, attempt: i + 1 });
         }
-        if (status === "failed" || status === "FAILED" || status === "error" || status === "ERROR") {
-          Logger.error("[ai] Video generation failed", { error: statusData?.data?.error || statusData?.fail_reason || statusData?.error });
-          return null;
+      }
+      Logger.error("[ai] Video generation timeout after 8 minutes");
+      return null;
         }
       }
       Logger.error("[ai] Video generation timeout");
