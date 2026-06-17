@@ -878,17 +878,16 @@ export class ILinkConnectionDO implements DurableObject {
 
             // 发送视频给微信用户
             if (creds && toUserId && contextToken) {
+              // 先发文本消息确保用户收到通知（cron 有时间限制，文本消息快）
               try {
-                await sendVideoMessage(creds, toUserId, contextToken, videoUrl);
-                Logger.info("[DO] Video message sent to WeChat", { taskId, toUserId: toUserId.slice(0, 10) });
-              } catch (e: any) {
-                Logger.warn("[DO] sendVideoMessage failed — falling back to text URL", { taskId, error: e?.message });
-                try {
-                  await sendTextMessage(creds, toUserId, contextToken, `🎬 ${modelInfo}\n\n视频已生成：\n${videoUrl}`);
-                } catch (e2: any) {
-                  Logger.error("[DO] Fallback text message also failed", { taskId, error: e2?.message });
-                }
+                await sendTextMessage(creds, toUserId, contextToken, `🎬 ${modelInfo}\n\n视频已生成！\n${videoUrl}`);
+              } catch (e2: any) {
+                Logger.error("[DO] Text notification failed", { taskId, error: e2?.message });
               }
+              // 异步尝试发送视频文件（下载+上传到 CDN，可能超时）
+              sendVideoMessage(creds, toUserId, contextToken, videoUrl)
+                .then(() => Logger.info("[DO] Video file sent to WeChat", { taskId, toUserId: toUserId.slice(0, 10) }))
+                .catch((e: any) => Logger.warn("[DO] Video file send failed (text already sent)", { taskId, error: e?.message }));
             } else {
               Logger.warn("[DO] Cannot send video — credentials/user info missing", { taskId, hasCreds: !!creds, hasToUserId: !!toUserId, hasContextToken: !!contextToken });
             }
@@ -1269,14 +1268,12 @@ export class ILinkConnectionDO implements DurableObject {
               const modelInfo = `🤖 ${cfg.aiProvider} · ${cfg.aiVideoModel}`;
               if (result) {
                 if (result.url) {
-                  // 同步返回了 URL，直接发送
-                  try {
-                    await sendVideoMessage(useCreds!, from, ctxToken, result.url);
-                    replyContent = `[视频生成] ${mediaPrompt}`;
-                  } catch {
-                    await sendTextMessage(useCreds!, from, ctxToken, `🎬 ${modelInfo}\n\n视频已生成：\n${result.url}`);
-                    replyContent = `[视频生成] ${mediaPrompt}`;
-                  }
+                  // 同步返回了 URL：先发文本通知，再异步尝试发送视频文件
+                  await sendTextMessage(useCreds!, from, ctxToken, `🎬 ${modelInfo}\n\n视频已生成！\n${result.url}`);
+                  replyContent = `[视频生成] ${mediaPrompt}`;
+                  sendVideoMessage(useCreds!, from, ctxToken, result.url)
+                    .then(() => Logger.info("[DO] Sync video file sent to WeChat"))
+                    .catch((e: any) => Logger.warn("[DO] Sync video file send failed", { error: e?.message }));
                 } else {
                   // 异步任务：存储到 pending_videos，稍后由 checkPendingVideos 处理
                   await this.ensurePendingVideosColumns();
