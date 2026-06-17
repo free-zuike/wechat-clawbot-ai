@@ -426,19 +426,21 @@ export async function generateVideo(
       }
 
       Logger.info("[ai] Video task submitted", { taskId });
-      // 轮询等待完成（最多 180 秒）
-      for (let i = 0; i < 36; i++) {
-        await new Promise(r => setTimeout(r, 5000));
+      // 轮询等待完成（最多 5 分钟，每 10 秒检查一次）
+      for (let i = 0; i < 30; i++) {
+        await new Promise(r => setTimeout(r, 10000));
         const statusUrl = `${base}/v1/video/generations/${taskId}`;
         const statusResp = await fetch(statusUrl, {
           headers: { "Authorization": `Bearer ${apiKey}` },
         });
-        if (!statusResp.ok) continue;
+        if (!statusResp.ok) {
+          Logger.warn("[ai] Video status check failed", { status: statusResp.status, attempt: i + 1 });
+          continue;
+        }
         const statusData = await statusResp.json() as any;
-        // 状态可能在顶层或 data 内
         const status = statusData?.status || statusData?.data?.status;
         const progress = statusData?.progress ?? statusData?.data?.progress ?? "0%";
-        Logger.info("[ai] Video status", { status, progress, attempt: i + 1 });
+        Logger.info("[ai] Video status", { status, progress, attempt: i + 1, taskId });
 
         if (status === "completed" || status === "COMPLETED" || status === "success" || status === "SUCCESS") {
           // 尝试多种字段获取视频 URL
