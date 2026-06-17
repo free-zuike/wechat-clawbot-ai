@@ -842,10 +842,12 @@ export class ILinkConnectionDO implements DurableObject {
               const d = statusData?.data;
               videoUrl = d?.remixed_from_video_id
                 || d?.video_url
+                || d?.result_url
                 || d?.url
                 || d?.video
                 || d?.output_url
                 || d?.output
+                || d?.result
                 || statusData?.result_url
                 || statusData?.video_url
                 || statusData?.url
