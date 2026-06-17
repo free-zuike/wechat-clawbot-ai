@@ -408,17 +408,33 @@ export async function sendImageMessage(
   contextToken: string,
   imageUrl: string,
 ): Promise<void> {
-  // 方式1：直接发送带 URL 的图片消息
-  const item: MessageItem = {
-    type: MessageItemType.IMAGE,
-    image_item: { url: imageUrl, cdn_url: imageUrl, width: 0, height: 0 },
+  // 方式1：直接发送带 URL 的图片消息（不需要上传）
+  const msg: WeixinMessage = {
+    from_user_id: "",
+    to_user_id: toUserId,
+    client_id: generateClientId(),
+    message_type: MessageType.BOT,
+    message_state: MessageState.FINISH,
+    context_token: contextToken,
+    item_list: [{
+      type: MessageItemType.IMAGE,
+      image_item: { url: imageUrl, cdn_url: imageUrl, width: 0, height: 0 },
+    }],
   };
+
   try {
-    await sendMediaMessage(creds, toUserId, contextToken, item);
-    Logger.info("[iLink] Image sent via direct URL");
+    await withRetry(
+      () => post(creds, "ilink/bot/sendmessage", { msg }, DEFAULT_API_MS),
+      {
+        retries: 2,
+        baseDelayMs: 500,
+        shouldRetry: (error) => !(error instanceof ClawBotError && error.code === 'ILINK_SESSION_TIMEOUT')
+      }
+    );
+    Logger.info("[iLink] Image message sent via direct URL");
     return;
   } catch (e: any) {
-    Logger.warn("[iLink] Direct image URL send failed", { error: e?.message });
+    Logger.warn("[iLink] Direct image URL send failed, trying upload", { error: e?.message });
   }
 
   // 方式2：下载图片后通过 getuploadurl 上传
@@ -435,7 +451,6 @@ export async function sendImageMessage(
     Logger.warn("[iLink] Upload image failed", { error: e?.message });
   }
 
-  // 方式3：全部失败，抛出错误
   throw new ClawBotError('ILINK_IMAGE_SEND_FAILED', 'All image send methods failed');
 }
 export async function sendFileFromUrl(
