@@ -8,7 +8,14 @@
         👋 开始输入你的问题吧...
       </div>
       <div v-for="(msg, i) in messages" :key="i" class="msg" :class="msg.role">
-        <div class="bubble">{{ msg.text }}</div>
+        <div class="bubble">
+          <template v-if="renderMessage(msg.text).isImage">
+            <div v-html="renderMessage(msg.text).html"></div>
+          </template>
+          <template v-else>
+            {{ renderMessage(msg.text).text }}
+          </template>
+        </div>
       </div>
     </div>
 
@@ -40,4 +47,21 @@ defineProps<{
 }>();
 
 defineEmits(["send", "update:input"]);
+
+function renderMessage(text: string): { isImage: boolean; html: string; text: string } {
+  // 检测 markdown 图片：![alt](data:image/...)
+  const imgMatch = text.match(/!\[([^\]]*)\]\((data:image\/[^)]+)\)/);
+  if (imgMatch) {
+    const alt = imgMatch[1] || "生成的图片";
+    const src = imgMatch[2];
+    const prefix = text.slice(0, text.indexOf(imgMatch[0]));
+    const suffix = text.slice(text.indexOf(imgMatch[0]) + imgMatch[0].length);
+    return {
+      isImage: true,
+      html: `${prefix ? `<div style="margin-bottom:8px">${prefix}</div>` : ''}<img src="${src}" alt="${alt}" style="max-width:100%;border-radius:8px;margin:4px 0" />${suffix ? `<div style="margin-top:8px">${suffix}</div>` : ''}`,
+      text,
+    };
+  }
+  return { isImage: false, html: "", text };
+}
 </script>
