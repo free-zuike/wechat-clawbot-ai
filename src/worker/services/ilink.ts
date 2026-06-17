@@ -304,8 +304,12 @@ export async function getUploadUrl(
     file_name: fileName,
     file_size: fileSize,
   }, DEFAULT_API_MS);
-  Logger.info("[iLink] getUploadUrl response", { upload_url: resp.upload_url, file_id: resp.file_id, keys: Object.keys(resp || {}) });
-  return { upload_url: resp.upload_url || "", file_id: resp.file_id || "" };
+  Logger.info("[iLink] getUploadUrl full response", { response: JSON.stringify(resp).slice(0, 500) });
+  // 尝试多种字段名
+  const uploadUrl = resp.upload_url || resp.url || resp.uploadUrl || resp.data?.upload_url || resp.data?.url || "";
+  const fileId = resp.file_id || resp.fileId || resp.data?.file_id || resp.data?.fileId || "";
+  Logger.info("[iLink] getUploadUrl parsed", { upload_url: uploadUrl, file_id: fileId });
+  return { upload_url: uploadUrl, file_id: fileId };
 }
 
 export async function uploadFile(
