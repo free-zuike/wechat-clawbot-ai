@@ -939,38 +939,34 @@ export class ILinkConnectionDO implements DurableObject {
           try {
             if (isVideo) {
               const videoUrl = await generateVideo(this.env.AI, mediaPrompt, cfg.aiVideoModel, cfg.aiProvider, cfg.aiBaseUrl, cfg.aiApiKey);
+              const modelInfo = `🤖 ${cfg.aiProvider} · ${cfg.aiVideoModel}`;
               Logger.info("[DO] Video generation result", { success: !!videoUrl });
               if (videoUrl) {
-                await sendTextMessage(useCreds!, from, ctxToken, `视频已生成：\n${videoUrl}`);
+                await sendTextMessage(useCreds!, from, ctxToken, `🎬 ${modelInfo}\n\n视频已生成：\n${videoUrl}`);
                 replyContent = `[视频生成] ${mediaPrompt}`;
               } else {
-                await sendTextMessage(useCreds!, from, ctxToken, "视频生成失败，请稍后重试或换个描述试试");
+                await sendTextMessage(useCreds!, from, ctxToken, `❌ 视频生成失败 (${modelInfo})\n请稍后重试或换个描述试试`);
               }
             } else {
               const imageData = await generateImage(this.env.AI, mediaPrompt, cfg.aiImageModel, cfg.aiProvider, cfg.aiBaseUrl, cfg.aiApiKey);
+              const modelInfo = `🤖 ${cfg.aiProvider} · ${cfg.aiImageModel}`;
               Logger.info("[DO] Image generation result", { success: !!imageData, type: typeof imageData });
               if (imageData) {
                 if (typeof imageData === "string") {
-                  // 返回的是 URL，通过 sendImageMessage 发送
+                  // 返回的是 URL
                   try {
                     await sendImageMessage(useCreds!, from, ctxToken, imageData);
                     replyContent = `[图片生成] ${mediaPrompt}`;
-                  } catch (sendErr: any) {
-                    Logger.warn("[DO] Image send failed", { error: sendErr?.message });
-                    await sendTextMessage(useCreds!, from, ctxToken, `图片已生成，请点击查看：\n${imageData}`);
+                  } catch {
+                    await sendTextMessage(useCreds!, from, ctxToken, `🎨 ${modelInfo}\n\n图片已生成：\n${imageData}`);
                     replyContent = `[图片生成] ${mediaPrompt}`;
                   }
                 } else {
-                  try {
-                    await uploadAndSendMedia(useCreds!, from, ctxToken, MessageItemType.IMAGE, "generated.png", imageData.buffer as ArrayBuffer, "image/png");
-                    replyContent = `[图片生成] ${mediaPrompt}`;
-                  } catch {
-                    await sendTextMessage(useCreds!, from, ctxToken, "图片已生成，请在管理后台 AI 测试面板查看");
-                    replyContent = `[图片生成] ${mediaPrompt}`;
-                  }
+                  await sendTextMessage(useCreds!, from, ctxToken, `🎨 ${modelInfo}\n\n图片已生成，请在管理后台查看`);
+                  replyContent = `[图片生成] ${mediaPrompt}`;
                 }
               } else {
-                await sendTextMessage(useCreds!, from, ctxToken, "图片生成失败，请稍后重试或换个描述试试");
+                await sendTextMessage(useCreds!, from, ctxToken, `❌ 图片生成失败 (${modelInfo})\n请稍后重试或换个描述试试`);
               }
             }
           } catch (genErr: any) {

@@ -57,27 +57,27 @@ export async function handleChat(request: Request, env: Env): Promise<Response> 
     const activePreset = presets.find((p: any) => p.id === aiConfig.provider);
     const imageModel = activePreset?.imageModel || "";
     const videoModel = activePreset?.videoModel || "";
+    const modelInfo = `${aiConfig.provider} · `;
 
     // 检查图片/视频生成请求
     if (isImageGenerationRequest(trimmed) || isVideoGenerationRequest(trimmed)) {
       const isVideo = isVideoGenerationRequest(trimmed);
       const prompt = extractMediaPrompt(trimmed, isVideo ? "video" : "image");
-      Logger.info(`[chat][${requestId}] ${isVideo ? "video" : "image"} generation`, { prompt: prompt.slice(0, 50), model: isVideo ? videoModel : imageModel });
+      const usedModel = isVideo ? videoModel : imageModel;
+      Logger.info(`[chat][${requestId}] ${isVideo ? "video" : "image"} generation`, { prompt: prompt.slice(0, 50), model: usedModel });
 
       if (isVideo) {
         const videoUrl = await generateVideo(env.AI, prompt, videoModel, aiConfig.provider, aiConfig.baseUrl, aiConfig.apiKey);
         if (videoUrl) {
-          return json({ reply: `视频已生成！\n\n视频链接: ${videoUrl}`, source: "ai" } satisfies ChatResponse);
+          return json({ reply: `🎬 ${modelInfo}${videoModel}\n\n视频已生成！\n\n${videoUrl}`, source: "ai" } satisfies ChatResponse);
         }
-        return json({ reply: "视频生成失败，请稍后重试或换个描述试试", source: "error" } satisfies ChatResponse);
+        return json({ reply: `❌ 视频生成失败 (${modelInfo}${videoModel})\n请稍后重试或换个描述试试`, source: "error" } satisfies ChatResponse);
       } else {
         const imageData = await generateImage(env.AI, prompt, imageModel, aiConfig.provider, aiConfig.baseUrl, aiConfig.apiKey);
         if (imageData) {
-          // 如果返回的是字符串（URL），直接使用
           if (typeof imageData === "string") {
-            return json({ reply: `图片已生成！\n\n![生成的图片](${imageData})`, source: "ai" } satisfies ChatResponse);
+            return json({ reply: `🎨 ${modelInfo}${imageModel}\n\n图片已生成！\n\n![生成的图片](${imageData})`, source: "ai" } satisfies ChatResponse);
           }
-          // 分块转 base64，避免大数组展开爆栈
           let base64 = "";
           const chunkSize = 8192;
           for (let i = 0; i < imageData.length; i += chunkSize) {
@@ -85,9 +85,9 @@ export async function handleChat(request: Request, env: Env): Promise<Response> 
           }
           base64 = btoa(base64);
           const dataUrl = `data:image/png;base64,${base64}`;
-          return json({ reply: `图片已生成！\n\n![生成的图片](${dataUrl})`, source: "ai" } satisfies ChatResponse);
+          return json({ reply: `🎨 ${modelInfo}${imageModel}\n\n图片已生成！\n\n![生成的图片](${dataUrl})`, source: "ai" } satisfies ChatResponse);
         }
-        return json({ reply: "图片生成失败，请稍后重试或换个描述试试", source: "error" } satisfies ChatResponse);
+        return json({ reply: `❌ 图片生成失败 (${modelInfo}${imageModel})\n请稍后重试或换个描述试试`, source: "error" } satisfies ChatResponse);
       }
     }
 
