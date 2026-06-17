@@ -54,8 +54,9 @@ async function callOpenAICompatible(params: {
   messages: Array<{ role: string; content: string }>;
   maxTokens: number;
 }): Promise<string> {
-  const base = params.baseUrl.replace(/\/+$/, "");
-  const url = base.includes("/chat/completions") ? base : base + "/v1/chat/completions";
+  let base = params.baseUrl.replace(/\/+$/, "");
+  base = base.replace(/\/v1\/(chat\/completions|images\/generations|videos\/generations)$/i, "");
+  const url = base + "/v1/chat/completions";
 
   const resp = await fetch(url, {
     method: "POST",
@@ -304,8 +305,10 @@ export async function generateImage(
   if (provider && provider !== "cloudflare" && baseUrl && apiKey) {
     Logger.info("[ai] Using OpenAI compat for image", { baseUrl: baseUrl.slice(0, 30), apiKeyPrefix: apiKey.slice(0, 6), model: imageModel });
     try {
-      const base = baseUrl.replace(/\/+$/, "");
-      const url = base.includes("/images/generations") ? base : base + "/v1/images/generations";
+      // 从完整 URL 中提取 base（去掉 /v1/chat/completions 等路径）
+      let base = baseUrl.replace(/\/+$/, "");
+      base = base.replace(/\/v1\/(chat\/completions|images\/generations|videos\/generations)$/i, "");
+      const url = base + "/v1/images/generations";
       const resp = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
@@ -397,9 +400,11 @@ export async function generateVideo(
 
   // 非 Cloudflare 提供商：走 OpenAI 兼容 API
   if (provider && provider !== "cloudflare" && baseUrl && apiKey) {
+    Logger.info("[ai] Using OpenAI compat for video", { baseUrl: baseUrl.slice(0, 30), apiKeyPrefix: apiKey.slice(0, 6), model: videoModel });
     try {
-      const base = baseUrl.replace(/\/+$/, "");
-      const url = base.includes("/videos/generations") ? base : base + "/v1/videos/generations";
+      let base = baseUrl.replace(/\/+$/, "");
+      base = base.replace(/\/v1\/(chat\/completions|images\/generations|videos\/generations)$/i, "");
+      const url = base + "/v1/videos/generations";
       const resp = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
