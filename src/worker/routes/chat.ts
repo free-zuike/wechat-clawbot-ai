@@ -67,12 +67,22 @@ export async function handleChat(request: Request, env: Env): Promise<Response> 
       Logger.info(`[chat][${requestId}] ${isVideo ? "video" : "image"} generation`, { prompt: prompt.slice(0, 50), model: modelUsed });
 
       if (isVideo) {
-        // 管理后台：同步生成视频（用户可等待）
-        const videoUrl = await generateVideo(env.AI, prompt, videoModel, aiConfig.provider, aiConfig.baseUrl, aiConfig.apiKey);
-        if (videoUrl) {
-          return json({ reply: `🎬 ${modelInfo}${videoModel}\n\n视频已生成！\n\n<video src="${videoUrl}" controls style="max-width:100%;border-radius:8px"></video>`, source: "ai" } satisfies ChatResponse);
+        // 视频生成慢，走 Queue 异步处理
+        try {
+          await env.CLAWBOT_QUEUE.send({
+            type: "video_generation",
+            prompt,
+            model: videoModel,
+            provider: aiConfig.provider,
+            baseUrl: aiConfig.baseUrl,
+            apiKey: aiConfig.apiKey,
+          }, { delaySeconds: 0 });
+          Logger.info(`[chat][${requestId}] Video task queued`);
+        } catch (e: any) {
+          Logger.error(`[chat][${requestId}] Queue send failed`, { error: e?.message });
+          return json({ reply: `❌ 视频任务提交失败: ${e?.message}`, source: "error" } satisfies ChatResponse);
         }
-        return json({ reply: `❌ 视频生成失败 (${modelInfo}${videoModel})\n请稍后重试或换个描述试试`, source: "error" } satisfies ChatResponse);
+        return json({ reply: `🎬 ${modelInfo}${videoModel}\n\n视频已加入生成队列（约 1-2 分钟），生成完成后会自动推送。`, source: "ai" } satisfies ChatResponse);
       } else {
         // 图片生成快，同步处理
         const imageData = await generateImage(env.AI, prompt, imageModel, aiConfig.provider, aiConfig.baseUrl, aiConfig.apiKey);
