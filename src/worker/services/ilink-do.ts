@@ -4,11 +4,11 @@
 
 import { Logger } from "../utils/error";
 import { generateSessionToken } from "../utils";
-import { getUpdates, sendTextMessage, sendTextChunked, sendTypingStatus, extractMessageText, getQRCodeStatus, MessageType } from "./ilink";
+import { getUpdates, sendTextMessage, sendTextChunked, sendTypingStatus, extractMessageText, getQRCodeStatus, sendMediaMessage, MessageType, MessageItemType } from "./ilink";
 import { callAIWithContext, isImageGenerationRequest, isVideoGenerationRequest, extractMediaPrompt, generateImage, generateVideo } from "./ai";
 import { sendWebhook } from "./webhook";
 import { clearContextSQLite } from "./context";
-import type { ILinkCredentials, WeixinMessage } from "../types";
+import type { ILinkCredentials, WeixinMessage, MessageItem } from "../types";
 
 export interface ILINKSessionState {
   syncBuf: string;
@@ -951,12 +951,20 @@ export class ILinkConnectionDO implements DurableObject {
               Logger.info("[DO] Image generation result", { success: !!imageData, type: typeof imageData });
               if (imageData) {
                 if (typeof imageData === "string") {
-                  // 返回的是 URL，直接发送
-                  await sendTextMessage(useCreds!, from, ctxToken, `图片已生成，请点击查看：\n${imageData}`);
+                  // 返回的是 URL，尝试直接发送图片消息
+                  try {
+                    const item: MessageItem = { type: MessageItemType.IMAGE, image_item: { cdn_url: imageData, url: imageData, width: 0, height: 0 } };
+                    await sendMediaMessage(useCreds!, from, ctxToken, item);
+                    replyContent = `[图片生成] ${mediaPrompt}`;
+                  } catch (sendErr: any) {
+                    Logger.warn("[DO] Direct image send failed, sending URL as text", { error: sendErr?.message });
+                    await sendTextMessage(useCreds!, from, ctxToken, `图片已生成，请点击查看：\n${imageData}`);
+                    replyContent = `[图片生成] ${mediaPrompt}`;
+                  }
                 } else {
                   await sendTextMessage(useCreds!, from, ctxToken, "图片已生成，请在管理后台 AI 测试面板查看");
+                  replyContent = `[图片生成] ${mediaPrompt}`;
                 }
-                replyContent = `[图片生成] ${mediaPrompt}`;
               } else {
                 await sendTextMessage(useCreds!, from, ctxToken, "图片生成失败，请稍后重试或换个描述试试");
               }
