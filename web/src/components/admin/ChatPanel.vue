@@ -49,6 +49,7 @@ defineProps<{
 defineEmits(["send", "update:input"]);
 
 function renderMessage(text: string): { isImage: boolean; html: string; text: string } {
+  // 检测 markdown 图片
   const imgMatch = text.match(/!\[([^\]]*)\]\(([^)]+)\)/);
   if (imgMatch) {
     const alt = imgMatch[1] || "生成的图片";
@@ -57,7 +58,19 @@ function renderMessage(text: string): { isImage: boolean; html: string; text: st
     const suffix = text.slice(text.indexOf(imgMatch[0]) + imgMatch[0].length);
     return {
       isImage: true,
-      html: `${prefix ? `<div style="margin-bottom:8px">${prefix}</div>` : ''}<img src="${src}" alt="${alt}" style="max-width:100%;max-height:400px;border-radius:8px;margin:4px 0;object-fit:contain" />${suffix ? `<div style="margin-top:8px">${suffix}</div>` : ''}`,
+      html: `${prefix ? `<div style="margin-bottom:8px;white-space:pre-wrap">${prefix}</div>` : ''}<img src="${src}" alt="${alt}" style="max-width:100%;max-height:400px;border-radius:8px;margin:4px 0;object-fit:contain" />${suffix ? `<div style="margin-top:8px;white-space:pre-wrap">${suffix}</div>` : ''}`,
+      text,
+    };
+  }
+  // 检测视频标签
+  const vidMatch = text.match(/<video[^>]+src="([^"]+)"[^>]*>/);
+  if (vidMatch) {
+    const src = vidMatch[1];
+    const prefix = text.slice(0, text.indexOf(vidMatch[0]));
+    const suffix = text.slice(text.indexOf(vidMatch[0]) + vidMatch[0].length);
+    return {
+      isImage: true,
+      html: `${prefix ? `<div style="margin-bottom:8px;white-space:pre-wrap">${prefix}</div>` : ''}<video src="${src}" controls style="max-width:100%;max-height:400px;border-radius:8px;margin:4px 0"></video>${suffix ? `<div style="margin-top:8px;white-space:pre-wrap">${suffix}</div>` : ''}`,
       text,
     };
   }
