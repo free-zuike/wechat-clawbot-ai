@@ -435,8 +435,9 @@ export async function generateVideo(
         });
         if (!statusResp.ok) continue;
         const statusData = await statusResp.json() as any;
-        const status = statusData?.data?.status || statusData?.status;
-        const progress = statusData?.data?.progress || statusData?.progress || "0%";
+        // 状态可能在顶层或 data 内
+        const status = statusData?.status || statusData?.data?.status;
+        const progress = statusData?.progress ?? statusData?.data?.progress ?? "0%";
         Logger.info("[ai] Video status", { status, progress, attempt: i + 1 });
 
         if (status === "completed" || status === "COMPLETED" || status === "success" || status === "SUCCESS") {
@@ -451,8 +452,8 @@ export async function generateVideo(
             return videoUrl;
           }
         }
-        if (status === "failed" || status === "FAILED" || status === "error") {
-          Logger.error("[ai] Video generation failed", { error: statusData?.data?.error || statusData?.fail_reason });
+        if (status === "failed" || status === "FAILED" || status === "error" || status === "ERROR") {
+          Logger.error("[ai] Video generation failed", { error: statusData?.data?.error || statusData?.fail_reason || statusData?.error });
           return null;
         }
       }
