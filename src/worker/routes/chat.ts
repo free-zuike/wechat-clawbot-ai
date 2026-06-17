@@ -67,11 +67,21 @@ export async function handleChat(request: Request, env: Env): Promise<Response> 
       Logger.info(`[chat][${requestId}] ${isVideo ? "video" : "image"} generation`, { prompt: prompt.slice(0, 50), model: usedModel });
 
       if (isVideo) {
-        const videoUrl = await generateVideo(env.AI, prompt, videoModel, aiConfig.provider, aiConfig.baseUrl, aiConfig.apiKey);
-        if (videoUrl) {
-          return json({ reply: `🎬 ${modelInfo}${videoModel}\n\n视频已生成！\n\n${videoUrl}`, source: "ai" } satisfies ChatResponse);
-        }
-        return json({ reply: `❌ 视频生成失败 (${modelInfo}${videoModel})\n请稍后重试或换个描述试试`, source: "error" } satisfies ChatResponse);
+        // 视频生成耗时长（~2分钟），Worker 无法等待
+        // 启动后台 fetch 执行生成（Worker 会在响应发送后继续执行 pending I/O）
+        const baseUrl = aiConfig.baseUrl || "";
+        const apiKey = aiConfig.apiKey || "";
+        const base = baseUrl.replace(/\/+$/, "").replace(/\/v1\/(chat\/completions|video\/generations)$/i, "");
+        // 后台提交视频任务
+        fetch(`${base}/v1/video/generations`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
+          body: JSON.stringify({ model: videoModel, prompt, duration: 5 }),
+        }).then(r => r.json()).then((data: any) => {
+          Logger.info(`[chat] Video task submitted`, { taskId: data.task_id });
+        }).catch(() => {});
+
+        return json({ reply: `🎬 ${modelInfo}${videoModel}\n\n视频已提交生成（约 1-2 分钟），请稍后在微信中查看。`, source: "ai" } satisfies ChatResponse);
       } else {
         const imageData = await generateImage(env.AI, prompt, imageModel, aiConfig.provider, aiConfig.baseUrl, aiConfig.apiKey);
         if (imageData) {
