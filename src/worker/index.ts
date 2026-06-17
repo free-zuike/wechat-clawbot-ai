@@ -8,6 +8,7 @@
 import { router } from "./utils/router";
 import { metrics } from "./utils/metrics";
 import { errorTracker } from "./utils/metrics";
+import { Logger } from "./utils/error";
 import { ILinkConnectionDO } from "./services/ilink-do";
 
 // 导出 Durable Objects 类
@@ -17,6 +18,7 @@ export interface Env {
   AI: any;
   ASSETS: { fetch: (request: Request) => Promise<Response> };
   CLAWBOT_KV: KVNamespace;
+  VIDEO_QUEUE: Queue;
   ADMIN_PASSWORD?: string;
   AI_SYSTEM_PROMPT?: string;
   AI_MODEL?: string;
@@ -51,6 +53,36 @@ export default {
     } catch (e: any) {
       console.error("[cron] error:", e);
       errorTracker.trackError('CRON_ERROR', e.message, 'scheduled');
+    }
+  },
+
+  // 队列消费者：处理视频生成等长任务
+  async queue(batch: MessageBatch<any>, env: Env): Promise<void> {
+    for (const msg of batch.messages) {
+      const { type, prompt, videoModel, provider, baseUrl, apiKey, toUserId, contextToken, accountId } = msg.body;
+      Logger.info("[queue] Processing video generation", { type, prompt: prompt?.slice(0, 50) });
+
+      if (type === "video_generation") {
+        try {
+          const { generateVideo } = await import("./services/ai");
+          const videoUrl = await generateVideo(env.AI, prompt, videoModel, provider, baseUrl, apiKey);
+
+          if (videoUrl) {
+            // 通过 DO 发送视频消息
+            const doId = env.ILINK_CONNECTION.idFromName("main");
+            const doStub = env.ILINK_CONNECTION.get(doId);
+            await doStub.fetch(new Request("http://localhost/send-video", {
+              method: "POST",
+              body: JSON.stringify({ videoUrl, toUserId, contextToken, accountId, model: videoModel, provider }),
+            }));
+            Logger.info("[queue] Video generated and sent", { videoUrl: videoUrl.slice(0, 50) });
+          } else {
+            Logger.error("[queue] Video generation failed");
+          }
+        } catch (e: any) {
+          Logger.error("[queue] Video generation error", { error: e?.message });
+        }
+      }
     }
   },
 };

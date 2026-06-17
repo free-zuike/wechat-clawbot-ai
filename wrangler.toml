@@ -28,6 +28,16 @@ crons = ["*/2 * * * *"]
 [ai]
 binding = "AI"
 
+# ===== Queues（异步任务）=====
+[[queues.producers]]
+queue = "video-generation"
+binding = "VIDEO_QUEUE"
+
+[[queues.consumers]]
+queue = "video-generation"
+max_retries = 2
+max_batch_size = 1
+
 # ===== KV 存储 (必需) =====
 [[kv_namespaces]]
 binding = "CLAWBOT_KV"

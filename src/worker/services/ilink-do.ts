@@ -212,6 +212,9 @@ export class ILinkConnectionDO implements DurableObject {
     if (url.pathname === "/save-creds") {
       return this.handleSaveCreds(request);
     }
+    if (url.pathname === "/send-video") {
+      return this.handleSendVideo(request);
+    }
     if (url.pathname === "/get-creds") {
       return this.handleGetCreds();
     }
@@ -607,6 +610,50 @@ export class ILinkConnectionDO implements DurableObject {
       return new Response(JSON.stringify({ error: e.message }), {
         status: 500,
         headers: { "Content-Type": "application/json" },
+      });
+    }
+  }
+
+  // ========== 发送视频消息（由 Queue 消费者调用）==========
+
+  private async handleSendVideo(request: Request): Promise<Response> {
+    try {
+      const body = await request.json() as { videoUrl: string; toUserId: string; contextToken: string; accountId?: string; model?: string; provider?: string };
+      const { videoUrl, toUserId, contextToken, model, provider } = body;
+
+      if (!videoUrl || !toUserId) {
+        return new Response(JSON.stringify({ error: "缺少参数" }), {
+          status: 400, headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      // 找到对应账号的凭证
+      const accountId = body.accountId;
+      let creds = this.ilinkCreds;
+      if (accountId && this.accounts.has(accountId)) {
+        creds = this.accounts.get(accountId)!.creds;
+      }
+
+      if (!creds) {
+        return new Response(JSON.stringify({ error: "未登录" }), {
+          status: 401, headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      const modelInfo = `🤖 ${provider || "unknown"} · ${model || "unknown"}`;
+      try {
+        await sendVideoMessage(creds, toUserId, contextToken, videoUrl);
+      } catch {
+        await sendTextMessage(creds, toUserId, contextToken, `🎬 ${modelInfo}\n\n视频已生成：\n${videoUrl}`);
+      }
+
+      return new Response(JSON.stringify({ success: true }), {
+        headers: { "Content-Type": "application/json" },
+      });
+    } catch (e: any) {
+      Logger.error("[DO] Send video error", { error: e.message });
+      return new Response(JSON.stringify({ error: e.message }), {
+        status: 500, headers: { "Content-Type": "application/json" },
       });
     }
   }

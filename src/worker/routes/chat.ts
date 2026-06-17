@@ -67,21 +67,22 @@ export async function handleChat(request: Request, env: Env): Promise<Response> 
       Logger.info(`[chat][${requestId}] ${isVideo ? "video" : "image"} generation`, { prompt: prompt.slice(0, 50), model: usedModel });
 
       if (isVideo) {
-        // 视频生成耗时长（~2分钟），Worker 无法等待
-        // 启动后台 fetch 执行生成（Worker 会在响应发送后继续执行 pending I/O）
-        const baseUrl = aiConfig.baseUrl || "";
-        const apiKey = aiConfig.apiKey || "";
-        const base = baseUrl.replace(/\/+$/, "").replace(/\/v1\/(chat\/completions|video\/generations)$/i, "");
-        // 后台提交视频任务
-        fetch(`${base}/v1/video/generations`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
-          body: JSON.stringify({ model: videoModel, prompt, duration: 5 }),
-        }).then(r => r.json()).then((data: any) => {
-          Logger.info(`[chat] Video task submitted`, { taskId: data.task_id });
-        }).catch(() => {});
-
-        return json({ reply: `🎬 ${modelInfo}${videoModel}\n\n视频已提交生成（约 1-2 分钟），请稍后在微信中查看。`, source: "ai" } satisfies ChatResponse);
+        // 视频生成耗时长（~2分钟），通过 Queue 异步处理
+        try {
+          await env.VIDEO_QUEUE.send({
+            type: "video_generation",
+            prompt,
+            videoModel,
+            provider: aiConfig.provider,
+            baseUrl: aiConfig.baseUrl,
+            apiKey: aiConfig.apiKey,
+          }, { delaySeconds: 0 });
+          Logger.info(`[chat][${requestId}] Video task queued`);
+        } catch (e: any) {
+          Logger.error(`[chat][${requestId}] Queue send failed`, { error: e?.message });
+          return json({ reply: `❌ 视频任务提交失败: ${e?.message}`, source: "error" } satisfies ChatResponse);
+        }
+        return json({ reply: `🎬 ${modelInfo}${videoModel}\n\n视频已加入生成队列（约 1-2 分钟），生成完成后会自动发送到微信。`, source: "ai" } satisfies ChatResponse);
       } else {
         const imageData = await generateImage(env.AI, prompt, imageModel, aiConfig.provider, aiConfig.baseUrl, aiConfig.apiKey);
         if (imageData) {
