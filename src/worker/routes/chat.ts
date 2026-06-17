@@ -52,20 +52,26 @@ export async function handleChat(request: Request, env: Env): Promise<Response> 
     const aiConfig = resolveAIConfig(kv);
     const systemPrompt = (kv.aiSystemPrompt as string) || "";
 
+    // 从预设中读取图片/视频模型
+    const presets = (kv.aiPresets as any[]) || [];
+    const activePreset = presets.find((p: any) => p.id === aiConfig.provider);
+    const imageModel = activePreset?.imageModel || "";
+    const videoModel = activePreset?.videoModel || "";
+
     // 检查图片/视频生成请求
     if (isImageGenerationRequest(trimmed) || isVideoGenerationRequest(trimmed)) {
       const isVideo = isVideoGenerationRequest(trimmed);
       const prompt = extractMediaPrompt(trimmed, isVideo ? "video" : "image");
-      Logger.info(`[chat][${requestId}] ${isVideo ? "video" : "image"} generation`, { prompt: prompt.slice(0, 50) });
+      Logger.info(`[chat][${requestId}] ${isVideo ? "video" : "image"} generation`, { prompt: prompt.slice(0, 50), model: isVideo ? videoModel : imageModel });
 
       if (isVideo) {
-        const videoUrl = await generateVideo(env.AI, prompt, aiConfig.model, aiConfig.provider, aiConfig.baseUrl, aiConfig.apiKey);
+        const videoUrl = await generateVideo(env.AI, prompt, videoModel, aiConfig.provider, aiConfig.baseUrl, aiConfig.apiKey);
         if (videoUrl) {
           return json({ reply: `视频已生成！\n\n视频链接: ${videoUrl}`, source: "ai" } satisfies ChatResponse);
         }
         return json({ reply: "视频生成失败，请稍后重试或换个描述试试", source: "error" } satisfies ChatResponse);
       } else {
-        const imageData = await generateImage(env.AI, prompt, aiConfig.model, aiConfig.provider, aiConfig.baseUrl, aiConfig.apiKey);
+        const imageData = await generateImage(env.AI, prompt, imageModel, aiConfig.provider, aiConfig.baseUrl, aiConfig.apiKey);
         if (imageData) {
           const base64 = btoa(String.fromCharCode(...imageData));
           const dataUrl = `data:image/png;base64,${base64}`;
