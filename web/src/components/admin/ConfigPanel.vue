@@ -182,7 +182,6 @@ function selectProvider(id: string) {
     props.config.aiApiKey = preset?.apiKey || "";
     props.config.aiMaxTokens = preset?.maxTokens || 1024;
   }
-  emit("save");
 }
 
 function deleteProvider(id: string, event: Event) {

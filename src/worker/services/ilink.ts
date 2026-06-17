@@ -453,6 +453,37 @@ export async function sendImageMessage(
 
   throw new ClawBotError('ILINK_IMAGE_SEND_FAILED', 'All image send methods failed');
 }
+// ========== 发送视频消息 ==========
+export async function sendVideoMessage(
+  creds: ILinkCredentials,
+  toUserId: string,
+  contextToken: string,
+  videoUrl: string,
+): Promise<void> {
+  const msg: WeixinMessage = {
+    from_user_id: "",
+    to_user_id: toUserId,
+    client_id: generateClientId(),
+    message_type: MessageType.BOT,
+    message_state: MessageState.FINISH,
+    context_token: contextToken,
+    item_list: [{
+      type: MessageItemType.VIDEO,
+      video_item: { url: videoUrl, thumb_url: "", width: 0, height: 0, duration: 0 },
+    }],
+  };
+
+  await withRetry(
+    () => post(creds, "ilink/bot/sendmessage", { msg }, DEFAULT_API_MS),
+    {
+      retries: 2,
+      baseDelayMs: 500,
+      shouldRetry: (error) => !(error instanceof ClawBotError && error.code === 'ILINK_SESSION_TIMEOUT')
+    }
+  );
+  Logger.info("[iLink] Video message sent");
+}
+
 export async function sendFileFromUrl(
   creds: ILinkCredentials,
   toUserId: string,

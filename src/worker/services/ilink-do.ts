@@ -4,7 +4,7 @@
 
 import { Logger } from "../utils/error";
 import { generateSessionToken } from "../utils";
-import { getUpdates, sendTextMessage, sendTextChunked, sendTypingStatus, extractMessageText, getQRCodeStatus, sendImageMessage, uploadAndSendMedia, MessageType, MessageItemType } from "./ilink";
+import { getUpdates, sendTextMessage, sendTextChunked, sendTypingStatus, extractMessageText, getQRCodeStatus, sendImageMessage, sendVideoMessage, uploadAndSendMedia, MessageType, MessageItemType } from "./ilink";
 import { callAIWithContext, isImageGenerationRequest, isVideoGenerationRequest, extractMediaPrompt, generateImage, generateVideo } from "./ai";
 import { sendWebhook } from "./webhook";
 import { clearContextSQLite } from "./context";
@@ -942,8 +942,13 @@ export class ILinkConnectionDO implements DurableObject {
               const modelInfo = `🤖 ${cfg.aiProvider} · ${cfg.aiVideoModel}`;
               Logger.info("[DO] Video generation result", { success: !!videoUrl });
               if (videoUrl) {
-                await sendTextMessage(useCreds!, from, ctxToken, `🎬 ${modelInfo}\n\n视频已生成：\n${videoUrl}`);
-                replyContent = `[视频生成] ${mediaPrompt}`;
+                try {
+                  await sendVideoMessage(useCreds!, from, ctxToken, videoUrl);
+                  replyContent = `[视频生成] ${mediaPrompt}`;
+                } catch {
+                  await sendTextMessage(useCreds!, from, ctxToken, `🎬 ${modelInfo}\n\n视频已生成：\n${videoUrl}`);
+                  replyContent = `[视频生成] ${mediaPrompt}`;
+                }
               } else {
                 await sendTextMessage(useCreds!, from, ctxToken, `❌ 视频生成失败 (${modelInfo})\n请稍后重试或换个描述试试`);
               }
