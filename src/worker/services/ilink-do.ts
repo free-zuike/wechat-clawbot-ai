@@ -878,6 +878,18 @@ export class ILinkConnectionDO implements DurableObject {
     try {
       if (configRaw) {
         kvConfig = JSON.parse(configRaw);
+        // 自动修复旧数据中的掩码密钥
+        if (typeof kvConfig.aiApiKey === "string" && kvConfig.aiApiKey.includes("***")) {
+          kvConfig.aiApiKey = "";
+        }
+        const presets = kvConfig.aiPresets as any[] | undefined;
+        if (Array.isArray(presets)) {
+          for (const p of presets) {
+            if (typeof p.apiKey === "string" && p.apiKey.includes("***")) {
+              p.apiKey = "";
+            }
+          }
+        }
         aiSystemPrompt = aiSystemPrompt || (kvConfig.aiSystemPrompt as string) || "";
         webhookUrl = (kvConfig.webhookUrl as string) || "";
         webhookEnabled = (kvConfig.webhookEnabled as boolean) || false;

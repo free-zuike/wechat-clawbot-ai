@@ -13,6 +13,24 @@ import type { Env } from "../index";
 const KV_CONFIG_KEY = "clawbot:config";
 const CONFIG_FIELDS = ["aiProvider", "aiModel", "aiBaseUrl", "aiApiKey", "aiMaxTokens", "aiSystemPrompt", "webhookUrl", "webhookEnabled", "webhookTitle", "webhookApiKey", "webhookChannels", "aiPresets", "aiCustomProviders"] as const;
 
+// 读取 KV 配置时自动修复所有掩码密钥
+// 旧数据中 apiKey 可能被掩码保存（如 sk-r***yu3C），需要还原为真实值
+function fixMaskedKeys(kvConfig: Record<string, unknown>): void {
+  // 修复顶层 aiApiKey
+  if (typeof kvConfig.aiApiKey === "string" && kvConfig.aiApiKey.includes("***")) {
+    kvConfig.aiApiKey = "";  // 清空，让前端重新配置
+  }
+  // 修复预设中的 apiKey
+  const presets = kvConfig.aiPresets as any[] | undefined;
+  if (Array.isArray(presets)) {
+    for (const p of presets) {
+      if (typeof p.apiKey === "string" && p.apiKey.includes("***")) {
+        p.apiKey = "";
+      }
+    }
+  }
+}
+
 type Preset = {
   id: string;
   model?: string;
@@ -149,6 +167,7 @@ export async function handleConfig(request: Request, env: Env): Promise<Response
       } catch (e) {
         Logger.warn("[config] KV read failed", { error: (e as Error).message });
       }
+      fixMaskedKeys(kvConfig);
       return { ...getConfigResponse(kvConfig), hasEnvOverride: !!(env.AI_MODEL || env.AI_SYSTEM_PROMPT) };
     }, 10000);
 
@@ -180,6 +199,7 @@ export async function handleConfig(request: Request, env: Env): Promise<Response
       } catch (e) {
         Logger.warn("[config] KV read failed", { error: (e as Error).message });
       }
+      fixMaskedKeys(current);
 
       // 版本号乐观锁：防止并发修改覆盖
       const currentVersion = (current._version as number) || 0;
