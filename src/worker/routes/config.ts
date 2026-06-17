@@ -37,7 +37,9 @@ function unmaskKey(newVal: unknown, oldVal: unknown): string {
 }
 
 function isMaskedKey(val: string): boolean {
-  return /^\*{3}$/.test(val) || /^[a-zA-Z0-9]{4}\*{3}[a-zA-Z0-9]{4}$/.test(val);
+  if (!val) return false;
+  // 检测掩码格式：包含 *** 的字符串就是掩码值
+  return val.includes("***");
 }
 
 function findPreset(presets: Preset[], id: string): Preset | undefined {
@@ -104,20 +106,11 @@ export function resolveAIConfig(kvConfig: Record<string, unknown>) {
   const active = findPreset(presets, provider);
 
   if (active && provider !== "cloudflare") {
-    // 检测掩码 key，回退到顶层字段
-    let apiKey = active.apiKey || "";
-    if (isMaskedKey(apiKey)) {
-      apiKey = (kvConfig.aiApiKey as string) || "";
-    }
-    let baseUrl = active.baseUrl || "";
-    if (!baseUrl) {
-      baseUrl = (kvConfig.aiBaseUrl as string) || "";
-    }
     return {
       provider,
       model: active.model || "",
-      baseUrl,
-      apiKey,
+      baseUrl: active.baseUrl || "",
+      apiKey: active.apiKey || "",
       maxTokens: active.maxTokens || 1024,
     };
   }
