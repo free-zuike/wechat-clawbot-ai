@@ -790,7 +790,10 @@ export class ILinkConnectionDO implements DurableObject {
           continue;
         }
 
-        const base = (task.base_url as string).replace(/\/+$/, "").replace(/\/v1\/(chat\/completions|images\/generations|video\/generations)$/i, "");
+        // baseUrl 规范化：去掉末尾斜杠，去掉可能包含的 /v1 和 /v1/video* 路径
+        let base = (task.base_url as string).replace(/\/+$/, "");
+        base = base.replace(/\/v1\/(chat\/completions|images\/generations|videos?\/generations|videos\/?|videos)$/i, "");
+        base = base.replace(/\/v1$/, "");
         const toUserId = task.to_user_id as string | undefined;
         const contextToken = task.context_token as string | undefined;
         const accountId = task.account_id as string | undefined;
@@ -839,8 +842,8 @@ export class ILinkConnectionDO implements DurableObject {
               continue;
             }
           } else {
-            // OpenAI 兼容 API：通过 HTTP 查状态
-            const checkUrl = `${base}/v1/video/generations/${taskId}`;
+            // OpenAI 兼容 API：通过 HTTP 查状态（Agnes 使用 /v1/videos/{id}，非标准 /v1/video/generations）
+            const checkUrl = `${base}/v1/videos/${taskId}`;
             const statusResp = await fetch(checkUrl, {
               headers: { "Authorization": `Bearer ${task.api_key}` },
             });
@@ -889,11 +892,19 @@ export class ILinkConnectionDO implements DurableObject {
             Logger.info("[DO] Video status resolved", { taskId, resolvedStatus: status, statusLower, completedMatched: COMPLETED_STATES.has(statusLower), failedMatched: FAILED_STATES.has(statusLower) });
 
             if (COMPLETED_STATES.has(statusLower)) {
-              // 从更多字段中提取 URL —— 保持顺序优先级，新增更多 Agnes 特有字段
+              // Agnes：URL 在顶层 remixed_from_video_id / video_url；通用兼容：同时尝试 data.*
               const d = statusData?.data;
               const firstResult = Array.isArray(statusData?.result) ? statusData.result[0] : null;
               const firstDataItem = Array.isArray(d) ? d[0] : null;
-              videoUrl = d?.remixed_from_video_id
+              videoUrl = statusData?.remixed_from_video_id
+                || statusData?.video_url
+                || statusData?.video
+                || statusData?.url
+                || statusData?.result_url
+                || statusData?.media_url
+                || statusData?.download_url
+                || statusData?.output
+                || d?.remixed_from_video_id
                 || d?.video_url
                 || d?.result_url
                 || d?.url
@@ -903,13 +914,6 @@ export class ILinkConnectionDO implements DurableObject {
                 || d?.result
                 || d?.media_url
                 || d?.download_url
-                || statusData?.result_url
-                || statusData?.video_url
-                || statusData?.url
-                || statusData?.video
-                || statusData?.output
-                || statusData?.media_url
-                || statusData?.download_url
                 || (firstDataItem && (firstDataItem.url || firstDataItem.video_url || firstDataItem.result_url))
                 || (firstResult && (firstResult.url || firstResult.video_url || firstResult.result_url))
                 || (collectedUrls.length > 0 ? collectedUrls[0].split("=").slice(1).join("=") : null)

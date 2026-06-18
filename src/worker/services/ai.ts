@@ -401,15 +401,17 @@ export async function submitVideoTask(
   Logger.info("[ai] Submitting video task", { prompt: prompt.slice(0, 50), model: videoModel, provider: effectiveProvider });
 
   // 非 Cloudflare 提供商：走 OpenAI 兼容 API，只提交任务，不轮询
+  // Agnes AI 使用 /v1/videos（非标准 /v1/video/generations），请求参数为 num_frames/frame_rate 而非 duration
   if (effectiveProvider !== "cloudflare" && baseUrl && apiKey) {
     try {
       let base = baseUrl.replace(/\/+$/, "");
-      base = base.replace(/\/v1\/(chat\/completions|images\/generations|video\/generations)$/i, "");
-      const submitUrl = base + "/v1/video/generations";
+      base = base.replace(/\/v1\/(chat\/completions|images\/generations|videos?\/generations|videos\/?|videos)$/i, "");
+      base = base.replace(/\/v1$/, ""); // 兼容用户直接填 https://apihub.agnes-ai.com/v1 的情况
+      const submitUrl = base + "/v1/videos";
       const resp = await fetch(submitUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
-        body: JSON.stringify({ model: videoModel, prompt, duration: 5 }),
+        body: JSON.stringify({ model: videoModel, prompt, num_frames: 121, frame_rate: 24 }),
       });
       if (!resp.ok) {
         const errBody = await resp.text().catch(() => "");
@@ -419,6 +421,7 @@ export async function submitVideoTask(
       const submitData = await resp.json() as any;
       Logger.info("[ai] Video task submit raw response", { keys: Object.keys(submitData || {}).slice(0, 10), preview: JSON.stringify(submitData).slice(0, 300) });
 
+      // Agnes 等平台：task_id / id / URL 都在顶层字段；通用兼容：同时尝试顶层和 data.*
       const taskId = submitData.task_id
         || submitData.id
         || submitData.taskId
@@ -428,14 +431,17 @@ export async function submitVideoTask(
         || null;
       if (!taskId) {
         // 同步返回 URL（某些提供商立即返回结果）
-        const url = submitData?.data?.[0]?.url
+        const url = submitData.remixed_from_video_id
+          || submitData.video_url
+          || submitData.video
+          || submitData.url
+          || submitData.result_url
+          || submitData?.data?.[0]?.url
           || submitData?.data?.url
           || submitData?.data?.video_url
           || submitData?.data?.video
-          || submitData?.video
-          || submitData?.video_url
-          || submitData?.url
-          || submitData?.result_url
+          || submitData?.data?.remixed_from_video_id
+          || submitData?.data?.result_url
           || submitData?.output
           || null;
         if (url) {
@@ -501,64 +507,87 @@ export async function generateVideo(
   Logger.info("[ai] Generating video", { prompt: prompt.slice(0, 50), model: videoModel, provider: provider || "cloudflare" });
 
   // 非 Cloudflare 提供商：走 OpenAI 兼容 API
+  // Agnes AI 使用 /v1/videos（非标准 /v1/video/generations），URL 在顶层 remixed_from_video_id
   if (provider && provider !== "cloudflare" && baseUrl && apiKey) {
     Logger.info("[ai] Using OpenAI compat for video", { baseUrl: baseUrl.slice(0, 30), apiKeyPrefix: apiKey.slice(0, 6), model: videoModel });
     try {
       let base = baseUrl.replace(/\/+$/, "");
-      base = base.replace(/\/v1\/(chat\/completions|images\/generations|video\/generations)$/i, "");
+      base = base.replace(/\/v1\/(chat\/completions|images\/generations|videos?\/generations|videos\/?|videos)$/i, "");
+      base = base.replace(/\/v1$/, "");
       // 提交视频生成任务
-      const submitUrl = base + "/v1/video/generations";
+      const submitUrl = base + "/v1/videos";
       const resp = await fetch(submitUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
-        body: JSON.stringify({ model: videoModel, prompt, duration: 5 }),
+        body: JSON.stringify({ model: videoModel, prompt, num_frames: 121, frame_rate: 24 }),
       });
       if (!resp.ok) {
         const errBody = await resp.text().catch(() => "");
-        Logger.error("[ai] Video API error", { status: resp.status, body: errBody.slice(0, 200) });
+        Logger.error("[ai] Video API error", { status: resp.status, body: errBody.slice(0, 200), url: submitUrl });
         return null;
       }
       const submitData = await resp.json() as any;
       const taskId = submitData.task_id || submitData.id;
       if (!taskId) {
-        // 同步返回 URL
-        if (submitData?.data?.[0]?.url) return submitData.data[0].url;
-        if (submitData?.video) return submitData.video;
+        // 同步返回 URL（Agnes：顶层 remixed_from_video_id / url；其他平台：data.*）
+        const url = submitData.remixed_from_video_id
+          || submitData.video_url
+          || submitData.video
+          || submitData.url
+          || submitData.result_url
+          || submitData?.data?.[0]?.url
+          || submitData?.data?.url
+          || submitData?.data?.video_url
+          || null;
+        if (url) {
+          Logger.info("[ai] Video task returned immediate URL", { url: url.slice(0, 80) });
+          return url;
+        }
         Logger.warn("[ai] No task_id in video response", { keys: Object.keys(submitData || {}) });
         return null;
       }
 
-      Logger.info("[ai] Video task submitted", { taskId });
+      Logger.info("[ai] Video task submitted", { taskId, statusUrl: `${base}/v1/videos/${taskId}` });
       // 轮询等待完成（最多 3 分钟，每 10 秒检查一次）
       for (let i = 0; i < 18; i++) {
         await new Promise(r => setTimeout(r, 10000));
         try {
-          const statusUrl = `${base}/v1/video/generations/${taskId}`;
+          const statusUrl = `${base}/v1/videos/${taskId}`;
           const statusResp = await fetch(statusUrl, {
             headers: { "Authorization": `Bearer ${apiKey}` },
           });
           if (!statusResp.ok) {
-            Logger.warn("[ai] Video status check failed", { status: statusResp.status, attempt: i + 1 });
+            Logger.warn("[ai] Video status check failed", { status: statusResp.status, attempt: i + 1, url: statusUrl });
             continue;
           }
           const statusData = await statusResp.json() as any;
-          const status = statusData?.status || statusData?.data?.status;
+          // Agnes: status 在顶层；其他平台：status 可能在 data.*
+          const status = statusData?.status || statusData?.data?.status || statusData?.state;
           const progress = statusData?.progress ?? statusData?.data?.progress ?? "0%";
-          Logger.info("[ai] Video status", { status, progress, attempt: i + 1, taskId });
+          Logger.info("[ai] Video status", { status, progress, attempt: i + 1, taskId, keys: Object.keys(statusData || {}).slice(0, 10) });
 
           if (status === "completed" || status === "COMPLETED" || status === "success" || status === "SUCCESS") {
-            const videoUrl = statusData?.data?.remixed_from_video_id
+            // Agnes：URL 在顶层 remixed_from_video_id；通用兼容：同时尝试顶层和 data.*
+            const videoUrl = statusData?.remixed_from_video_id
+              || statusData?.video_url
+              || statusData?.video
+              || statusData?.url
+              || statusData?.result_url
+              || statusData?.data?.remixed_from_video_id
               || statusData?.data?.video_url
               || statusData?.data?.url
-              || statusData?.result_url
-              || statusData?.video_url;
+              || statusData?.data?.result_url
+              || (Array.isArray(statusData?.data) && statusData.data[0]?.url)
+              || (Array.isArray(statusData?.result) && statusData.result[0]?.url)
+              || null;
             if (videoUrl) {
-              Logger.info("[ai] Video generated", { url: videoUrl });
+              Logger.info("[ai] Video generated", { url: videoUrl.slice(0, 80) });
               return videoUrl;
             }
+            Logger.warn("[ai] Status is completed but no URL found", { fullResponse: JSON.stringify(statusData).slice(0, 500) });
           }
           if (status === "failed" || status === "FAILED" || status === "error" || status === "ERROR") {
-            Logger.error("[ai] Video generation failed", { error: statusData?.data?.error || statusData?.fail_reason || statusData?.error });
+            Logger.error("[ai] Video generation failed", { error: statusData?.data?.error || statusData?.fail_reason || statusData?.error || statusData?.message || JSON.stringify(statusData).slice(0, 200) });
             return null;
           }
         } catch (pollErr: any) {
