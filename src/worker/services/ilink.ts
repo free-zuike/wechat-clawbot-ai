@@ -141,12 +141,22 @@ async function post(
       
       return json;
     } catch (parseError) {
-      Logger.warn(`[iLink] Failed to parse response`, { 
+      Logger.error(`[iLink] Failed to parse response`, { 
+        endpoint,
+        status,
+        error: parseError.message, 
+        response: text.slice(0, 1000),
+        responseLength: text.length,
+        responseHeaders: Object.fromEntries(
+          Array.from(r.headers.entries()).map(([k, v]) => [k, v.slice(0, 200)])
+        ),
+      });
+      throw new ClawBotError('ILINK_PARSE_ERROR', 'Failed to parse response', 502, { 
         error: parseError.message, 
         response: text.slice(0, 500),
-        responseLength: text.length 
+        endpoint,
+        status,
       });
-      throw new ClawBotError('ILINK_PARSE_ERROR', 'Failed to parse response', 502, { error: parseError.message, response: text });
     }
   } catch (e) {
     clearTimeout(timer);
