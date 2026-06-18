@@ -111,7 +111,7 @@ async function post(
       // 检查是否为空对象
       const jsonKeys = Object.keys(json);
       if (jsonKeys.length === 0) {
-        Logger.warn(`[iLink] ${endpoint} returned empty object`, { 
+        Logger.debug(`[iLink] ${endpoint} returned empty object (normal for media messages)`, { 
           endpoint,
           status,
           response: text,
