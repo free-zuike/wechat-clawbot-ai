@@ -266,7 +266,8 @@ export async function getUploadUrl(
   creds: ILinkCredentials,
   req: GetUploadUrlReq,
 ): Promise<{ uploadFullUrl: string }> {
-  const reqWithThumb = { ...req, no_need_thumb: true };
+  // 使用传入的 no_need_thumb 参数，不再强制覆盖
+  const reqWithThumb = { ...req };
 
   Logger.info("[iLink] [Step 2/4] Calling getuploadurl API (raw request)", {
     filekey: reqWithThumb.filekey.substring(0, 16),
@@ -276,6 +277,7 @@ export async function getUploadUrl(
     to_user_id: reqWithThumb.to_user_id.slice(0, 24),
     aeskey_len: reqWithThumb.aeskey.length,
     rawfilemd5: reqWithThumb.rawfilemd5,
+    no_need_thumb: reqWithThumb.no_need_thumb,
   });
 
   const resp = await postJson(
