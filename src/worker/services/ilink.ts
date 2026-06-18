@@ -299,17 +299,28 @@ export async function getUploadUrl(
   fileName: string,
   fileSize: number,
 ): Promise<{ upload_url: string; file_id: string }> {
-  const resp = await post(creds, "ilink/bot/getuploadurl", {
-    file_type: fileType,
-    file_name: fileName,
-    file_size: fileSize,
-  }, DEFAULT_API_MS);
-  Logger.info("[iLink] getUploadUrl full response", { response: JSON.stringify(resp).slice(0, 500) });
-  // 尝试多种字段名
-  const uploadUrl = resp.upload_url || resp.url || resp.uploadUrl || resp.data?.upload_url || resp.data?.url || "";
-  const fileId = resp.file_id || resp.fileId || resp.data?.file_id || resp.data?.fileId || "";
-  Logger.info("[iLink] getUploadUrl parsed", { upload_url: uploadUrl, file_id: fileId });
-  return { upload_url: uploadUrl, file_id: fileId };
+  try {
+    const resp = await post(creds, "ilink/bot/getuploadurl", {
+      file_type: fileType,
+      file_name: fileName,
+      file_size: fileSize,
+    }, DEFAULT_API_MS);
+    Logger.info("[iLink] getUploadUrl full response", { 
+      response: JSON.stringify(resp).slice(0, 500),
+      hasUploadUrl: 'upload_url' in resp,
+      hasUrl: 'url' in resp,
+      hasData: 'data' in resp,
+      keys: Object.keys(resp || {}).slice(0, 20)
+    });
+    // 尝试多种字段名
+    const uploadUrl = resp.upload_url || resp.url || resp.uploadUrl || resp.data?.upload_url || resp.data?.url || "";
+    const fileId = resp.file_id || resp.fileId || resp.data?.file_id || resp.data?.fileId || "";
+    Logger.info("[iLink] getUploadUrl parsed", { upload_url: uploadUrl, file_id: fileId });
+    return { upload_url: uploadUrl, file_id: fileId };
+  } catch (e: any) {
+    Logger.error("[iLink] getUploadUrl failed", { error: e.message, stack: e.stack?.slice(0, 300) });
+    throw e;
+  }
 }
 
 export async function uploadFile(
