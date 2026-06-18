@@ -335,16 +335,21 @@ export async function sendMediaMessage(
   Logger.info("[iLink] ========== 开始发送消息 ==========", {
     toUserId: toUserId,
     fromUserId: creds.userId || "",
-    contextToken: contextToken.slice(0, 20) + "...",
+    userIdMatch: (creds.userId || "") === toUserId ? "SAME" : "DIFFERENT",
+    contextToken: contextToken.slice(0, 30) + "...",
+    contextTokenLength: contextToken.length,
     itemType: item.type,
-    itemData: JSON.stringify(item).slice(0, 300),
-    fullMessage: JSON.stringify({ msg }).slice(0, 800),
+    itemData: JSON.stringify(item),
+    fullMessage: JSON.stringify({ msg }),
+    hasItemList: !!msg.item_list && msg.item_list.length > 0,
+    mediaItemHasCdnMedia: item.type === 2 && !!(item.image_item?.cdn_media || item.video_item?.cdn_media),
   });
 
   try {
     Logger.info("[iLink] POST 请求准备", {
       url: creds.baseUrl + "/ilink/bot/sendmessage",
       botToken: creds.botToken.slice(0, 20) + "...",
+      channelVersion: DEFAULT_CHANNEL_VERSION,
     });
     
     const resp = await withRetry(
@@ -359,6 +364,11 @@ export async function sendMediaMessage(
 
     Logger.info("[iLink] ========== 消息发送成功 ==========", {
       response: JSON.stringify(resp || {}),
+      responseType: typeof resp,
+      hasRet: resp !== undefined && resp !== null && 'ret' in resp,
+      retValue: resp?.ret,
+      hasErrcode: resp !== undefined && resp !== null && 'errcode' in resp,
+      errcodeValue: resp?.errcode,
       toUserId: toUserId,
     });
   } catch (e: any) {
