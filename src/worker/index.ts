@@ -68,6 +68,11 @@ export default {
 
       try {
         if (type === "video_generation") {
+          // 检查必要的配置参数
+          if (!baseUrl || !apiKey) {
+            Logger.error("[queue] Video task missing config", { provider, hasBaseUrl: !!baseUrl, hasApiKey: !!apiKey, apiKeyPrefix: apiKey ? apiKey.slice(0, 6) : "EMPTY" });
+            continue;
+          }
           // 提交视频生成任务到 Agnes AI（使用 /v1/videos，非标准 /v1/video/generations）
           let base = (baseUrl || "").replace(/\/+$/, "");
           base = base.replace(/\/v1\/(chat\/completions|images\/generations|videos?\/generations|videos\/?|videos)$/i, "");
@@ -80,7 +85,7 @@ export default {
 
           if (!resp.ok) {
             const errBody = await resp.text().catch(() => "");
-            Logger.error("[queue] Video submit failed", { status: resp.status, body: errBody.slice(0, 200), url: `${base}/v1/videos` });
+            Logger.error("[queue] Video submit failed", { status: resp.status, body: errBody.slice(0, 200), url: `${base}/v1/videos`, apiKeyPrefix: apiKey.slice(0, 6) });
             continue;
           }
 
