@@ -441,11 +441,12 @@ function buildMediaItem(
   };
 
   if (messageItemType === MessageItemType.IMAGE) {
+    // mid_size 应该是文件大小（明文），不是加密大小
     return {
       type: MessageItemType.IMAGE,
       image_item: {
         media,
-        mid_size: uploaded.fileSizeCiphertext,
+        mid_size: fileSize,
       },
     };
   }
@@ -455,7 +456,7 @@ function buildMediaItem(
       type: MessageItemType.VIDEO,
       video_item: {
         media,
-        video_size: fileSize, // 使用实际文件大小，而非加密大小
+        video_size: fileSize,
         play_length: playLength,
         duration: playLength,
       },

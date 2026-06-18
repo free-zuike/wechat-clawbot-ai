@@ -382,6 +382,14 @@ export async function uploadEncryptedToCdn(
 
     // 从响应头获取下载 param（标准协议：x-encrypted-param）
     const downloadParam = resp.headers.get("x-encrypted-param");
+    const contentDisposition = resp.headers.get("content-disposition");
+
+    Logger.info(`[iLink] CDN response headers analysis`, {
+      headerNames: Array.from(resp.headers.keys()).join(","),
+      xEncryptedParam: downloadParam ? `present(len=${downloadParam.length})` : "MISSING",
+      contentDisposition: contentDisposition || "none",
+      status: resp.status,
+    });
 
     if (downloadParam && downloadParam.length > 0) {
       Logger.info(`[iLink] CDN upload OK — got x-encrypted-param (len=${downloadParam.length})`);
@@ -498,7 +506,8 @@ export async function uploadMediaToCdn(
   });
   Logger.info("[iLink] [Step 2/4] getuploadurl succeeded", {
     uploadFullUrlLen: uploadFullUrl.length,
-    uploadFullUrlPrefix: uploadFullUrl.substring(0, 100),
+    uploadFullUrlPrefix: uploadFullUrl.substring(0, 120),
+    uploadFullUrlContainsCdn: uploadFullUrl.includes("cdn") || uploadFullUrl.includes("weixin"),
     elapsedMs: Date.now() - getUploadStart,
   });
 
