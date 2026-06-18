@@ -386,7 +386,7 @@ export async function generateImage(
   }
 }
 
-// 只提交视频生成任务，不轮询，返回 { taskId, baseUrl, provider, apiKey, model, prompt, url? }
+// 只提交视频生成任务，不轮询，返回 { taskId, videoId?, baseUrl, provider, apiKey, model, prompt, url? }
 // 用于微信消息处理中的异步视频生成：先提交任务，后续由 checkPendingVideos 轮询完成
 export async function submitVideoTask(
   aiBinding: any,
@@ -395,18 +395,18 @@ export async function submitVideoTask(
   provider?: string,
   baseUrl?: string,
   apiKey?: string,
-): Promise<{ taskId: string; baseUrl: string; provider: string; apiKey: string; model: string; prompt: string; url?: string } | null> {
+): Promise<{ taskId: string; videoId?: string; baseUrl: string; provider: string; apiKey: string; model: string; prompt: string; url?: string } | null> {
   const videoModel = model || DEFAULT_VIDEO_MODEL;
   const effectiveProvider = provider || "cloudflare";
   Logger.info("[ai] Submitting video task", { prompt: prompt.slice(0, 50), model: videoModel, provider: effectiveProvider });
 
-  // 非 Cloudflare 提供商：走 OpenAI 兼容 API，只提交任务，不轮询
-  // Agnes AI 使用 /v1/videos（非标准 /v1/video/generations），请求参数为 num_frames/frame_rate 而非 duration
+  // 非 Cloudflare 提供商（如 Agnes AI）：POST /v1/videos，返回 task_id 和 video_id
+  // Agnes 查询结果推荐用 GET /agnesapi?video_id=
   if (effectiveProvider !== "cloudflare" && baseUrl && apiKey) {
     try {
       let base = baseUrl.replace(/\/+$/, "");
       base = base.replace(/\/v1\/(chat\/completions|images\/generations|videos?\/generations|videos\/?|videos)$/i, "");
-      base = base.replace(/\/v1$/, ""); // 兼容用户直接填 https://apihub.agnes-ai.com/v1 的情况
+      base = base.replace(/\/v1$/, "");
       const submitUrl = base + "/v1/videos";
       const resp = await fetch(submitUrl, {
         method: "POST",
@@ -419,47 +419,28 @@ export async function submitVideoTask(
         return null;
       }
       const submitData = await resp.json() as any;
-      Logger.info("[ai] Video task submit raw response", { keys: Object.keys(submitData || {}).slice(0, 10), preview: JSON.stringify(submitData).slice(0, 300) });
+      Logger.info("[ai] Video task submitted", { taskId: submitData.task_id, videoId: submitData.video_id, status: submitData.status });
 
-      // Agnes 等平台：task_id / id / URL 都在顶层字段；通用兼容：同时尝试顶层和 data.*
-      const taskId = submitData.task_id
-        || submitData.id
-        || submitData.taskId
-        || submitData.data?.id
-        || submitData.data?.task_id
-        || (typeof submitData.data === "string" ? null : submitData.data?.taskId)
-        || null;
-      if (!taskId) {
-        // 同步返回 URL（某些提供商立即返回结果）
-        const url = submitData.remixed_from_video_id
-          || submitData.video_url
-          || submitData.video
-          || submitData.url
-          || submitData.result_url
-          || submitData?.data?.[0]?.url
-          || submitData?.data?.url
-          || submitData?.data?.video_url
-          || submitData?.data?.video
-          || submitData?.data?.remixed_from_video_id
-          || submitData?.data?.result_url
-          || submitData?.output
-          || null;
-        if (url) {
-          Logger.info("[ai] Video task returned immediate URL", { url: url.slice(0, 80) });
-          return { taskId: `sync_${Date.now()}`, baseUrl: base, provider: effectiveProvider, apiKey, model: videoModel, prompt, url };
-        }
-        Logger.warn("[ai] No task_id in video response", { keys: Object.keys(submitData || {}) });
+      const taskId = submitData.task_id || submitData.id;
+      const videoId = submitData.video_id;
+      const url = submitData.remixed_from_video_id; // 极少数情况会同步返回
+
+      if (url) {
+        Logger.info("[ai] Video task returned immediate URL", { url: url.slice(0, 80) });
+        return { taskId: taskId || `sync_${Date.now()}`, videoId, baseUrl: base, provider: effectiveProvider, apiKey, model: videoModel, prompt, url };
+      }
+      if (!taskId && !videoId) {
+        Logger.warn("[ai] No task_id or video_id in response", { keys: Object.keys(submitData || {}) });
         return null;
       }
-      Logger.info("[ai] Video task submitted", { taskId, baseUrl: base.slice(0, 60) });
-      return { taskId, baseUrl: base, provider: effectiveProvider, apiKey, model: videoModel, prompt };
+      return { taskId, videoId, baseUrl: base, provider: effectiveProvider, apiKey, model: videoModel, prompt };
     } catch (e: any) {
       Logger.error("[ai] Video task submit failed", { error: e?.message });
       return null;
     }
   }
 
-  // Cloudflare AI：尝试一次调用，如果是异步则返回 taskId
+  // Cloudflare AI
   if (!aiBinding) {
     Logger.warn("[ai] AI binding not available for video");
     return null;
@@ -471,7 +452,6 @@ export async function submitVideoTask(
       duration: 5,
       resolution: "720p",
     });
-    Logger.info("[ai] Cloudflare video submit response", { keys: Object.keys(response || {}).slice(0, 10), state: response?.state, preview: JSON.stringify(response).slice(0, 300) });
 
     if (response?.state === "Processing" || response?.state === "Queued") {
       const jobId = response.id || response.job_id;
@@ -506,15 +486,12 @@ export async function generateVideo(
   const videoModel = model || DEFAULT_VIDEO_MODEL;
   Logger.info("[ai] Generating video", { prompt: prompt.slice(0, 50), model: videoModel, provider: provider || "cloudflare" });
 
-  // 非 Cloudflare 提供商：走 OpenAI 兼容 API
-  // Agnes AI 使用 /v1/videos（非标准 /v1/video/generations），URL 在顶层 remixed_from_video_id
+  // 非 Cloudflare 提供商（如 Agnes AI）：POST /v1/videos 提交，GET /agnesapi?video_id= 查询
   if (provider && provider !== "cloudflare" && baseUrl && apiKey) {
-    Logger.info("[ai] Using OpenAI compat for video", { baseUrl: baseUrl.slice(0, 30), apiKeyPrefix: apiKey.slice(0, 6), model: videoModel });
     try {
       let base = baseUrl.replace(/\/+$/, "");
       base = base.replace(/\/v1\/(chat\/completions|images\/generations|videos?\/generations|videos\/?|videos)$/i, "");
       base = base.replace(/\/v1$/, "");
-      // 提交视频生成任务
       const submitUrl = base + "/v1/videos";
       const resp = await fetch(submitUrl, {
         method: "POST",
@@ -523,81 +500,38 @@ export async function generateVideo(
       });
       if (!resp.ok) {
         const errBody = await resp.text().catch(() => "");
-        Logger.error("[ai] Video API error", { status: resp.status, body: errBody.slice(0, 200), url: submitUrl });
+        Logger.error("[ai] Video submit failed", { status: resp.status, body: errBody.slice(0, 200) });
         return null;
       }
       const submitData = await resp.json() as any;
       const taskId = submitData.task_id || submitData.id;
-      if (!taskId) {
-        // 同步返回 URL（Agnes：顶层 remixed_from_video_id / url；其他平台：data.*）
-        const url = submitData.remixed_from_video_id
-          || submitData.video_url
-          || submitData.video
-          || submitData.url
-          || submitData.result_url
-          || submitData?.data?.[0]?.url
-          || submitData?.data?.url
-          || submitData?.data?.video_url
-          || null;
-        if (url) {
-          Logger.info("[ai] Video task returned immediate URL", { url: url.slice(0, 80) });
-          return url;
-        }
-        Logger.warn("[ai] No task_id in video response", { keys: Object.keys(submitData || {}) });
+      const videoId = submitData.video_id;
+      if (submitData.remixed_from_video_id) return submitData.remixed_from_video_id; // 极少数同步返回
+      if (!taskId && !videoId) {
+        Logger.warn("[ai] No task_id or video_id in response", { keys: Object.keys(submitData || {}) });
         return null;
       }
 
-      Logger.info("[ai] Video task submitted", { taskId, statusUrl: `${base}/v1/videos/${taskId}` });
-      // 轮询等待完成（最多 3 分钟，每 10 秒检查一次）
-      for (let i = 0; i < 18; i++) {
-        await new Promise(r => setTimeout(r, 10000));
+      // 轮询：优先用 video_id 查询（/agnesapi?video_id=），回退到 /v1/videos/{task_id}
+      const statusUrl = videoId ? `${base}/agnesapi?video_id=${encodeURIComponent(videoId)}` : `${base}/v1/videos/${taskId}`;
+      Logger.info("[ai] Video task polling", { taskId, videoId, statusUrl });
+      for (let i = 0; i < 36; i++) {
+        await new Promise(r => setTimeout(r, 5000));
         try {
-          const statusUrl = `${base}/v1/videos/${taskId}`;
-          const statusResp = await fetch(statusUrl, {
-            headers: { "Authorization": `Bearer ${apiKey}` },
-          });
-          if (!statusResp.ok) {
-            Logger.warn("[ai] Video status check failed", { status: statusResp.status, attempt: i + 1, url: statusUrl });
-            continue;
-          }
+          const statusResp = await fetch(statusUrl, { headers: { "Authorization": `Bearer ${apiKey}` } });
+          if (!statusResp.ok) continue;
           const statusData = await statusResp.json() as any;
-          // Agnes: status 在顶层；其他平台：status 可能在 data.*
-          const status = statusData?.status || statusData?.data?.status || statusData?.state;
-          const progress = statusData?.progress ?? statusData?.data?.progress ?? "0%";
-          Logger.info("[ai] Video status", { status, progress, attempt: i + 1, taskId, keys: Object.keys(statusData || {}).slice(0, 10) });
-
-          if (status === "completed" || status === "COMPLETED" || status === "success" || status === "SUCCESS") {
-            // Agnes：URL 在顶层 remixed_from_video_id；通用兼容：同时尝试顶层和 data.*
-            const videoUrl = statusData?.remixed_from_video_id
-              || statusData?.video_url
-              || statusData?.video
-              || statusData?.url
-              || statusData?.result_url
-              || statusData?.data?.remixed_from_video_id
-              || statusData?.data?.video_url
-              || statusData?.data?.url
-              || statusData?.data?.result_url
-              || (Array.isArray(statusData?.data) && statusData.data[0]?.url)
-              || (Array.isArray(statusData?.result) && statusData.result[0]?.url)
-              || null;
-            if (videoUrl) {
-              Logger.info("[ai] Video generated", { url: videoUrl.slice(0, 80) });
-              return videoUrl;
-            }
-            Logger.warn("[ai] Status is completed but no URL found", { fullResponse: JSON.stringify(statusData).slice(0, 500) });
-          }
-          if (status === "failed" || status === "FAILED" || status === "error" || status === "ERROR") {
-            Logger.error("[ai] Video generation failed", { error: statusData?.data?.error || statusData?.fail_reason || statusData?.error || statusData?.message || JSON.stringify(statusData).slice(0, 200) });
+          if (statusData.status === "completed") return statusData.remixed_from_video_id;
+          if (statusData.status === "failed") {
+            Logger.error("[ai] Video generation failed", { error: statusData.error });
             return null;
           }
-        } catch (pollErr: any) {
-          Logger.warn("[ai] Video poll error", { error: pollErr?.message, attempt: i + 1 });
-        }
+        } catch {}
       }
       Logger.error("[ai] Video generation timeout after 3 minutes");
       return null;
     } catch (e: any) {
-      Logger.error("[ai] Video generation failed (OpenAI compat)", { error: e?.message });
+      Logger.error("[ai] Video generation failed", { error: e?.message });
       return null;
     }
   }

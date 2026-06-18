@@ -162,6 +162,7 @@ export class ILinkConnectionDO implements DurableObject {
     `);
 
     // pending_videos 表：待处理的视频生成任务
+    // video_id：Agnes 等平台推荐的查询标识符，优先于 task_id
     await sql.exec(`
       CREATE TABLE IF NOT EXISTS pending_videos (
         task_id TEXT PRIMARY KEY,
@@ -172,6 +173,7 @@ export class ILinkConnectionDO implements DurableObject {
         api_key TEXT NOT NULL,
         status TEXT DEFAULT 'queued',
         video_url TEXT,
+        video_id TEXT,
         to_user_id TEXT,
         context_token TEXT,
         account_id TEXT,
@@ -183,9 +185,8 @@ export class ILinkConnectionDO implements DurableObject {
     Logger.info("[DO] SQLite tables initialized");
   }
 
-  // 确保 pending_videos 表包含 to_user_id / context_token / account_id 列
-  // Durable Object 实例是长生命周期的，旧代码创建的表缺少这些列，
-  // 这个方法用独立的缓存标志避免受 sqliteInitialized 影响。
+  // 确保 pending_videos 表包含 to_user_id / context_token / account_id / video_id 列
+  // video_id：Agnes 等平台推荐用于查询结果的标识符，优先于 task_id
   private async ensurePendingVideosColumns(): Promise<void> {
     if (this.pendingVideosColumnsEnsured) return;
     try {
@@ -198,6 +199,7 @@ export class ILinkConnectionDO implements DurableObject {
         ["to_user_id", "TEXT"],
         ["context_token", "TEXT"],
         ["account_id", "TEXT"],
+        ["video_id", "TEXT"],
       ];
       for (const [col, type] of needAdd) {
         if (!cols.has(col)) {
@@ -727,11 +729,11 @@ export class ILinkConnectionDO implements DurableObject {
     try {
       await this.initSQLite();
       await this.ensurePendingVideosColumns();
-      const body = await request.json() as { taskId: string; prompt: string; model: string; provider: string; baseUrl: string; apiKey: string; toUserId?: string; contextToken?: string; accountId?: string };
+      const body = await request.json() as { taskId: string; videoId?: string; prompt: string; model: string; provider: string; baseUrl: string; apiKey: string; toUserId?: string; contextToken?: string; accountId?: string };
       this.doState.storage.sql.exec(
-        `INSERT OR REPLACE INTO pending_videos (task_id, prompt, model, provider, base_url, api_key, status, to_user_id, context_token, account_id, created_at)
+        `INSERT OR REPLACE INTO pending_videos (task_id, video_id, prompt, model, provider, base_url, api_key, status, to_user_id, context_token, account_id, created_at)
          VALUES (?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?)`,
-        body.taskId, body.prompt, body.model, body.provider, body.baseUrl, body.apiKey, body.toUserId || null, body.contextToken || null, body.accountId || null, Date.now()
+        body.taskId, body.videoId || null, body.prompt, body.model, body.provider, body.baseUrl, body.apiKey, body.toUserId || null, body.contextToken || null, body.accountId || null, Date.now()
       );
       return new Response(JSON.stringify({ success: true }), {
         headers: { "Content-Type": "application/json" },
@@ -842,93 +844,33 @@ export class ILinkConnectionDO implements DurableObject {
               continue;
             }
           } else {
-            // OpenAI 兼容 API：通过 HTTP 查状态（Agnes 使用 /v1/videos/{id}，非标准 /v1/video/generations）
-            const checkUrl = `${base}/v1/videos/${taskId}`;
+            // Agnes AI：优先用 video_id 查询（推荐方式：/agnesapi?video_id=），回退到 /v1/videos/{task_id}
+            // 根据 Agnes 官方文档：status 为 completed 时，remixed_from_video_id 包含视频 URL
+            const videoId = task.video_id as string | undefined;
+            const checkUrl = videoId
+              ? `${base}/agnesapi?video_id=${encodeURIComponent(videoId)}`
+              : `${base}/v1/videos/${taskId}`;
             const statusResp = await fetch(checkUrl, {
               headers: { "Authorization": `Bearer ${task.api_key}` },
             });
             if (!statusResp.ok) {
               const errBody = await statusResp.text().catch(() => "");
-              Logger.warn("[DO] Video status check HTTP failed", { taskId, status: statusResp.status, body: errBody.slice(0, 200), url: checkUrl });
+              Logger.warn("[DO] Video status check failed", { taskId, videoId, status: statusResp.status, body: errBody.slice(0, 200), url: checkUrl });
               continue;
             }
+            const statusData = await statusResp.json() as any;
 
-            const statusTextFull = await statusResp.text();
-            let statusData: any = {};
-            try { statusData = JSON.parse(statusTextFull); } catch { statusData = { raw: statusTextFull }; }
-            Logger.info("[DO] Video status check full response", { taskId, fullBody: statusTextFull.slice(0, 2000), topKeys: Object.keys(statusData || {}), dataKeys: statusData?.data ? Object.keys(statusData.data) : [] });
-
-            // 递归收集所有可能的 URL 字段（辅助调试）
-            const collectUrls = (obj: any, depth = 0): string[] => {
-              if (depth > 6 || !obj || typeof obj !== "object") return [];
-              const results: string[] = [];
-              for (const [k, v] of Object.entries(obj)) {
-                if (typeof v === "string" && v.length > 8 && (v.startsWith("http") || v.includes("://"))) {
-                  results.push(`${k}=${v}`);
-                } else if (v && typeof v === "object") {
-                  results.push(...collectUrls(v, depth + 1));
-                }
-              }
-              return results;
-            };
-            const collectedUrls = collectUrls(statusData);
-            if (collectedUrls.length > 0) {
-              Logger.info("[DO] Video response found potential URLs", { taskId, urls: collectedUrls.map(u => u.slice(0, 120)) });
-            }
-
-            // 从更多可能的字段读取状态
-            const status = statusData?.status
-              || statusData?.data?.status
-              || statusData?.state
-              || statusData?.data?.state
-              || (statusData?.code !== undefined ? String(statusData.code) : undefined)
-              || (typeof statusData?.data === "string" ? "completed" : undefined);
-
-            const COMPLETED_STATES = new Set(["completed", "COMPLETED", "success", "SUCCESS", "done", "DONE", "finished", "200", "ok", "OK"]);
-            const FAILED_STATES = new Set(["failed", "FAILED", "error", "ERROR", "cancelled", "CANCELLED", "rejected", "500", "400"]);
-            const PROCESSING_STATES = new Set(["processing", "in_progress", "queued", "pending", "running", "scheduled", "submitted", "not_start", "NOT_START"]);
-
-            const statusLower = status ? String(status).toLowerCase() : "";
-            Logger.info("[DO] Video status resolved", { taskId, resolvedStatus: status, statusLower, completedMatched: COMPLETED_STATES.has(statusLower), failedMatched: FAILED_STATES.has(statusLower) });
-
-            if (COMPLETED_STATES.has(statusLower)) {
-              // Agnes：URL 在顶层 remixed_from_video_id / video_url；通用兼容：同时尝试 data.*
-              const d = statusData?.data;
-              const firstResult = Array.isArray(statusData?.result) ? statusData.result[0] : null;
-              const firstDataItem = Array.isArray(d) ? d[0] : null;
-              videoUrl = statusData?.remixed_from_video_id
-                || statusData?.video_url
-                || statusData?.video
-                || statusData?.url
-                || statusData?.result_url
-                || statusData?.media_url
-                || statusData?.download_url
-                || statusData?.output
-                || d?.remixed_from_video_id
-                || d?.video_url
-                || d?.result_url
-                || d?.url
-                || d?.video
-                || d?.output_url
-                || d?.output
-                || d?.result
-                || d?.media_url
-                || d?.download_url
-                || (firstDataItem && (firstDataItem.url || firstDataItem.video_url || firstDataItem.result_url))
-                || (firstResult && (firstResult.url || firstResult.video_url || firstResult.result_url))
-                || (collectedUrls.length > 0 ? collectedUrls[0].split("=").slice(1).join("=") : null)
-                || null;
-              Logger.info("[DO] Video task completed — URL extracted", { taskId, urlFound: !!videoUrl, url: videoUrl?.slice(0, 200), candidates: collectedUrls.length });
-            } else if (FAILED_STATES.has(statusLower)) {
+            if (statusData.status === "completed" && statusData.remixed_from_video_id) {
+              videoUrl = statusData.remixed_from_video_id;
+              Logger.info("[DO] Video task completed", { taskId, videoId, url: videoUrl.slice(0, 120) });
+            } else if (statusData.status === "completed") {
+              Logger.warn("[DO] Video status completed but no url returned", { taskId, keys: Object.keys(statusData || {}).slice(0, 15), preview: JSON.stringify(statusData).slice(0, 200) });
+            } else if (statusData.status === "failed") {
               taskFailed = true;
-              Logger.warn("[DO] Video task failed (provider)", { taskId, status, response: JSON.stringify(statusData).slice(0, 200) });
-            } else if (statusLower && PROCESSING_STATES.has(statusLower)) {
-              stillProcessing = true;
-              Logger.info("[DO] Video task still processing", { taskId, status });
+              Logger.warn("[DO] Video task failed (provider)", { taskId, videoId, error: statusData.error });
             } else {
-              // 未知状态 — 也可能是 API 响应结构完全不同
               stillProcessing = true;
-              Logger.warn("[DO] Video task unknown status — treating as processing", { taskId, status, statusType: typeof status, keys: Object.keys(statusData || {}).slice(0, 10) });
+              Logger.info("[DO] Video task still processing", { taskId, videoId, status: statusData.status, progress: statusData.progress });
             }
           }
 
@@ -1339,11 +1281,12 @@ export class ILinkConnectionDO implements DurableObject {
                     .catch((e: any) => Logger.warn("[DO] Sync video file send failed", { error: e?.message }));
                 } else {
                   // 异步任务：存储到 pending_videos，稍后由 checkPendingVideos 处理
+                  // 若返回了 video_id 则一起存储（Agnes 等平台优先用 video_id 查询）
                   await this.ensurePendingVideosColumns();
                   this.doState.storage.sql.exec(
-                    `INSERT OR REPLACE INTO pending_videos (task_id, prompt, model, provider, base_url, api_key, status, to_user_id, context_token, account_id, created_at)
+                    `INSERT OR REPLACE INTO pending_videos (task_id, video_id, prompt, model, provider, base_url, api_key, status, to_user_id, context_token, account_id, created_at)
                      VALUES (?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?)`,
-                    result.taskId, result.prompt, result.model, result.provider, result.baseUrl, result.apiKey, from, ctxToken, useCreds?.accountId || null, Date.now()
+                    result.taskId, result.videoId || null, result.prompt, result.model, result.provider, result.baseUrl, result.apiKey, from, ctxToken, useCreds?.accountId || null, Date.now()
                   );
                   await sendTextMessage(useCreds!, from, ctxToken, `🎬 ${modelInfo}\n\n视频生成任务已提交，稍后生成完成后会自动发送给您。`);
                   replyContent = `[视频生成] ${mediaPrompt}`;
