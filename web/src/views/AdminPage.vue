@@ -62,10 +62,15 @@
               style="padding: 10px 14px; border-bottom: 1px solid var(--border-light); font-size: 13px"
             >
               <div style="display: flex; justify-content: space-between; margin-bottom: 4px">
-                <span style="font-weight: 600; color: var(--link)">📩 {{ msg.data?.fromUserId || '未知' }}</span>
-                <span style="color: var(--text-dim); font-size: 12px">{{ msg.data?.timestamp || '' }}</span>
+                <span style="font-weight: 600; color: var(--link)">📩 {{ msg.data?.fromUserId || (msg.type === 'media_generated' ? '🎨 媒体生成' : '未知') }}</span>
+                <span style="color: var(--text-dim); font-size: 12px">{{ msg.data?.timestamp || msg.timestamp || '' }}</span>
               </div>
-              <div style="color: var(--text-primary)">{{ msg.data?.content || msg.data }}</div>
+              <div v-if="msg.type === 'media_generated' && msg.url" style="margin-top: 4px">
+                <div style="color: var(--text-dim); margin-bottom: 4px">{{ msg.mediaType === 'video' ? '🎬' : '🎨' }} {{ msg.provider || '' }} · {{ msg.model || '' }}</div>
+                <img v-if="msg.mediaType !== 'video'" :src="msg.url" style="max-width: 100%; max-height: 300px; border-radius: 8px" />
+                <video v-else :src="msg.url" controls style="max-width: 100%; max-height: 300px; border-radius: 8px"></video>
+              </div>
+              <div v-else style="color: var(--text-primary)">{{ msg.data?.content || msg.data }}</div>
               <div v-if="msg.data?.replyContent" style="color: var(--success); margin-top: 4px; padding: 6px 8px; background: var(--alert-success-bg); border-radius: 4px">
                 💬 {{ msg.data.replyContent }}
               </div>
@@ -396,15 +401,8 @@ function connectWebSocket() {
       if (msg.type === "connected") return;
       wsMessages.value.push(msg);
       if (wsMessages.value.length > 200) wsMessages.value.shift();
-      // 视频/图片生成完成 → 添加到聊天
-      if (msg.type === "media_generated" && msg.url) {
-        const icon = msg.mediaType === "video" ? "🎬" : "🎨";
-        const modelInfo = `${msg.provider || "unknown"} · ${msg.model || "unknown"}`;
-        chatMessages.value.push({
-          role: "b",
-          text: `${icon} ${modelInfo}\n\n${msg.mediaType === "video" ? "视频已生成！" : "图片已生成！"}\n\n${msg.mediaType === "video" ? `<video src="${msg.url}" controls style="max-width:100%;border-radius:8px"></video>` : `![生成的图片](${msg.url})`}`,
-        });
-      }
+      // 视频/图片生成完成 → 在实时消息区显示（不再添加到 AI 测试聊天区）
+      // media_generated 消息已在 wsMessages 模板中直接渲染图片/视频
     } catch {}
   };
 }
