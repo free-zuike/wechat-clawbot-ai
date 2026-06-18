@@ -1285,7 +1285,7 @@ export class ILinkConnectionDO implements DurableObject {
                   await this.ensurePendingVideosColumns();
                   this.doState.storage.sql.exec(
                     `INSERT OR REPLACE INTO pending_videos (task_id, video_id, prompt, model, provider, base_url, api_key, status, to_user_id, context_token, account_id, created_at)
-                     VALUES (?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?)`,
+                     VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?)`,
                     result.taskId, result.videoId || null, result.prompt, result.model, result.provider, result.baseUrl, result.apiKey, from, ctxToken, useCreds?.accountId || null, Date.now()
                   );
                   await sendTextMessage(useCreds!, from, ctxToken, `🎬 ${modelInfo}\n\n视频生成任务已提交，稍后生成完成后会自动发送给您。`);
