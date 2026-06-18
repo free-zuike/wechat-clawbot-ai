@@ -506,10 +506,35 @@ export async function sendFileFromUrl(
   apiKey?: string,
 ): Promise<void> {
   // 下载文件（带 API Key 认证，部分提供商的媒体 URL 需要鉴权）
+  // 媒体刚生成时 CDN 可能短暂不可用（502），重试几次
   const headers: Record<string, string> = {};
   if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
-  const resp = await fetch(fileUrl, { headers, signal: AbortSignal.timeout(60000) });
-  if (!resp.ok) throw new ClawBotError('ILINK_DOWNLOAD_FAILED', `Download failed: ${resp.status}`);
+  const maxRetries = 4;
+  let resp: Response | null = null;
+  let lastError: string | null = null;
+
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      resp = await fetch(fileUrl, { headers, signal: AbortSignal.timeout(60000) });
+      if (resp.ok) break;
+      lastError = `HTTP ${resp.status}`;
+      Logger.warn("[iLink] Download attempt failed, retrying", { attempt: attempt + 1, status: resp.status, url: fileUrl.substring(0, 60) });
+      if (attempt < maxRetries - 1) {
+        await new Promise((r) => setTimeout(r, 2000 + attempt * 2000));
+      }
+    } catch (e: any) {
+      lastError = e?.message || String(e);
+      Logger.warn("[iLink] Download attempt failed with exception, retrying", { attempt: attempt + 1, error: lastError });
+      if (attempt < maxRetries - 1) {
+        await new Promise((r) => setTimeout(r, 2000 + attempt * 2000));
+      }
+    }
+  }
+
+  if (!resp || !resp.ok) {
+    throw new ClawBotError('ILINK_DOWNLOAD_FAILED', `Download failed after ${maxRetries} retries: ${lastError}`);
+  }
+
   const buffer = await resp.arrayBuffer();
   const contentType = resp.headers.get("content-type") || "application/octet-stream";
 
