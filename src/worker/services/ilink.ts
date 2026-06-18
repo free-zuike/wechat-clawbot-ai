@@ -416,8 +416,10 @@ export async function sendMediaMessage(
 
   Logger.info("[iLink] ========== 开始发送消息 ==========", {
     toUserId: toUserId,
-    fromUserId: creds.userId || "",
-    userIdMatch: (creds.userId || "") === toUserId ? "SAME" : "DIFFERENT",
+    fromUserId: creds.accountId || "",
+    accountId: creds.accountId || "",
+    userId: creds.userId || "",
+    userIdMatch: (creds.accountId || "") === toUserId ? "SAME" : "DIFFERENT",
     contextToken: contextToken.slice(0, 30) + "...",
     contextTokenLength: contextToken.length,
     itemType: item.type,
