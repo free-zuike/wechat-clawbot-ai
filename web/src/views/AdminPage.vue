@@ -65,14 +65,19 @@
                 <span style="font-weight: 600; color: var(--link)">📩 {{ msg.data?.fromUserId || (msg.type === 'media_generated' ? '🎨 媒体生成' : '未知') }}</span>
                 <span style="color: var(--text-dim); font-size: 12px">{{ msg.data?.timestamp || msg.timestamp || '' }}</span>
               </div>
-              <div style="color: var(--text-primary)">{{ msg.data?.content || msg.data }}</div>
+              <div v-if="msg.type === 'media_generated' && msg.url && !msg.data?.replyContent" style="margin-top: 4px">
+                <div style="color: var(--text-dim); margin-bottom: 4px">{{ msg.mediaType === 'video' ? '🎬' : '🎨' }} {{ msg.provider || '' }} · {{ msg.model || '' }}</div>
+                <img v-if="msg.mediaType !== 'video'" :src="msg.url" style="max-width: 100%; max-height: 300px; border-radius: 8px" />
+                <video v-else :src="msg.url" controls style="max-width: 100%; max-height: 300px; border-radius: 8px"></video>
+              </div>
+              <div v-else-if="msg.data?.content || msg.data" style="color: var(--text-primary)">{{ msg.data?.content || msg.data }}</div>
               <div v-if="msg.data?.replyContent" style="color: var(--success); margin-top: 4px; padding: 6px 8px; background: var(--alert-success-bg); border-radius: 4px">
                 💬 {{ msg.data.replyContent }}
               </div>
-              <div v-if="msg.replyMedia" style="margin-top: 6px">
-                <div style="color: var(--text-dim); font-size: 12px; margin-bottom: 4px">{{ msg.replyMedia.mediaType === 'video' ? '🎬' : '🎨' }} {{ msg.replyMedia.provider || '' }} · {{ msg.replyMedia.model || '' }}</div>
-                <img v-if="msg.replyMedia.mediaType !== 'video'" :src="msg.replyMedia.url" style="max-width: 100%; max-height: 300px; border-radius: 8px" />
-                <video v-else :src="msg.replyMedia.url" controls style="max-width: 100%; max-height: 300px; border-radius: 8px"></video>
+              <div v-if="msg._media" style="margin-top: 6px">
+                <div style="color: var(--text-dim); font-size: 12px; margin-bottom: 4px">{{ msg._media.mediaType === 'video' ? '🎬' : '🎨' }} {{ msg._media.provider || '' }} · {{ msg._media.model || '' }}</div>
+                <img v-if="msg._media.mediaType !== 'video'" :src="msg._media.url" style="max-width: 100%; max-height: 300px; border-radius: 8px" />
+                <video v-else :src="msg._media.url" controls style="max-width: 100%; max-height: 300px; border-radius: 8px"></video>
               </div>
             </div>
           </div>
@@ -209,16 +214,28 @@ const pollResult = ref(""); const isPolling = ref(false);
 const wsConnected = ref(false); const wsMessages = ref<Array<{ type: string; data: any }>>([]);
 let ws: WebSocket | null = null; let wsRetryCount = 0;
 
-// 合并实时消息：将 media_generated 附加到前一条 message 的 replyMedia 上
+// 合并实时消息：将 media_generated 附加到相邻的 message 上
 const mergedMessages = computed(() => {
-  const result: Array<{ type: string; data: any; replyMedia?: { url: string; mediaType: string; model?: string; provider?: string } }> = [];
-  for (const msg of wsMessages.value) {
-    if (msg.type === "media_generated" && result.length > 0) {
-      const last = result[result.length - 1];
-      if (last.type === "message" && last.data?.replyContent) {
-        last.replyMedia = { url: msg.url, mediaType: msg.mediaType, model: msg.model, provider: msg.provider };
+  const result: Array<{ type: string; data: any; _media?: { url: string; mediaType: string; model?: string; provider?: string } }> = [];
+  for (let i = 0; i < wsMessages.value.length; i++) {
+    const msg = wsMessages.value[i];
+    if (msg.type === "media_generated" && msg.url) {
+      // 向前合并：如果前一条是 message，附加到前一条
+      if (result.length > 0 && result[result.length - 1].type === "message" && result[result.length - 1].data?.replyContent) {
+        result[result.length - 1]._media = { url: msg.url, mediaType: msg.mediaType, model: msg.model, provider: msg.provider };
         continue;
       }
+      // 向后合并：如果后一条是 message，附加到后一条
+      if (i + 1 < wsMessages.value.length && wsMessages.value[i + 1].type === "message" && wsMessages.value[i + 1].data?.replyContent) {
+        const nextMsg = { ...wsMessages.value[i + 1] };
+        nextMsg._media = { url: msg.url, mediaType: msg.mediaType, model: msg.model, provider: msg.provider };
+        result.push(nextMsg);
+        i++; // 跳过下一条 message
+        continue;
+      }
+      // 无相邻 message，保留为独立条目
+      result.push({ ...msg });
+      continue;
     }
     result.push({ ...msg });
   }
@@ -417,8 +434,15 @@ function connectWebSocket() {
       if (msg.type === "connected") return;
       wsMessages.value.push(msg);
       if (wsMessages.value.length > 200) wsMessages.value.shift();
-      // 视频/图片生成完成 → 在实时消息区显示（不再添加到 AI 测试聊天区）
-      // media_generated 消息已在 wsMessages 模板中直接渲染图片/视频
+      // Queue 生成的图片/视频 → 添加到 AI 测试聊天区
+      if (msg.type === "media_generated" && msg.url) {
+        const icon = msg.mediaType === "video" ? "🎬" : "🎨";
+        const modelInfo = `${msg.provider || "unknown"} · ${msg.model || "unknown"}`;
+        chatMessages.value.push({
+          role: "b",
+          text: `${icon} ${modelInfo}\n\n${msg.mediaType === "video" ? "视频已生成！" : "图片已生成！"}\n\n${msg.mediaType === "video" ? `<video src="${msg.url}" controls style="max-width:100%;border-radius:8px"></video>` : `![生成的图片](${msg.url})`}`,
+        });
+      }
     } catch {}
   };
 }
