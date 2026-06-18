@@ -1025,8 +1025,22 @@ export class ILinkConnectionDO implements DurableObject {
   // ========== 广播图片到 WebSocket（由 Queue 消费者调用）==========
   private async handleBroadcastImage(request: Request): Promise<Response> {
     try {
-      const body = await request.json() as { imageData: string | null; model?: string; provider?: string };
-      const { imageData, model, provider } = body;
+      const body = await request.json() as { imageData: string | null; model?: string; provider?: string; error?: boolean; message?: string };
+      const { imageData, model, provider, error: isError, message: errorMsg } = body;
+
+      // 错误通知（图片/视频生成失败）
+      if (isError) {
+        this.broadcastToWebSockets({
+          type: "media_error",
+          message: errorMsg || "生成失败",
+          model,
+          provider,
+        });
+        Logger.info("[DO] Error broadcasted to WebSocket", { errorMsg });
+        return new Response(JSON.stringify({ success: true }), {
+          headers: { "Content-Type": "application/json" },
+        });
+      }
 
       if (!imageData) {
         return new Response(JSON.stringify({ error: "缺少图片数据" }), {

@@ -80,11 +80,23 @@ export default {
             Logger.info("[queue] Image generated and broadcast");
           } else {
             Logger.error("[queue] Image generation returned null");
+            const doId = env.ILINK_CONNECTION.idFromName("main");
+            const doStub = env.ILINK_CONNECTION.get(doId);
+            await doStub.fetch(new Request("http://localhost/broadcast-image", {
+              method: "POST",
+              body: JSON.stringify({ error: true, message: `图片生成失败 (${provider} · ${model})`, model, provider }),
+            }));
           }
         } else if (type === "video_generation") {
           // 检查必要的配置参数
           if (!baseUrl || !apiKey) {
             Logger.error("[queue] Video task missing config", { provider, hasBaseUrl: !!baseUrl, hasApiKey: !!apiKey, apiKeyPrefix: apiKey ? apiKey.slice(0, 6) : "EMPTY" });
+            const doId = env.ILINK_CONNECTION.idFromName("main");
+            const doStub = env.ILINK_CONNECTION.get(doId);
+            await doStub.fetch(new Request("http://localhost/broadcast-image", {
+              method: "POST",
+              body: JSON.stringify({ error: true, message: `视频任务提交失败: 缺少配置参数 (${provider})`, model, provider }),
+            }));
             continue;
           }
           // 提交视频生成任务到 Agnes AI（使用 /v1/videos，非标准 /v1/video/generations）

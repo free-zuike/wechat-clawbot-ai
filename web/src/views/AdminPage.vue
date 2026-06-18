@@ -79,6 +79,12 @@
                 <img v-if="msg._media.mediaType !== 'video'" :src="msg._media.url" style="max-width: 100%; max-height: 300px; border-radius: 8px" />
                 <video v-else :src="msg._media.url" controls style="max-width: 100%; max-height: 300px; border-radius: 8px"></video>
               </div>
+              <div v-if="msg._error" style="color: var(--error); margin-top: 4px; padding: 6px 8px; background: var(--alert-error-bg); border-radius: 4px">
+                ❌ {{ msg._error }}
+              </div>
+              <div v-if="msg.type === 'media_error'" style="color: var(--error); margin-top: 4px; padding: 6px 8px; background: var(--alert-error-bg); border-radius: 4px">
+                ❌ {{ msg.message || '生成失败' }}
+              </div>
             </div>
           </div>
         </div>
@@ -216,7 +222,7 @@ let ws: WebSocket | null = null; let wsRetryCount = 0;
 
 // 合并实时消息：将 media_generated 附加到相邻的 message 上
 const mergedMessages = computed(() => {
-  const result: Array<{ type: string; data: any; _media?: { url: string; mediaType: string; model?: string; provider?: string } }> = [];
+  const result: Array<{ type: string; data: any; _media?: { url: string; mediaType: string; model?: string; provider?: string }; _error?: string }> = [];
   for (let i = 0; i < wsMessages.value.length; i++) {
     const msg = wsMessages.value[i];
     if (msg.type === "media_generated" && msg.url) {
@@ -234,6 +240,15 @@ const mergedMessages = computed(() => {
         continue;
       }
       // 无相邻 message，保留为独立条目
+      result.push({ ...msg });
+      continue;
+    }
+    if (msg.type === "media_error") {
+      // 错误通知：向后合并到 message，或独立显示
+      if (result.length > 0 && result[result.length - 1].type === "message" && result[result.length - 1].data?.replyContent) {
+        result[result.length - 1]._error = msg.message;
+        continue;
+      }
       result.push({ ...msg });
       continue;
     }
@@ -441,6 +456,13 @@ function connectWebSocket() {
         chatMessages.value.push({
           role: "b",
           text: `${icon} ${modelInfo}\n\n${msg.mediaType === "video" ? "视频已生成！" : "图片已生成！"}\n\n${msg.mediaType === "video" ? `<video src="${msg.url}" controls style="max-width:100%;border-radius:8px"></video>` : `![生成的图片](${msg.url})`}`,
+        });
+      }
+      // Queue 生成失败 → 添加到 AI 测试聊天区
+      if (msg.type === "media_error") {
+        chatMessages.value.push({
+          role: "b",
+          text: `❌ ${msg.message || "生成失败"}`,
         });
       }
     } catch {}
