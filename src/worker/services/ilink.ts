@@ -498,9 +498,11 @@ export async function sendImageMessage(
   _apiKey?: string,
 ): Promise<void> {
   // iLink CDN 不接受外部 URL，必须先下载再上传
-  // 下载（带 API Key，部分 CDN 需要鉴权）
+  // Agnes AI 等平台返回的 CDN URL 已是预认证 URL，无需再带 Authorization 头
+  // 否则 Agnes CDN 会返回 401（它不接受额外的 Bearer 鉴权）
+  const needsAuth = _apiKey && !imageUrl.includes("platform-outputs.agnes-ai.space");
   const headers: Record<string, string> = {};
-  if (_apiKey) headers["Authorization"] = `Bearer ${_apiKey}`;
+  if (needsAuth) headers["Authorization"] = `Bearer ${_apiKey}`;
   const imgResp = await fetch(imageUrl, { headers, signal: AbortSignal.timeout(60000) });
   if (!imgResp.ok) {
     throw new ClawBotError("ILINK_IMAGE_DOWNLOAD_FAILED", `Image download HTTP ${imgResp.status}`, 502);
