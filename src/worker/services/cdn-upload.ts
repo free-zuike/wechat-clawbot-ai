@@ -330,7 +330,22 @@ export async function getUploadUrl(
   }
 
   Logger.info(`[iLink] getuploadurl success — url=${uploadFullUrl.slice(0, 120)}...`);
-  return { uploadFullUrl };
+  
+  // 提取缩略图信息（如果 API 返回的话）
+  const thumbUploadParam = respObj["thumb_upload_param"] || respObj["thumbUploadParam"] || respObj["thumb_param"];
+  const thumbSize = respObj["thumb_size"] || respObj["thumbSize"] || 0;
+  const thumbWidth = respObj["thumb_width"] || respObj["thumbWidth"] || 0;
+  const thumbHeight = respObj["thumb_height"] || respObj["thumbHeight"] || 0;
+  
+  Logger.info(`[iLink] getuploadurl thumb info`, {
+    hasThumbParam: !!thumbUploadParam,
+    thumbParamLen: thumbUploadParam ? (thumbUploadParam as string).length : 0,
+    thumbSize,
+    thumbWidth,
+    thumbHeight,
+  });
+  
+  return { uploadFullUrl, thumbUploadParam, thumbSize, thumbWidth, thumbHeight };
 }
 
 // ========== CDN 上传（POST 加密文件到 upload_full_url）==========
@@ -460,6 +475,12 @@ export interface UploadedMediaInfo {
   fileSize: number;
   /** 密文大小（AES-128-ECB + PKCS#7 填充） */
   fileSizeCiphertext: number;
+  /** 缩略图大小 */
+  thumbSize: number;
+  /** 缩略图宽度 */
+  thumbWidth: number;
+  /** 缩略图高度 */
+  thumbHeight: number;
 }
 
 /**
@@ -496,7 +517,7 @@ export async function uploadMediaToCdn(
   // 2. 调用 getuploadurl
   Logger.info("[iLink] [Step 2/4] Calling getuploadurl API", { baseUrl: creds.baseUrl.substring(0, 80) });
   const getUploadStart = Date.now();
-  const { uploadFullUrl } = await getUploadUrl(creds, {
+  const { uploadFullUrl, thumbUploadParam, thumbSize, thumbWidth, thumbHeight } = await getUploadUrl(creds, {
     filekey,
     media_type: mediaType,
     to_user_id: toUserId,
@@ -511,6 +532,10 @@ export async function uploadMediaToCdn(
     uploadFullUrlPrefix: uploadFullUrl.substring(0, 120),
     uploadFullUrlContainsCdn: uploadFullUrl.includes("cdn") || uploadFullUrl.includes("weixin"),
     elapsedMs: Date.now() - getUploadStart,
+    hasThumb: !!thumbUploadParam,
+    thumbSize,
+    thumbWidth,
+    thumbHeight,
   });
 
   // 3. AES-128-ECB 加密文件
@@ -541,5 +566,8 @@ export async function uploadMediaToCdn(
     aeskeyBase64: hexToBase64(aeskeyHex),
     fileSize: rawsize,
     fileSizeCiphertext: filesize,
+    thumbSize,
+    thumbWidth,
+    thumbHeight,
   };
 }

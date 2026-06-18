@@ -466,6 +466,9 @@ function buildMediaItem(
     aeskeyBase64: string;
     fileSize: number;
     fileSizeCiphertext: number;
+    thumbSize?: number;
+    thumbWidth?: number;
+    thumbHeight?: number;
   },
   fileName: string,
   fileSize: number,
@@ -479,15 +482,19 @@ function buildMediaItem(
     encrypt_type: 0,
   };
 
+  const thumbSize = uploaded.thumbSize || 0;
+  const thumbWidth = uploaded.thumbWidth || 0;
+  const thumbHeight = uploaded.thumbHeight || 0;
+
   if (messageItemType === MessageItemType.IMAGE) {
     return {
       type: MessageItemType.IMAGE,
       image_item: {
         media,
         mid_size: fileSize,
-        thumb_size: 0,
-        thumb_height: 0,
-        thumb_width: 0,
+        thumb_size: thumbSize,
+        thumb_height: thumbHeight,
+        thumb_width: thumbWidth,
       },
     };
   }
@@ -501,9 +508,9 @@ function buildMediaItem(
         play_length: playLength,
         duration: playLength,
         video_md5: fileMd5 || "",
-        thumb_size: 0,
-        thumb_height: 0,
-        thumb_width: 0,
+        thumb_size: thumbSize,
+        thumb_height: thumbHeight,
+        thumb_width: thumbWidth,
       },
     };
   }
