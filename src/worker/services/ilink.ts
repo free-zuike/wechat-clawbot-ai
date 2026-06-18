@@ -381,11 +381,11 @@ export async function sendMediaMessage(
   // 生成唯一消息ID
   const messageId = generateClientId();
   
-  // from_user_id 应该是机器人的 ID（accountId/ilink_bot_id），而不是用户的 ID
-  // to_user_id 是接收消息的用户 ID
+  // 根据 weixin-ilink 官方 SDK，from_user_id 应该是空字符串
+  // 参考: https://www.npmjs.com/package/weixin-ilink
   const msg: WeixinMessage = {
     message_id: messageId,
-    from_user_id: creds.accountId || "",
+    from_user_id: "", // 空字符串，根据 iLink 协议规范
     to_user_id: toUserId,
     client_id: generateClientId(),
     message_type: MessageType.BOT,
@@ -416,10 +416,7 @@ export async function sendMediaMessage(
 
   Logger.info("[iLink] ========== 开始发送消息 ==========", {
     toUserId: toUserId,
-    fromUserId: creds.accountId || "",
-    accountId: creds.accountId || "",
-    userId: creds.userId || "",
-    userIdMatch: (creds.accountId || "") === toUserId ? "SAME" : "DIFFERENT",
+    fromUserId: "", // 空字符串，根据 iLink 协议规范
     contextToken: contextToken.slice(0, 30) + "...",
     contextTokenLength: contextToken.length,
     itemType: item.type,
