@@ -10,8 +10,9 @@ export const MessageItemType = { NONE: 0, TEXT: 1, IMAGE: 2, VOICE: 3, FILE: 4, 
 export const MessageState = { NEW: 0, GENERATING: 1, FINISH: 2 } as const;
 export const TypingStatus = { TYPING: 1, CANCEL: 2 } as const;
 
-// 重新导出 CDN 上传相关的公开 API
+// ========== 重新导出 CDN 上传相关的公开 API ==========
 export { uploadMediaToCdn, UploadMediaType } from "./cdn-upload";
+export { getSimpleUploadUrl, uploadFileSimple } from "./cdn-upload";
 
 // ========== 常量 ==========
 const DEFAULT_BASE = "https://ilinkai.weixin.qq.com";
@@ -509,6 +510,55 @@ export async function sendMediaMessage(
     });
     throw e;
   }
+}
+
+// ========== 简单图片发送（SDK 方式）==========
+/**
+ * 使用简单方式发送图片：上传 → 发送 cdn_url
+ */
+export async function sendImageSimple(
+  creds: ILinkCredentials,
+  toUserId: string,
+  contextToken: string,
+  imageUrl: string,
+): Promise<void> {
+  Logger.info("[iLink] sendImageSimple", { toUserId, imageUrl: imageUrl.substring(0, 80) });
+  
+  // 1. 下载图片
+  const imgResp = await fetch(imageUrl, { signal: AbortSignal.timeout(30000) });
+  if (!imgResp.ok) throw new ClawBotError("ILINK_DOWNLOAD_FAILED", `Download failed: ${imgResp.status}`);
+  const imgData = await imgResp.arrayBuffer();
+  
+  // 2. 获取上传 URL
+  const { upload_url, cdn_url } = await getSimpleUploadUrl(creds, "image.png", "image", imgData.byteLength);
+  
+  // 3. 上传文件
+  await uploadFileSimple(upload_url, imgData, "image/png");
+  
+  // 4. 发送消息（使用 cdn_url）
+  const msg: WeixinMessage = {
+    from_user_id: "",
+    to_user_id: toUserId,
+    client_id: generateClientId(),
+    message_type: MessageType.BOT,
+    message_state: MessageState.FINISH,
+    context_token: contextToken,
+    item_list: [{
+      type: MessageItemType.IMAGE,
+      image_item: { cdn_url },
+    }],
+  };
+  
+  await withRetry(
+    () => post(creds, "ilink/bot/sendmessage", { msg }, DEFAULT_API_MS),
+    {
+      retries: 2,
+      baseDelayMs: 500,
+      shouldRetry: (error) => !(error instanceof ClawBotError && error.code === 'ILINK_SESSION_TIMEOUT')
+    }
+  );
+  
+  Logger.info("[iLink] Image sent successfully via simple upload");
 }
 
 // ========== 高级媒体发送：先上传到 CDN，再发送 CDNMedia 引用消息 ==========

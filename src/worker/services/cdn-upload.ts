@@ -345,7 +345,64 @@ export async function getUploadUrl(
   return { uploadFullUrl, thumbUploadParam, thumbSize, thumbWidth, thumbHeight };
 }
 
-// ========== CDN 上传（POST 加密文件到 upload_full_url）==========
+// ========== 简单上传方式（参考 weixin-ilink SDK）==========
+/**
+ * 简单获取上传 URL（SDK 方式）
+ * 返回 { upload_url, cdn_url } 格式
+ */
+export async function getSimpleUploadUrl(
+  creds: ILinkCredentials,
+  fileName: string,
+  fileType: string,
+  fileSize: number,
+): Promise<{ upload_url: string; cdn_url: string }> {
+  Logger.info("[iLink] Simple getuploadurl", { fileName, fileType, fileSize });
+  
+  const resp = await postJson(
+    creds.baseUrl, "ilink/bot/getuploadurl", creds.botToken,
+    { file_name: fileName, file_type: fileType, file_size: fileSize } as any,
+    DEFAULT_API_MS
+  ) as any;
+  
+  Logger.info("[iLink] Simple getuploadurl response", { keys: Object.keys(resp || {}) });
+  
+  // 尝试多种字段名
+  const uploadUrl = resp.upload_url || resp.uploadUrl || resp.upload_full_url;
+  const cdnUrl = resp.cdn_url || resp.download_url || uploadUrl;
+  
+  if (!uploadUrl) {
+    throw new ClawBotError("ILINK_UPLOAD_MISSING", "getuploadurl missing upload_url", 502);
+  }
+  
+  return { upload_url: uploadUrl, cdn_url: cdnUrl || uploadUrl };
+}
+
+/**
+ * 简单上传文件（SDK 方式：PUT 到预签名 URL）
+ */
+export async function uploadFileSimple(
+  uploadUrl: string,
+  fileData: ArrayBuffer | Uint8Array,
+  contentType: string = "application/octet-stream",
+): Promise<void> {
+  Logger.info("[iLink] Simple upload", { url: uploadUrl.substring(0, 80), size: fileData.byteLength, contentType });
+  
+  const resp = await fetch(uploadUrl, {
+    method: "PUT",
+    headers: { "Content-Type": contentType },
+    body: fileData,
+    signal: AbortSignal.timeout(DEFAULT_UPLOAD_MS),
+  });
+  
+  if (!resp.ok) {
+    const errText = await resp.text().catch(() => "");
+    throw new ClawBotError("ILINK_UPLOAD_FAILED", `Upload failed: ${resp.status} ${errText}`, 502);
+  }
+  
+  Logger.info("[iLink] Simple upload succeeded");
+}
+
+// ========== 原有复杂上传方式（保留兼容）==========
 // 注：upload_full_url 是 getuploadurl 返回的完整 URL，已包含 encrypted_query_param
 // 直接 POST 加密文件到该 URL 即可，响应头 x-encrypted-param 即为 CDNMedia 的下载 param
 

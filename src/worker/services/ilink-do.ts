@@ -4,7 +4,7 @@
 
 import { Logger } from "../utils/error";
 import { generateSessionToken } from "../utils";
-import { getUpdates, sendTextMessage, sendTextChunked, sendTypingStatus, extractMessageText, getQRCodeStatus, sendImageMessage, sendVideoMessage, uploadAndSendMedia, MessageType, MessageItemType } from "./ilink";
+import { getUpdates, sendTextMessage, sendTextChunked, sendTypingStatus, extractMessageText, getQRCodeStatus, sendImageMessage, sendVideoMessage, sendImageSimple, uploadAndSendMedia, MessageType, MessageItemType } from "./ilink";
 import { callAIWithContext, isImageGenerationRequest, isVideoGenerationRequest, extractMediaPrompt, generateImage, generateVideo, submitVideoTask } from "./ai";
 import { sendWebhook } from "./webhook";
 import { clearContextSQLite } from "./context";
@@ -1398,12 +1398,15 @@ export class ILinkConnectionDO implements DurableObject {
               Logger.info("[DO] Image generation result", { success: !!imageData, type: typeof imageData });
               if (imageData) {
                 if (typeof imageData === "string") {
-                  // 返回的是 URL：带 API Key 下载后上传发送
-                  await sendImageMessage(useCreds!, from, ctxToken, imageData, cfg.aiApiKey);
+                  // URL：使用简单方式发送
+                  await sendImageSimple(useCreds!, from, ctxToken, imageData);
                   replyContent = `[图片生成] ${mediaPrompt}`;
                 } else {
-                  // Uint8Array：通过 uploadAndSendMedia 发送
-                  await uploadAndSendMedia(useCreds!, from, ctxToken, MessageItemType.IMAGE, "generated.png", imageData.buffer as ArrayBuffer, "image/png");
+                  // Uint8Array：转换为 Blob URL 后发送
+                  const blob = new Blob([imageData.buffer as ArrayBuffer], { type: "image/png" });
+                  const blobUrl = URL.createObjectURL(blob);
+                  await sendImageSimple(useCreds!, from, ctxToken, blobUrl);
+                  URL.revokeObjectURL(blobUrl);
                   replyContent = `[图片生成] ${mediaPrompt}`;
                 }
               } else {
