@@ -57,7 +57,7 @@
           <h2>📡 实时消息 ({{ wsMessages.length }})</h2>
           <div style="max-height: 400px; overflow-y: auto; border: 1px solid var(--border-light); border-radius: 8px">
             <div
-              v-for="(msg, i) in wsMessages"
+              v-for="(msg, i) in mergedMessages"
               :key="i"
               style="padding: 10px 14px; border-bottom: 1px solid var(--border-light); font-size: 13px"
             >
@@ -65,14 +65,14 @@
                 <span style="font-weight: 600; color: var(--link)">📩 {{ msg.data?.fromUserId || (msg.type === 'media_generated' ? '🎨 媒体生成' : '未知') }}</span>
                 <span style="color: var(--text-dim); font-size: 12px">{{ msg.data?.timestamp || msg.timestamp || '' }}</span>
               </div>
-              <div v-if="msg.type === 'media_generated' && msg.url" style="margin-top: 4px">
-                <div style="color: var(--text-dim); margin-bottom: 4px">{{ msg.mediaType === 'video' ? '🎬' : '🎨' }} {{ msg.provider || '' }} · {{ msg.model || '' }}</div>
-                <img v-if="msg.mediaType !== 'video'" :src="msg.url" style="max-width: 100%; max-height: 300px; border-radius: 8px" />
-                <video v-else :src="msg.url" controls style="max-width: 100%; max-height: 300px; border-radius: 8px"></video>
-              </div>
-              <div v-else style="color: var(--text-primary)">{{ msg.data?.content || msg.data }}</div>
+              <div style="color: var(--text-primary)">{{ msg.data?.content || msg.data }}</div>
               <div v-if="msg.data?.replyContent" style="color: var(--success); margin-top: 4px; padding: 6px 8px; background: var(--alert-success-bg); border-radius: 4px">
                 💬 {{ msg.data.replyContent }}
+              </div>
+              <div v-if="msg.replyMedia" style="margin-top: 6px">
+                <div style="color: var(--text-dim); font-size: 12px; margin-bottom: 4px">{{ msg.replyMedia.mediaType === 'video' ? '🎬' : '🎨' }} {{ msg.replyMedia.provider || '' }} · {{ msg.replyMedia.model || '' }}</div>
+                <img v-if="msg.replyMedia.mediaType !== 'video'" :src="msg.replyMedia.url" style="max-width: 100%; max-height: 300px; border-radius: 8px" />
+                <video v-else :src="msg.replyMedia.url" controls style="max-width: 100%; max-height: 300px; border-radius: 8px"></video>
               </div>
             </div>
           </div>
@@ -141,7 +141,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted, onUnmounted } from "vue";
+import { ref, reactive, computed, onMounted, onUnmounted } from "vue";
 import { useRouter } from "vue-router";
 import {
   fetchStatus, fetchConfig, saveConfig, triggerPoll, logout, chat,
@@ -208,6 +208,22 @@ const pollResult = ref(""); const isPolling = ref(false);
 // ===== WebSocket =====
 const wsConnected = ref(false); const wsMessages = ref<Array<{ type: string; data: any }>>([]);
 let ws: WebSocket | null = null; let wsRetryCount = 0;
+
+// 合并实时消息：将 media_generated 附加到前一条 message 的 replyMedia 上
+const mergedMessages = computed(() => {
+  const result: Array<{ type: string; data: any; replyMedia?: { url: string; mediaType: string; model?: string; provider?: string } }> = [];
+  for (const msg of wsMessages.value) {
+    if (msg.type === "media_generated" && result.length > 0) {
+      const last = result[result.length - 1];
+      if (last.type === "message" && last.data?.replyContent) {
+        last.replyMedia = { url: msg.url, mediaType: msg.mediaType, model: msg.model, provider: msg.provider };
+        continue;
+      }
+    }
+    result.push({ ...msg });
+  }
+  return result;
+});
 
 // ===== Debug =====
 const debugInfo = ref(""); const debugLoading = ref(false);
