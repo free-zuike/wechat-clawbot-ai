@@ -803,8 +803,6 @@ export class ILinkConnectionDO implements DurableObject {
         let base = (task.base_url as string).replace(/\/+$/, "");
         base = base.replace(/\/v1\/(chat\/completions|images\/generations|videos?\/generations|videos\/?|videos)$/i, "");
         base = base.replace(/\/v1$/, "");
-        const toUserId = task.to_user_id as string | undefined;
-        const contextToken = task.context_token as string | undefined;
         const accountId = task.account_id as string | undefined;
         const modelInfo = `🤖 ${task.provider} · ${task.model}`;
 
