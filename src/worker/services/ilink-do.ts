@@ -892,10 +892,45 @@ export class ILinkConnectionDO implements DurableObject {
             const statusData = await statusResp.json() as any;
 
             if (statusData.status === "completed" && statusData.remixed_from_video_id) {
-              videoUrl = statusData.remixed_from_video_id;
-              Logger.info("[DO] Video task completed", { taskId, videoId, url: videoUrl.slice(0, 120) });
+              // Agnes 文档说 remixed_from_video_id 是视频 URL
+              // 注意：这个字段也可能只是视频 ID（而不是完整 URL
+              // 如果是 ID，则需要额外 API 调用获取真实 URL
+              const rawUrl = String(statusData.remixed_from_video_id);
+              // 确保是完整 URL（有协议前缀）
+              if (rawUrl.startsWith("http://") || rawUrl.startsWith("https://")) {
+                videoUrl = rawUrl;
+              } else if (rawUrl.includes(".")) {
+                // 包含域名但缺协议
+                videoUrl = "https://" + rawUrl;
+              } else {
+                // 看起来是 ID，尝试通过 Agnes API 获取 URL
+                Logger.info("[DO] remixed_from_video_id looks like an ID, trying to resolve to URL", { taskId, videoId: rawUrl.substring(0, 40) });
+                const checkUrl2 = `${base}/agnesapi?action=get_video&video_id=${encodeURIComponent(rawUrl)}`;
+                try {
+                  const r2 = await fetch(checkUrl2, { headers: { "Authorization": `Bearer ${task.api_key}` } });
+                  if (r2.ok) {
+                    const j2 = await r2.json();
+                    Logger.info("[DO] Agnes video lookup response", { response: JSON.stringify(j2).slice(0, 400) });
+                    // 常见字段名
+                    videoUrl = j2.url || j2.video_url || j2.videoUrl || j2.video || j2.remixed_from_video_id || j2.file_url || j2.data?.url || j2.data?.remixed_from_video_id;
+                    if (!videoUrl) {
+                      // 遍历所有字段，找包含 http(s)
+                      for (const v of Object.values(j2)) {
+                        if (typeof v === "string" && v.startsWith("http")) { videoUrl = v; break; }
+                      }
+                    }
+                  }
+                } catch (e3: any) {
+                  Logger.warn("[DO] Failed to resolve Agnes video ID", { error: e3?.message });
+                }
+              }
+              Logger.info("[DO] Video task completed", { taskId, videoId, url: videoUrl?.substring(0, 120) });
             } else if (statusData.status === "completed") {
-              Logger.warn("[DO] Video status completed but no url returned", { taskId, keys: Object.keys(statusData || {}).slice(0, 15), preview: JSON.stringify(statusData).slice(0, 200) });
+              Logger.warn("[DO] Video status completed but no url returned", { taskId, keys: Object.keys(statusData || {}).slice(0, 15), preview: JSON.stringify(statusData).slice(0, 400) });
+              // 尝试遍历所有字段，找 URL
+              for (const v of Object.values(statusData)) {
+                if (typeof v === "string" && v.startsWith("http")) { videoUrl = v; break; }
+              }
             } else if (statusData.status === "failed") {
               taskFailed = true;
               Logger.warn("[DO] Video task failed (provider)", { taskId, videoId, error: statusData.error });
@@ -911,15 +946,31 @@ export class ILinkConnectionDO implements DurableObject {
             let sentSuccessfully = false;
             if (creds && toUserId && contextToken) {
               try {
-                const apiKey = task.api_key as string;
-                await sendVideoMessage(creds, toUserId, contextToken, videoUrl, apiKey);
+                Logger.info("[DO] Sending video", {
+                  taskId,
+                  videoUrl: videoUrl.substring(0, 120),
+                  toUserId: toUserId.slice(0, 20),
+                  credsValid: !!(creds && creds.botToken && creds.baseUrl),
+                  credsBaseUrl: creds?.baseUrl?.substring(0, 80),
+                });
+                await sendVideoMessage(creds, toUserId, contextToken, videoUrl, task.api_key);
                 sentSuccessfully = true;
-                Logger.info("[DO] Video sent to WeChat successfully", { taskId, toUserId: toUserId.slice(0, 10) });
+                Logger.info("[DO] Video sent to WeChat successfully", { taskId });
               } catch (e2: any) {
-                Logger.warn("[DO] Video send failed (CDN may not be ready) — keeping task pending", { taskId, error: e2?.message });
+                Logger.warn("[DO] Video send failed — keeping task pending", {
+                  taskId,
+                  errorCode: e2?.code || "UNKNOWN",
+                  errorMessage: e2?.message?.slice(0, 300) || String(e2).slice(0, 300),
+                  httpStatus: e2?.httpStatus || e2?.status,
+                });
               }
             } else {
-              Logger.warn("[DO] Cannot send video — credentials/user info missing", { taskId, hasCreds: !!creds, hasToUserId: !!toUserId, hasContextToken: !!contextToken });
+              Logger.warn("[DO] Cannot send video — credentials/user info missing", {
+                taskId,
+                hasCreds: !!creds,
+                hasToUserId: !!toUserId,
+                hasContextToken: !!contextToken,
+              });
             }
 
             if (sentSuccessfully) {

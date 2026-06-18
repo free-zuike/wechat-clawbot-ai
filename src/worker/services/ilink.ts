@@ -329,7 +329,14 @@ export async function sendMediaMessage(
     item_list: [item],
   };
 
-  await withRetry(
+  Logger.info("[iLink] Sending media message (sendmessage API)", {
+    toUserId: toUserId.slice(0, 20),
+    itemType: item.type,
+    hasMedia: !!(item as any).media || !!(item as any).image_item || !!(item as any).video_item,
+    msgSize: JSON.stringify({ msg }).length,
+  });
+
+  const resp = await withRetry(
     () => post(creds, "ilink/bot/sendmessage", { msg }, DEFAULT_API_MS),
     {
       retries: 2,
@@ -338,7 +345,9 @@ export async function sendMediaMessage(
     }
   );
 
-  Logger.debug("[iLink] Media message sent");
+  Logger.info("[iLink] Media message sent", {
+    respPreview: JSON.stringify(resp || {}).slice(0, 300),
+  });
 }
 
 // ========== 高级媒体发送：先上传到 CDN，再发送 CDNMedia 引用消息 ==========
@@ -364,7 +373,7 @@ export async function uploadAndSendMedia(
   const fileBytes = fileData instanceof Uint8Array ? fileData : new Uint8Array(fileData);
   const mediaType = toUploadMediaType(messageItemType);
 
-  Logger.info("[iLink] Uploading & sending media", {
+  Logger.info("[iLink] [uploadAndSendMedia] Starting media upload & send", {
     toUserId: toUserId.slice(0, 12),
     messageItemType,
     mediaType,
@@ -373,19 +382,32 @@ export async function uploadAndSendMedia(
     contentType,
   });
 
-  // 1. 上传到 iLink CDN（getuploadurl + AES 加密 + POST）
-  const uploaded = await uploadMediaToCdn(creds, toUserId, fileBytes, mediaType);
+  try {
+    // 1. 上传到 iLink CDN（getuploadurl + AES 加密 + POST）
+    const uploaded = await uploadMediaToCdn(creds, toUserId, fileBytes, mediaType);
 
-  // 2. 构造 CDNMedia 引用消息体
-  const item = buildMediaItem(messageItemType, uploaded, fileName, fileBytes.length);
+    // 2. 构造 CDNMedia 引用消息体
+    const item = buildMediaItem(messageItemType, uploaded, fileName, fileBytes.length);
+    Logger.info("[iLink] [uploadAndSendMedia] Building media item", {
+      itemType: item.type,
+      hasMedia: !!(item as any).image_item?.media || !!(item as any).video_item?.media || !!(item as any).file_item?.media,
+    });
 
-  // 3. 发送消息
-  await sendMediaMessage(creds, toUserId, contextToken, item);
-  Logger.info("[iLink] Media sent via CDN upload", {
-    filekey: uploaded.filekey,
-    fileSize: uploaded.fileSize,
-    fileSizeCiphertext: uploaded.fileSizeCiphertext,
-  });
+    // 3. 发送消息
+    await sendMediaMessage(creds, toUserId, contextToken, item);
+    Logger.info("[iLink] [uploadAndSendMedia] Media sent via CDN upload", {
+      filekey: uploaded.filekey,
+      fileSize: uploaded.fileSize,
+    });
+  } catch (e: any) {
+    Logger.error("[iLink] [uploadAndSendMedia] FAILED", {
+      errorCode: e?.code || "UNKNOWN",
+      errorMessage: e?.message?.slice(0, 400) || String(e).slice(0, 400),
+      fileSize: fileBytes.length,
+      mediaType,
+    });
+    throw e;
+  }
 }
 
 /**
