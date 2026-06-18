@@ -481,14 +481,19 @@ export async function sendFileFromUrl(
 ): Promise<void> {
   // 下载文件（带 API Key 认证，部分提供商的媒体 URL 需要鉴权）
   // 媒体刚生成时 CDN 可能短暂不可用（502），重试几次
-  const headers: Record<string, string> = {};
-  if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
+  // 注意：Agnes 返回的视频 URL 是 Google Cloud Storage 的，可能不需要/不接受 Agnes 的 API Key
   const maxRetries = 6;
   let resp: Response | null = null;
   let lastError: string | null = null;
 
+  // 先尝试不带 Authorization 头（适用于公开 CDN URL）
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     try {
+      const headers: Record<string, string> = {};
+      // 第 1-2 次尝试不带 Authorization（公开 CDN），后面尝试带 Authorization（需要鉴权的 URL）
+      if (attempt >= 2 && apiKey) {
+        headers["Authorization"] = `Bearer ${apiKey}`;
+      }
       resp = await fetch(fileUrl, { headers, signal: AbortSignal.timeout(60000) });
       if (resp.ok) break;
       const errBody = await resp.text().catch(() => "");
@@ -513,7 +518,6 @@ export async function sendFileFromUrl(
         attempt: attempt + 1,
         error: lastError,
         url: fileUrl.substring(0, 120),
-        headersSent: Object.keys(headers).map(h => h.toLowerCase()),
       });
       if (attempt < maxRetries - 1) {
         await new Promise((r) => setTimeout(r, 2000 + attempt * 2000));
