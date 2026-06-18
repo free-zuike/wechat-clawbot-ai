@@ -390,9 +390,11 @@ export async function sendMediaMessage(
   // 生成唯一消息ID
   const messageId = generateClientId();
   
+  // from_user_id 应该是机器人的 ID（accountId/ilink_bot_id），而不是用户的 ID
+  // to_user_id 是接收消息的用户 ID
   const msg: WeixinMessage = {
     message_id: messageId,
-    from_user_id: creds.userId || "",
+    from_user_id: creds.accountId || "",
     to_user_id: toUserId,
     client_id: generateClientId(),
     message_type: MessageType.BOT,
