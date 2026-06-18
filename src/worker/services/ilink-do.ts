@@ -732,7 +732,7 @@ export class ILinkConnectionDO implements DurableObject {
       const body = await request.json() as { taskId: string; videoId?: string; prompt: string; model: string; provider: string; baseUrl: string; apiKey: string; toUserId?: string; contextToken?: string; accountId?: string };
       this.doState.storage.sql.exec(
         `INSERT OR REPLACE INTO pending_videos (task_id, video_id, prompt, model, provider, base_url, api_key, status, to_user_id, context_token, account_id, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?)`,
         body.taskId, body.videoId || null, body.prompt, body.model, body.provider, body.baseUrl, body.apiKey, body.toUserId || null, body.contextToken || null, body.accountId || null, Date.now()
       );
       return new Response(JSON.stringify({ success: true }), {
