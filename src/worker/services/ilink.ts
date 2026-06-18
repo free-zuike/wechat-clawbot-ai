@@ -323,7 +323,7 @@ export async function sendMediaMessage(
   item: MessageItem,
 ): Promise<void> {
   const msg: WeixinMessage = {
-    from_user_id: creds.userId || "",
+    from_user_id: "", // 空字符串，根据 iLink 协议规范
     to_user_id: toUserId,
     client_id: generateClientId(),
     message_type: MessageType.BOT,
