@@ -514,7 +514,7 @@ export async function sendMediaMessage(
 
 // ========== 简单图片发送（SDK 方式）==========
 /**
- * 使用简单方式发送图片：上传 → 发送 cdn_url
+ * 使用 uploadAndSendMedia 发送远程图片：下载 → 上传 CDN → 发送消息
  */
 export async function sendImageSimple(
   creds: ILinkCredentials,
@@ -527,38 +527,12 @@ export async function sendImageSimple(
   // 1. 下载图片
   const imgResp = await fetch(imageUrl, { signal: AbortSignal.timeout(30000) });
   if (!imgResp.ok) throw new ClawBotError("ILINK_DOWNLOAD_FAILED", `Download failed: ${imgResp.status}`);
-  const imgData = await imgResp.arrayBuffer();
+  const fileBytes = new Uint8Array(await imgResp.arrayBuffer());
   
-  // 2. 获取上传 URL
-  const { upload_url, cdn_url } = await getSimpleUploadUrl(creds, "image.png", "image", imgData.byteLength);
+  // 2. 使用统一的 uploadAndSendMedia 上传并发送
+  await uploadAndSendMedia(creds, toUserId, contextToken, MessageItemType.IMAGE, "generated.png", fileBytes, "image/png");
   
-  // 3. 上传文件
-  await uploadFileSimple(upload_url, imgData, "image/png");
-  
-  // 4. 发送消息（使用 cdn_url）
-  const msg: WeixinMessage = {
-    from_user_id: "",
-    to_user_id: toUserId,
-    client_id: generateClientId(),
-    message_type: MessageType.BOT,
-    message_state: MessageState.FINISH,
-    context_token: contextToken,
-    item_list: [{
-      type: MessageItemType.IMAGE,
-      image_item: { cdn_url },
-    }],
-  };
-  
-  await withRetry(
-    () => post(creds, "ilink/bot/sendmessage", { msg }, DEFAULT_API_MS),
-    {
-      retries: 2,
-      baseDelayMs: 500,
-      shouldRetry: (error) => !(error instanceof ClawBotError && error.code === 'ILINK_SESSION_TIMEOUT')
-    }
-  );
-  
-  Logger.info("[iLink] Image sent successfully via simple upload");
+  Logger.info("[iLink] sendImageSimple: success");
 }
 
 // ========== 高级媒体发送：先上传到 CDN，再发送 CDNMedia 引用消息 ==========
@@ -603,7 +577,7 @@ export async function uploadAndSendMedia(
     const uploaded = await uploadMediaToCdn(creds, toUserId, fileBytes, mediaType);
 
     // 2. 构造 CDNMedia 引用消息体
-    const item = buildMediaItem(messageItemType, uploaded, fileName, fileBytes.length, rawMd5, videoDuration);
+    const item = buildMediaItem(messageItemType, uploaded, fileName, uploaded.fileSizeCiphertext, rawMd5, videoDuration);
     Logger.info("[iLink] [uploadAndSendMedia] Building media item", {
       itemType: item.type,
       hasMedia: !!(item as any).image_item?.media || !!(item as any).video_item?.media || !!(item as any).file_item?.media,
@@ -654,11 +628,11 @@ function buildMediaItem(
   fileMd5?: string,
   duration?: number,
 ): MessageItem {
-  // encrypt_type=0: 仅加密 fileid
+  // encrypt_type=1: 与 @weixin-claw/core SDK 一致
   const media = {
     encrypt_query_param: uploaded.downloadEncryptedQueryParam,
     aes_key: uploaded.aeskeyBase64,
-    encrypt_type: 0,
+    encrypt_type: 1,
   };
 
   const thumbSize = uploaded.thumbSize || 0;

@@ -656,7 +656,9 @@ export async function uploadMediaToCdn(
     filekey,
     downloadEncryptedQueryParam,
     aeskeyHex,
-    aeskeyBase64: hexToBase64(aeskeyHex),
+    // 与 @weixin-claw/core SDK 一致: Buffer.from(hexString).toString("base64")
+    // 即把 hex 字符串当 UTF-8 文本做 base64 编码，而非 hex→binary→base64
+    aeskeyBase64: btoa(aeskeyHex),
     fileSize: rawsize,
     fileSizeCiphertext: filesize,
     thumbSize,
