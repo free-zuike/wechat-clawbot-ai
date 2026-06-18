@@ -833,7 +833,7 @@ export class ILinkConnectionDO implements DurableObject {
 
             const COMPLETED_STATES = new Set(["completed", "COMPLETED", "success", "SUCCESS", "done", "DONE", "finished", "200", "ok", "OK"]);
             const FAILED_STATES = new Set(["failed", "FAILED", "error", "ERROR", "cancelled", "CANCELLED", "rejected", "500", "400"]);
-            const PROCESSING_STATES = new Set(["processing", "in_progress", "queued", "pending", "running", "scheduled", "submitted"]);
+            const PROCESSING_STATES = new Set(["processing", "in_progress", "queued", "pending", "running", "scheduled", "submitted", "not_start", "NOT_START"]);
 
             const statusLower = status ? String(status).toLowerCase() : "";
 
