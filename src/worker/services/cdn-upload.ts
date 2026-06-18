@@ -171,9 +171,9 @@ async function postJson(
     const r = await fetch(url, { method: "POST", headers, body: jsonStr, signal: ctrl.signal });
     clearTimeout(timer);
     const text = await r.text();
-    Logger.info(`[iLink] POST ${endpoint}`, { status: r.status, respLen: text.length, respPreview: text.slice(0, 500) });
+    Logger.info(`[iLink] POST ${endpoint} — HTTP ${r.status} bytes=${text.length} body=${text.slice(0, 600)}`);
     if (!r.ok) {
-      Logger.warn(`[iLink] POST ${endpoint} failed`, { status: r.status, response: text.slice(0, 500) });
+      Logger.error(`[iLink] POST ${endpoint} HTTP ${r.status} FAIL — ${text.slice(0, 500)}`);
       throw new ClawBotError("ILINK_HTTP_ERROR", `${endpoint} HTTP ${r.status}: ${text.slice(0, 200)}`, 502, { status: r.status, response: text });
     }
     try {
@@ -192,6 +192,71 @@ async function postJson(
 }
 
 /**
+ * 从 getuploadurl 响应中提取 upload_param（兼容多种响应格式）
+ * 可能的响应结构：
+ *   { upload_param: "..." }                       // 官方 SDK 期望
+ *   { ret: 0, upload_param: "..." }                // 带返回码
+ *   { data: { upload_param: "..." } }              // 嵌套 data
+ *   { result: { upload_param: "..." } }            // 嵌套 result
+ *   { resp: { upload_param: "..." } }              // 嵌套 resp
+ *   { uploadUrl: "..." }                           // 字段名变体
+ *   { upload_url: "..." }                          // 字段名变体
+ */
+function extractUploadParam(obj: any): { upload_param?: string; thumb_upload_param?: string; allKeys: string[] } {
+  const keys: string[] = [];
+  try {
+    if (typeof obj === "object" && obj !== null) {
+      keys.push(...Object.keys(obj));
+    }
+  } catch (_) {}
+
+  const candidates: string[] = [
+    "upload_param",
+    "uploadUrl",
+    "upload_url",
+    "cdn_upload_param",
+    "cdnUrl",
+    "cdn_url",
+    "upload_param_string",
+  ];
+
+  // Search top-level
+  for (const k of candidates) {
+    if (obj && typeof obj[k] === "string" && (obj[k] as string).length > 0) {
+      return { upload_param: obj[k], thumb_upload_param: obj.thumb_upload_param, allKeys: keys };
+    }
+  }
+
+  // Search nested objects
+  const nestedKeys = ["data", "result", "resp", "response", "payload", "body"];
+  for (const nk of nestedKeys) {
+    if (obj && typeof obj[nk] === "object" && obj[nk] !== null) {
+      for (const k of candidates) {
+        if (typeof obj[nk][k] === "string" && (obj[nk][k] as string).length > 0) {
+          return { upload_param: obj[nk][k], thumb_upload_param: obj[nk].thumb_upload_param, allKeys: keys };
+        }
+      }
+    }
+  }
+
+  // Search any string value that looks like a CDN URL or base64 param
+  if (obj && typeof obj === "object") {
+    for (const key of Object.keys(obj)) {
+      const val = (obj as any)[key];
+      if (typeof val === "string" && val.length > 20) {
+        if (val.startsWith("http://") || val.startsWith("https://") ||
+            val.includes("cdn") || val.includes("upload") ||
+            (val.match(/^[A-Za-z0-9+/=]+$/) && val.length > 32)) {
+          return { upload_param: val, allKeys: keys };
+        }
+      }
+    }
+  }
+
+  return { upload_param: undefined, allKeys: keys };
+}
+
+/**
  * 调用 iLink getuploadurl 接口
  * @param creds iLink 登录凭证
  * @param req 必要参数
@@ -200,27 +265,71 @@ export async function getUploadUrl(
   creds: ILinkCredentials,
   req: GetUploadUrlReq,
 ): Promise<{ upload_param: string; thumb_upload_param?: string }> {
+  // 确保 no_need_thumb 始终为 true（视频/图片上传都不需要缩略图上传）
+  const reqWithThumb = { ...req, no_need_thumb: true };
+
+  Logger.info("[iLink] [Step 2/4] Calling getuploadurl API (raw request)", {
+    filekey: reqWithThumb.filekey.substring(0, 16),
+    media_type: reqWithThumb.media_type,
+    rawsize: reqWithThumb.rawsize,
+    filesize: reqWithThumb.filesize,
+    to_user_id: reqWithThumb.to_user_id.slice(0, 24),
+    aeskey_len: reqWithThumb.aeskey.length,
+    rawfilemd5: reqWithThumb.rawfilemd5,
+  });
+
   const resp = await postJson(
-    creds.baseUrl, "ilink/bot/getuploadurl", creds.botToken, req as unknown as Record<string, unknown>, DEFAULT_API_MS
+    creds.baseUrl, "ilink/bot/getuploadurl", creds.botToken,
+    reqWithThumb as unknown as Record<string, unknown>, DEFAULT_API_MS
   ) as GetUploadUrlResp;
 
+  const respText = JSON.stringify(resp);
+
+  // Check standard error codes
   if (resp.errcode !== undefined && resp.errcode !== 0) {
-    Logger.error("[iLink] getuploadurl returned error", { errcode: resp.errcode, errmsg: resp.errmsg, resp: JSON.stringify(resp).slice(0, 500) });
+    Logger.error(`[iLink] getuploadurl returned API error — errcode=${resp.errcode} errmsg=${resp.errmsg} raw=${respText.slice(0, 600)}`);
     throw new ClawBotError("ILINK_API_ERROR", `getuploadurl error ${resp.errcode}: ${resp.errmsg}`, 502, { errcode: resp.errcode, errmsg: resp.errmsg });
   }
-
-  if (!resp.upload_param) {
-    Logger.error("[iLink] getuploadurl returned no upload_param", { resp: JSON.stringify(resp).slice(0, 500) });
-    throw new ClawBotError("ILINK_UPLOAD_PARAM_MISSING", "getuploadurl did not return upload_param", 502, { resp });
+  if (resp.ret !== undefined && resp.ret !== 0) {
+    Logger.error(`[iLink] getuploadurl returned ret=${resp.ret} raw=${respText.slice(0, 600)}`);
+    throw new ClawBotError("ILINK_API_ERROR", `getuploadurl ret=${resp.ret}`, 502, { ret: resp.ret });
   }
 
-  Logger.info("[iLink] getuploadurl success", {
-    filekey: req.filekey,
-    media_type: req.media_type,
-    upload_param_len: resp.upload_param.length,
-    has_thumb: !!resp.thumb_upload_param,
-  });
-  return { upload_param: resp.upload_param, thumb_upload_param: resp.thumb_upload_param };
+  // Robust upload_param extraction
+  const extracted = extractUploadParam(resp);
+  if (!extracted.upload_param) {
+    // List all top-level keys and search any useful string values
+    const valueSummary: string[] = [];
+    try {
+      for (const k of Object.keys(resp)) {
+        const v = (resp as any)[k];
+        if (typeof v === "string") {
+          valueSummary.push(`${k}="${v.slice(0, 80)}..."`);
+        } else if (typeof v === "number" || typeof v === "boolean") {
+          valueSummary.push(`${k}=${v}`);
+        } else if (typeof v === "object" && v !== null) {
+          valueSummary.push(`${k}=[${Object.keys(v).join(",")}]`);
+        }
+      }
+    } catch (_) {}
+
+    Logger.error(
+      `[iLink] getuploadurl response has NO upload_param — ALL_KEYS=[${extracted.allKeys.join(",")}] VALUES={${valueSummary.join(" | ")}} FULL_RAW=${respText.slice(0, 800)}`
+    );
+    throw new ClawBotError(
+      "ILINK_UPLOAD_PARAM_MISSING",
+      `getuploadurl did not return upload_param. Keys: [${extracted.allKeys.join(",")}]`,
+      502,
+      { resp: respText.slice(0, 1000) }
+    );
+  }
+
+  Logger.info(`[iLink] getuploadurl success — upload_param_len=${extracted.upload_param.length} keys=[${extracted.allKeys.join(",")}]`);
+
+  return {
+    upload_param: extracted.upload_param,
+    thumb_upload_param: extracted.thumb_upload_param,
+  };
 }
 
 // ========== CDN 上传（POST 加密文件）==========
