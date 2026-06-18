@@ -132,15 +132,6 @@ async function post(
       
       if (json.ret !== undefined && json.ret !== 0) {
         Logger.warn(`[iLink] ${endpoint} returned ret=${json.ret}`, { ret: json.ret, fullResponse: JSON.stringify(json).slice(0, 500) });
-        // ret=-1 对于 sendmessage 可能是正常的，某些情况下消息已发送但返回 -1
-        // 根据官方 SDK 经验，sendmessage 返回 ret=-1 时消息可能已经发送成功
-        if (endpoint === 'ilink/bot/sendmessage') {
-          Logger.info(`[iLink] sendmessage returned ret=-1, treating as success (message may have been sent)`);
-          return json;
-        }
-        if (json.ret === -1) {
-          throw new ClawBotError('ILINK_SESSION_TIMEOUT', 'Session timeout (ret=-1)', 401, { ret: json.ret });
-        }
         throw new ClawBotError('ILINK_API_ERROR', `${endpoint} ret=${json.ret}`, 502, { ret: json.ret });
       }
       
@@ -458,10 +449,18 @@ export async function sendMediaMessage(
 
     // 空对象响应在 post 函数中已被视为成功（iLink API 的静默成功模式）
     const respKeys = Object.keys(resp || {});
-    // 对于 sendmessage，ret=-1 是一种常见的"静默成功"响应，不应视为错误
-    const hasError = resp && ('errcode' in resp && resp.errcode !== 0) || ('ret' in resp && resp.ret !== 0 && resp.ret !== -1);
+    // ret=-1 是错误响应，需要抛出异常
+    const hasError = resp && ('errcode' in resp && resp.errcode !== 0) || ('ret' in resp && resp.ret !== 0);
     
     if (hasError) {
+      // 打印完整的消息体以便诊断
+      Logger.error("[iLink] sendmessage failed with ret=-1, full message body:", {
+        messageBody: JSON.stringify({ msg }, null, 2),
+        response: JSON.stringify(resp),
+        toUserId,
+        fromUserId: creds.accountId,
+        contextTokenLength: contextToken.length,
+      });
       throw new ClawBotError('ILINK_API_ERROR', `sendmessage error: errcode=${resp?.errcode}, ret=${resp?.ret}, errmsg=${resp?.errmsg}`, 502, { errcode: resp?.errcode, ret: resp?.ret, errmsg: resp?.errmsg });
     }
 
