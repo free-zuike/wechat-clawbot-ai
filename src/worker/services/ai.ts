@@ -51,11 +51,13 @@ async function callOpenAICompatible(params: {
   baseUrl: string;
   apiKey: string;
   model: string;
-  messages: Array<{ role: string; content: string }>;
+  messages: Array<{ role: string; content: string | Array<{ type: string; text?: string; image_url?: { url: string } }> };
   maxTokens: number;
+  temperature?: number;
 }): Promise<string> {
   let base = params.baseUrl.replace(/\/+$/, "");
-  base = base.replace(/\/v1\/(chat\/completions|images\/generations|videos\/generations)$/i, "");
+  base = base.replace(/\/v1\/(chat\/completions|images\/generations|videos?\/generations|videos\/?|videos)$/i, "");
+  base = base.replace(/\/v1$/, "");
   const url = base + "/v1/chat/completions";
 
   const resp = await fetch(url, {
@@ -68,6 +70,7 @@ async function callOpenAICompatible(params: {
       model: params.model,
       messages: params.messages,
       max_tokens: params.maxTokens,
+      temperature: params.temperature ?? 0.7,
     }),
   });
 
