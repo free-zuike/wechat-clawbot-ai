@@ -15,7 +15,7 @@ export { uploadMediaToCdn, UploadMediaType } from "./cdn-upload";
 
 // ========== 常量 ==========
 const DEFAULT_BASE = "https://ilinkai.weixin.qq.com";
-const DEFAULT_CHANNEL_VERSION = "weixin-ilink/0.1.0";
+const DEFAULT_CHANNEL_VERSION = "2.0.0";
 const DEFAULT_LONG_POLL_MS = 35000;
 const DEFAULT_API_MS = 15000;
 
