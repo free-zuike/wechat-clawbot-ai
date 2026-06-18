@@ -766,6 +766,14 @@ export class ILinkConnectionDO implements DurableObject {
       for (const task of pending) {
         const taskId = task.task_id as string;
 
+        // 跳过缺少用户信息的任务（通常是管理后台测试产生的）
+        const toUserId = task.to_user_id as string | undefined;
+        const contextToken = task.context_token as string | undefined;
+        if (!toUserId || !contextToken) {
+          Logger.warn("[DO] Skipping video task with missing user info", { taskId });
+          continue;
+        }
+
         // 超时保护：任务超过 24 小时且仍未下载成功，标记失败，避免永远重试
         const createdAt = Number(task.created_at) || now;
         const ageMs = now - createdAt;
@@ -775,22 +783,21 @@ export class ILinkConnectionDO implements DurableObject {
             `UPDATE pending_videos SET status = 'failed' WHERE task_id = ?`,
             taskId
           );
-          const toUserId = task.to_user_id as string | undefined;
-          const contextToken = task.context_token as string | undefined;
           const modelInfo = `🤖 ${task.provider} · ${task.model}`;
-          if (toUserId && contextToken) {
-            const store = this.state.stores.get(STORE_KEY) || {};
-            const credsMap = store.accounts as any;
-            const sendCreds = task.account_id && credsMap?.[task.account_id]
-              ? credsMap[task.account_id]
-              : (Object.values(credsMap || {})[0] as ILinkCredentials | undefined) || store.ilinkCreds;
-            if (sendCreds) {
-              sendTextMessage(sendCreds as ILinkCredentials, toUserId, contextToken, `❌ 视频下载超时 (${modelInfo})\n生成成功但下载失败，可重新生成`)
-                .catch(() => {});
-            }
+          const store = this.state.stores.get(STORE_KEY) || {};
+          const credsMap = store.accounts as any;
+          const sendCreds = task.account_id && credsMap?.[task.account_id]
+            ? credsMap[task.account_id]
+            : (Object.values(credsMap || {})[0] as ILinkCredentials | undefined) || store.ilinkCreds;
+          if (sendCreds) {
+            sendTextMessage(sendCreds as ILinkCredentials, toUserId, contextToken, `❌ 视频下载超时 (${modelInfo})\n生成成功但下载失败，可重新生成`)
+              .catch(() => {});
           }
           continue;
         }
+
+        // Agnes API 限流保护：每个任务查询之间延迟 1-2 秒
+        await new Promise(r => setTimeout(r, 1000 + Math.random() * 1000));
 
         // baseUrl 规范化：去掉末尾斜杠，去掉可能包含的 /v1 和 /v1/video* 路径
         let base = (task.base_url as string).replace(/\/+$/, "");
