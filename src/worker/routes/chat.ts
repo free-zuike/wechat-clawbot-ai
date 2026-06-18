@@ -111,23 +111,6 @@ export async function handleChat(request: Request, env: Env): Promise<Response> 
         }
         return json({ reply: `🎨 ${modelInfo}${imageModel}\n\n图片已加入生成队列，生成完成后会自动推送。`, source: "ai" } satisfies ChatResponse);
       }
-        // 图片生成快，同步处理
-        const imageData = await generateImage(env.AI, prompt, imageModel, aiConfig.provider, aiConfig.baseUrl, aiConfig.apiKey);
-        if (imageData) {
-          if (typeof imageData === "string") {
-            return json({ reply: `🎨 ${modelInfo}${imageModel}\n\n图片已生成！\n\n![生成的图片](${imageData})`, source: "ai" } satisfies ChatResponse);
-          }
-          let base64 = "";
-          const chunkSize = 8192;
-          for (let i = 0; i < imageData.length; i += chunkSize) {
-            base64 += String.fromCharCode(...imageData.slice(i, i + chunkSize));
-          }
-          base64 = btoa(base64);
-          const dataUrl = `data:image/png;base64,${base64}`;
-          return json({ reply: `🎨 ${modelInfo}${imageModel}\n\n图片已生成！\n\n![生成的图片](${dataUrl})`, source: "ai" } satisfies ChatResponse);
-        }
-        return json({ reply: `❌ 图片生成失败 (${modelInfo}${imageModel})\n请稍后重试或换个描述试试`, source: "error" } satisfies ChatResponse);
-      }
     }
 
     Logger.info(`[chat][${requestId}] provider`, { provider: aiConfig.provider, model: aiConfig.model || "default" });
