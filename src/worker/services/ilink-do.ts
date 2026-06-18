@@ -1437,6 +1437,8 @@ export class ILinkConnectionDO implements DurableObject {
                   // URL：使用简单方式发送
                   await sendImageSimple(useCreds!, from, ctxToken, imageData);
                   replyContent = `[图片生成] ${mediaPrompt}`;
+                  // 广播图片到 WebSocket（管理后台显示）
+                  this.broadcastToWebSockets({ type: "media_generated", mediaType: "image", url: imageData, model: cfg.aiImageModel, provider: cfg.aiProvider });
                 } else {
                   // Uint8Array：转换为 Blob URL 后发送
                   const blob = new Blob([imageData.buffer as ArrayBuffer], { type: "image/png" });
