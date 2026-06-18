@@ -501,7 +501,7 @@ export async function uploadMediaToCdn(
     rawsize,
     rawfilemd5,
     filesize,
-    no_need_thumb: true,
+    no_need_thumb: false, // 需要缩略图，否则微信无法显示图片
     aeskey: aeskeyHex,
   });
   Logger.info("[iLink] [Step 2/4] getuploadurl succeeded", {
