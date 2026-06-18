@@ -68,36 +68,39 @@ export default {
 
       try {
         if (type === "video_generation") {
-          // 提交视频生成任务到 Agnes AI
-          const base = (baseUrl || "").replace(/\/+$/, "").replace(/\/v1\/(chat\/completions|video\/generations)$/i, "");
-          const resp = await fetch(`${base}/v1/video/generations`, {
+          // 提交视频生成任务到 Agnes AI（使用 /v1/videos，非标准 /v1/video/generations）
+          let base = (baseUrl || "").replace(/\/+$/, "");
+          base = base.replace(/\/v1\/(chat\/completions|images\/generations|videos?\/generations|videos\/?|videos)$/i, "");
+          base = base.replace(/\/v1$/, "");
+          const resp = await fetch(`${base}/v1/videos`, {
             method: "POST",
             headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
-            body: JSON.stringify({ model, prompt, duration: 5 }),
+            body: JSON.stringify({ model, prompt, num_frames: 121, frame_rate: 24 }),
           });
 
           if (!resp.ok) {
             const errBody = await resp.text().catch(() => "");
-            Logger.error("[queue] Video submit failed", { status: resp.status, body: errBody.slice(0, 200) });
+            Logger.error("[queue] Video submit failed", { status: resp.status, body: errBody.slice(0, 200), url: `${base}/v1/videos` });
             continue;
           }
 
           const data = await resp.json() as any;
           const taskId = data.task_id || data.id;
-          if (!taskId) {
-            Logger.error("[queue] No task_id in response", { keys: Object.keys(data || {}) });
+          const videoId = data.video_id;
+          if (!taskId && !videoId) {
+            Logger.error("[queue] No task_id or video_id in response", { keys: Object.keys(data || {}) });
             continue;
           }
 
-          // 存储到 DO SQLite
+          // 存储到 DO SQLite（包含 video_id，优先用于查询）
           const doId = env.ILINK_CONNECTION.idFromName("main");
           const doStub = env.ILINK_CONNECTION.get(doId);
           await doStub.fetch(new Request("http://localhost/store-pending-video", {
             method: "POST",
-            body: JSON.stringify({ taskId, prompt, model, provider, baseUrl, apiKey }),
+            body: JSON.stringify({ taskId, videoId, prompt, model, provider, baseUrl, apiKey }),
           }));
 
-          Logger.info("[queue] Video task submitted and stored", { taskId });
+          Logger.info("[queue] Video task submitted and stored", { taskId, videoId });
         }
       } catch (e: any) {
         Logger.error("[queue] Task error", { error: e?.message });
