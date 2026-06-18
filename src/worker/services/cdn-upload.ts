@@ -257,15 +257,15 @@ function extractUploadParam(obj: any): { upload_param?: string; thumb_upload_par
 }
 
 /**
- * 调用 iLink getuploadurl 接口
+ * 调用 iLink getuploadurl 接口（真实协议：返回 upload_full_url）
  * @param creds iLink 登录凭证
  * @param req 必要参数
+ * @returns { uploadFullUrl: 完整的 CDN 上传 URL (含 encrypted_query_param) }
  */
 export async function getUploadUrl(
   creds: ILinkCredentials,
   req: GetUploadUrlReq,
-): Promise<{ upload_param: string; thumb_upload_param?: string }> {
-  // 确保 no_need_thumb 始终为 true（视频/图片上传都不需要缩略图上传）
+): Promise<{ uploadFullUrl: string }> {
   const reqWithThumb = { ...req, no_need_thumb: true };
 
   Logger.info("[iLink] [Step 2/4] Calling getuploadurl API (raw request)", {
@@ -285,171 +285,155 @@ export async function getUploadUrl(
 
   const respText = JSON.stringify(resp);
 
-  // Check standard error codes
+  // 检查错误码
   if (resp.errcode !== undefined && resp.errcode !== 0) {
-    Logger.error(`[iLink] getuploadurl returned API error — errcode=${resp.errcode} errmsg=${resp.errmsg} raw=${respText.slice(0, 600)}`);
+    Logger.error(`[iLink] getuploadurl API error — errcode=${resp.errcode} errmsg=${resp.errmsg} raw=${respText.slice(0, 500)}`);
     throw new ClawBotError("ILINK_API_ERROR", `getuploadurl error ${resp.errcode}: ${resp.errmsg}`, 502, { errcode: resp.errcode, errmsg: resp.errmsg });
   }
   if (resp.ret !== undefined && resp.ret !== 0) {
-    Logger.error(`[iLink] getuploadurl returned ret=${resp.ret} raw=${respText.slice(0, 600)}`);
+    Logger.error(`[iLink] getuploadurl ret=${resp.ret} raw=${respText.slice(0, 500)}`);
     throw new ClawBotError("ILINK_API_ERROR", `getuploadurl ret=${resp.ret}`, 502, { ret: resp.ret });
   }
 
-  // Robust upload_param extraction
-  const extracted = extractUploadParam(resp);
-  if (!extracted.upload_param) {
-    // List all top-level keys and search any useful string values
-    const valueSummary: string[] = [];
-    try {
-      for (const k of Object.keys(resp)) {
-        const v = (resp as any)[k];
-        if (typeof v === "string") {
-          valueSummary.push(`${k}="${v.slice(0, 80)}..."`);
-        } else if (typeof v === "number" || typeof v === "boolean") {
-          valueSummary.push(`${k}=${v}`);
-        } else if (typeof v === "object" && v !== null) {
-          valueSummary.push(`${k}=[${Object.keys(v).join(",")}]`);
-        }
-      }
-    } catch (_) {}
+  // 提取 upload_full_url（这是真实协议的字段）
+  // 可能的字段名：upload_full_url / uploadUrl / upload_url / upload_param
+  let uploadFullUrl: string | undefined;
+  const fieldCandidates = ["upload_full_url", "uploadUrl", "upload_url", "upload_param", "cdn_upload_url"];
+  const respObj = resp as any;
+  for (const k of fieldCandidates) {
+    if (typeof respObj[k] === "string" && respObj[k].length > 0) {
+      uploadFullUrl = respObj[k];
+      break;
+    }
+  }
 
+  if (!uploadFullUrl) {
+    const keys = Object.keys(resp);
+    const valueSummary: string[] = [];
+    for (const k of keys) {
+      const v = respObj[k];
+      if (typeof v === "string") valueSummary.push(`${k}="${v.slice(0, 60)}"`);
+      else if (typeof v === "number" || typeof v === "boolean") valueSummary.push(`${k}=${v}`);
+      else if (typeof v === "object" && v !== null) valueSummary.push(`${k}=[${Object.keys(v).join(",")}]`);
+    }
     Logger.error(
-      `[iLink] getuploadurl response has NO upload_param — ALL_KEYS=[${extracted.allKeys.join(",")}] VALUES={${valueSummary.join(" | ")}} FULL_RAW=${respText.slice(0, 800)}`
+      `[iLink] getuploadurl NO upload_full_url — ALL_KEYS=[${keys.join(",")}] VALUES={${valueSummary.join(" | ")}} FULL_RAW=${respText.slice(0, 600)}`
     );
     throw new ClawBotError(
       "ILINK_UPLOAD_PARAM_MISSING",
-      `getuploadurl did not return upload_param. Keys: [${extracted.allKeys.join(",")}]`,
+      `getuploadurl missing upload_full_url. Keys: [${keys.join(",")}]`,
       502,
       { resp: respText.slice(0, 1000) }
     );
   }
 
-  Logger.info(`[iLink] getuploadurl success — upload_param_len=${extracted.upload_param.length} keys=[${extracted.allKeys.join(",")}]`);
-
-  return {
-    upload_param: extracted.upload_param,
-    thumb_upload_param: extracted.thumb_upload_param,
-  };
+  Logger.info(`[iLink] getuploadurl success — url=${uploadFullUrl.slice(0, 120)}...`);
+  return { uploadFullUrl };
 }
 
-// ========== CDN 上传（POST 加密文件）==========
-// CDN 主机名尝试列表（不同微信环境可能不同）
-const CDN_HOST_CANDIDATES = [
-  "https://ilinkai.weixin.qq.com/c2c",
-  "https://novac2c.cdn.weixin.qq.com/c2c",
-  "https://ilink.cdn.weixin.qq.com/c2c",
-  "https://cdn.ilink.weixin.qq.com/c2c",
-];
+// ========== CDN 上传（POST 加密文件到 upload_full_url）==========
+// 注：upload_full_url 是 getuploadurl 返回的完整 URL，已包含 encrypted_query_param
+// 直接 POST 加密文件到该 URL 即可，响应头 x-encrypted-param 即为 CDNMedia 的下载 param
 
 /**
- * 上传加密文件到 Weixin CDN
- * 响应头 x-encrypted-param 即为下载参数（downloadEncryptedQueryParam）
+ * 上传加密文件到 upload_full_url
+ * @param uploadFullUrl getuploadurl 返回的完整 CDN URL
+ * @param filekey 文件标识（日志用）
+ * @param ciphertext AES-128-ECB+PKCS#7 加密数据
+ * @param timeoutMs 单次超时
  */
 export async function uploadEncryptedToCdn(
-  uploadParam: string,
+  uploadFullUrl: string,
   filekey: string,
   ciphertext: Uint8Array,
   timeoutMs: number = DEFAULT_UPLOAD_MS,
-  baseUrlCandidates: string[] = CDN_HOST_CANDIDATES,
 ): Promise<string> {
-  let lastError: ClawBotError | null = null;
+  Logger.info(`[iLink] [Step 4/4] POST encrypted file to CDN`, {
+    urlDomain: uploadFullUrl.substring(0, 80) + "...",
+    filekey: filekey.substring(0, 16),
+    ciphertextSize: ciphertext.length,
+  });
 
-  for (let i = 0; i < baseUrlCandidates.length; i++) {
-    const cdnBaseUrl = baseUrlCandidates[i]!;
-    const cdnUrl = `${cdnBaseUrl}/upload?encrypted_query_param=${encodeURIComponent(uploadParam)}&filekey=${encodeURIComponent(filekey)}`;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
 
-    Logger.info(`[iLink] CDN upload attempt ${i + 1}/${baseUrlCandidates.length}`, {
-      cdnUrl: cdnUrl.substring(0, 120),
-      filekey,
-      ciphertextSize: ciphertext.length,
+  try {
+    const resp = await fetch(uploadFullUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/octet-stream" },
+      body: ciphertext,
+      signal: ctrl.signal,
     });
+    clearTimeout(timer);
 
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    const errMsg = resp.headers.get("x-error-message") || "";
+    const respText = await resp.text().catch(() => "");
 
-    try {
-      const resp = await fetch(cdnUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/octet-stream" },
-        body: ciphertext,
-        signal: ctrl.signal,
-      });
-      clearTimeout(timer);
+    Logger.info(`[iLink] CDN upload response — HTTP ${resp.status} x-error-message="${errMsg.slice(0, 200)}" body=${respText.slice(0, 300)}`);
 
-      const errMsg = resp.headers.get("x-error-message") || "";
-      const respText = await resp.text().catch(() => "");
-
-      Logger.info(`[iLink] CDN upload response`, {
-        host: cdnBaseUrl,
-        status: resp.status,
-        xErrorMessage: errMsg.slice(0, 200),
-        bodyLen: respText.length,
-        body: respText.slice(0, 300),
-      });
-
-      if (resp.status >= 400 && resp.status < 500) {
-        lastError = new ClawBotError(
-          "ILINK_CDN_CLIENT_ERROR",
-          `CDN ${resp.status}: ${errMsg || respText.slice(0, 200)}`,
-          502,
-          { status: resp.status, errMsg, body: respText }
-        );
-        continue;
-      }
-      if (resp.status !== 200) {
-        lastError = new ClawBotError(
-          "ILINK_CDN_SERVER_ERROR",
-          `CDN ${resp.status}: ${errMsg}`,
-          502
-        );
-        continue;
-      }
-
-      const downloadParam = resp.headers.get("x-encrypted-param");
-      if (!downloadParam) {
-        const headersList: string[] = [];
-        try { resp.headers.forEach((v: string, k: string) => headersList.push(`${k}: ${v.slice(0, 50)}`)); } catch (_) {}
-        Logger.error("[iLink] CDN response missing x-encrypted-param header", { headers: headersList });
-        lastError = new ClawBotError(
-          "ILINK_CDN_MISSING_PARAM",
-          "CDN response missing x-encrypted-param header",
-          502
-        );
-        continue;
-      }
-
-      Logger.info("[iLink] CDN upload success", {
-        host: cdnBaseUrl,
-        filekey,
-        downloadParamLen: downloadParam.length,
-      });
-      return downloadParam;
-    } catch (e: any) {
-      clearTimeout(timer);
-      if (e?.name === "AbortError") {
-        lastError = new ClawBotError("ILINK_CDN_TIMEOUT", `CDN upload timeout (${cdnBaseUrl})`, 504);
-      } else {
-        lastError = new ClawBotError(
-          "ILINK_CDN_ERROR",
-          `CDN upload error (${cdnBaseUrl}): ${e?.message}`,
-          502,
-          { error: e?.message }
-        );
-      }
-      Logger.warn("[iLink] CDN upload attempt failed", {
-        host: cdnBaseUrl,
-        attempt: i + 1,
-        error: e?.message,
-      });
-      // 下次尝试前短暂等待
-      if (i < baseUrlCandidates.length - 1) {
-        await new Promise(r => setTimeout(r, 500));
-      }
+    if (!resp.ok) {
+      throw new ClawBotError(
+        "ILINK_CDN_HTTP_ERROR",
+        `CDN upload HTTP ${resp.status}: ${errMsg || respText.slice(0, 200)}`,
+        502,
+        { status: resp.status, errMsg, body: respText }
+      );
     }
-  }
 
-  // 所有主机都失败
-  throw lastError || new ClawBotError("ILINK_CDN_ERROR", "All CDN upload attempts failed", 502);
+    // 从响应头获取下载 param（标准协议：x-encrypted-param）
+    const downloadParam = resp.headers.get("x-encrypted-param");
+
+    if (downloadParam && downloadParam.length > 0) {
+      Logger.info(`[iLink] CDN upload OK — got x-encrypted-param (len=${downloadParam.length})`);
+      return downloadParam;
+    }
+
+    // Fallback: 从响应体 JSON 中查找 download_param / encrypted_param
+    try {
+      const respBody = JSON.parse(respText);
+      const fbKeys = ["download_param", "downloadParam", "encrypted_param", "encryptedParam", "download_encrypted_query_param", "query_param"];
+      for (const k of fbKeys) {
+        if (typeof respBody[k] === "string" && respBody[k].length > 0) {
+          Logger.info(`[iLink] CDN upload OK — got ${k} from response body (len=${respBody[k].length})`);
+          return respBody[k];
+        }
+      }
+      // Fallback: 搜索响应体中任何看起来像 param 的字符串
+      for (const [k, v] of Object.entries(respBody)) {
+        if (typeof v === "string" && v.length > 20 && v !== uploadFullUrl) {
+          Logger.info(`[iLink] CDN upload OK — using ${k} as download param (len=${v.length})`);
+          return v;
+        }
+      }
+    } catch (_) {
+      // 不是 JSON，忽略
+    }
+
+    // 终极 fallback：从上传 URL 中提取 encrypted_query_param
+    try {
+      const url = new URL(uploadFullUrl);
+      const paramFromUrl = url.searchParams.get("encrypted_query_param");
+      if (paramFromUrl && paramFromUrl.length > 0) {
+        Logger.info(`[iLink] CDN upload OK — using URL query encrypted_query_param as download param (len=${paramFromUrl.length})`);
+        return paramFromUrl;
+      }
+    } catch (_) {}
+
+    const headersDump: string[] = [];
+    try { resp.headers.forEach((v: string, k: string) => headersDump.push(`${k}=${v.slice(0, 80)}`)); } catch (_) {}
+    throw new ClawBotError(
+      "ILINK_CDN_MISSING_PARAM",
+      `CDN response has no x-encrypted-param. Headers: ${headersDump.join(" | ").substring(0, 400)}`,
+      502
+    );
+  } catch (e: any) {
+    clearTimeout(timer);
+    if (e instanceof ClawBotError) throw e;
+    if (e?.name === "AbortError") {
+      throw new ClawBotError("ILINK_CDN_TIMEOUT", "CDN upload timeout", 504);
+    }
+    throw new ClawBotError("ILINK_CDN_ERROR", `CDN upload error: ${e?.message}`, 502, { error: e?.message });
+  }
 }
 
 // ========== 一站式上传 ==========
@@ -502,7 +486,7 @@ export async function uploadMediaToCdn(
   // 2. 调用 getuploadurl
   Logger.info("[iLink] [Step 2/4] Calling getuploadurl API", { baseUrl: creds.baseUrl.substring(0, 80) });
   const getUploadStart = Date.now();
-  const { upload_param } = await getUploadUrl(creds, {
+  const { uploadFullUrl } = await getUploadUrl(creds, {
     filekey,
     media_type: mediaType,
     to_user_id: toUserId,
@@ -513,7 +497,8 @@ export async function uploadMediaToCdn(
     aeskey: aeskeyHex,
   });
   Logger.info("[iLink] [Step 2/4] getuploadurl succeeded", {
-    uploadParamLen: upload_param.length,
+    uploadFullUrlLen: uploadFullUrl.length,
+    uploadFullUrlPrefix: uploadFullUrl.substring(0, 100),
     elapsedMs: Date.now() - getUploadStart,
   });
 
@@ -528,10 +513,9 @@ export async function uploadMediaToCdn(
     elapsedMs: Date.now() - encryptStart,
   });
 
-  // 4. 上传到 CDN
-  Logger.info("[iLink] [Step 4/4] Uploading encrypted file to CDN");
+  // 4. 上传到 CDN（POST 加密文件到 uploadFullUrl）
   const cdnStart = Date.now();
-  const downloadEncryptedQueryParam = await uploadEncryptedToCdn(upload_param, filekey, ciphertext);
+  const downloadEncryptedQueryParam = await uploadEncryptedToCdn(uploadFullUrl, filekey, ciphertext);
   Logger.info("[iLink] [Step 4/4] CDN upload completed", {
     downloadParamLen: downloadEncryptedQueryParam.length,
     elapsedMs: Date.now() - cdnStart,
