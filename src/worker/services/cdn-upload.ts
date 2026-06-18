@@ -511,15 +511,9 @@ export async function uploadMediaToCdn(
     md5: rawfilemd5,
   });
 
-  // 2. 调用 getuploadurl - 需要提供缩略图信息
+  // 2. 调用 getuploadurl
   Logger.info("[iLink] [Step 2/4] Calling getuploadurl API", { baseUrl: creds.baseUrl.substring(0, 80) });
   const getUploadStart = Date.now();
-  
-  // 生成缩略图信息（对于图片，使用原图的前部分作为缩略图）
-  const thumbData = fileData.slice(0, Math.min(fileData.length, 1024 * 64)); // 最多 64KB 作为缩略图
-  const thumbRawsize = thumbData.length;
-  const thumbRawfilemd5 = md5Hex(thumbData);
-  const thumbFilesize = aesEcbPaddedSize(thumbRawsize);
   
   const { uploadFullUrl, thumbUploadParam, thumbSize, thumbWidth, thumbHeight } = await getUploadUrl(creds, {
     filekey,
@@ -528,11 +522,8 @@ export async function uploadMediaToCdn(
     rawsize,
     rawfilemd5,
     filesize,
-    no_need_thumb: false, // 需要缩略图，否则微信无法显示图片
+    no_need_thumb: true, // 不需要缩略图，简化上传流程
     aeskey: aeskeyHex,
-    thumb_rawsize: thumbRawsize,
-    thumb_rawfilemd5: thumbRawfilemd5,
-    thumb_filesize: thumbFilesize,
   });
   Logger.info("[iLink] [Step 2/4] getuploadurl succeeded", {
     uploadFullUrlLen: uploadFullUrl.length,
