@@ -491,14 +491,30 @@ export async function sendFileFromUrl(
     try {
       resp = await fetch(fileUrl, { headers, signal: AbortSignal.timeout(60000) });
       if (resp.ok) break;
+      const errBody = await resp.text().catch(() => "");
+      const respHeaders: Record<string, string> = {};
+      resp.headers.forEach((v, k) => { respHeaders[k.toLowerCase()] = v; });
       lastError = `HTTP ${resp.status}`;
-      Logger.warn("[iLink] Download attempt failed, retrying", { attempt: attempt + 1, status: resp.status, url: fileUrl.substring(0, 60) });
+      Logger.warn("[iLink] Download attempt failed, retrying", {
+        attempt: attempt + 1,
+        status: resp.status,
+        url: fileUrl.substring(0, 120),
+        headersSent: Object.keys(headers).map(h => h.toLowerCase()),
+        contentType: resp.headers.get("content-type"),
+        body: errBody.slice(0, 500),
+        responseHeaders: Object.entries(respHeaders).map(([k, v]) => `${k}=${v.slice(0, 80)}`),
+      });
       if (attempt < maxRetries - 1) {
         await new Promise((r) => setTimeout(r, 2000 + attempt * 2000));
       }
     } catch (e: any) {
       lastError = e?.message || String(e);
-      Logger.warn("[iLink] Download attempt failed with exception, retrying", { attempt: attempt + 1, error: lastError });
+      Logger.warn("[iLink] Download attempt failed with exception, retrying", {
+        attempt: attempt + 1,
+        error: lastError,
+        url: fileUrl.substring(0, 120),
+        headersSent: Object.keys(headers).map(h => h.toLowerCase()),
+      });
       if (attempt < maxRetries - 1) {
         await new Promise((r) => setTimeout(r, 2000 + attempt * 2000));
       }

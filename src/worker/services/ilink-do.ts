@@ -850,8 +850,28 @@ export class ILinkConnectionDO implements DurableObject {
               continue;
             }
 
-            const statusData = await statusResp.json() as any;
-            Logger.info("[DO] Video status check raw response", { taskId, keys: Object.keys(statusData || {}).slice(0, 10), preview: JSON.stringify(statusData).slice(0, 300) });
+            const statusTextFull = await statusResp.text();
+            let statusData: any = {};
+            try { statusData = JSON.parse(statusTextFull); } catch { statusData = { raw: statusTextFull }; }
+            Logger.info("[DO] Video status check full response", { taskId, fullBody: statusTextFull.slice(0, 2000), topKeys: Object.keys(statusData || {}), dataKeys: statusData?.data ? Object.keys(statusData.data) : [] });
+
+            // 递归收集所有可能的 URL 字段（辅助调试）
+            const collectUrls = (obj: any, depth = 0): string[] => {
+              if (depth > 6 || !obj || typeof obj !== "object") return [];
+              const results: string[] = [];
+              for (const [k, v] of Object.entries(obj)) {
+                if (typeof v === "string" && v.length > 8 && (v.startsWith("http") || v.includes("://"))) {
+                  results.push(`${k}=${v}`);
+                } else if (v && typeof v === "object") {
+                  results.push(...collectUrls(v, depth + 1));
+                }
+              }
+              return results;
+            };
+            const collectedUrls = collectUrls(statusData);
+            if (collectedUrls.length > 0) {
+              Logger.info("[DO] Video response found potential URLs", { taskId, urls: collectedUrls.map(u => u.slice(0, 120)) });
+            }
 
             // 从更多可能的字段读取状态
             const status = statusData?.status
@@ -866,10 +886,13 @@ export class ILinkConnectionDO implements DurableObject {
             const PROCESSING_STATES = new Set(["processing", "in_progress", "queued", "pending", "running", "scheduled", "submitted", "not_start", "NOT_START"]);
 
             const statusLower = status ? String(status).toLowerCase() : "";
+            Logger.info("[DO] Video status resolved", { taskId, resolvedStatus: status, statusLower, completedMatched: COMPLETED_STATES.has(statusLower), failedMatched: FAILED_STATES.has(statusLower) });
 
             if (COMPLETED_STATES.has(statusLower)) {
-              // 从更多字段中提取 URL
+              // 从更多字段中提取 URL —— 保持顺序优先级，新增更多 Agnes 特有字段
               const d = statusData?.data;
+              const firstResult = Array.isArray(statusData?.result) ? statusData.result[0] : null;
+              const firstDataItem = Array.isArray(d) ? d[0] : null;
               videoUrl = d?.remixed_from_video_id
                 || d?.video_url
                 || d?.result_url
@@ -878,15 +901,20 @@ export class ILinkConnectionDO implements DurableObject {
                 || d?.output_url
                 || d?.output
                 || d?.result
+                || d?.media_url
+                || d?.download_url
                 || statusData?.result_url
                 || statusData?.video_url
                 || statusData?.url
                 || statusData?.video
                 || statusData?.output
-                || (Array.isArray(d) && d[0]?.url)
-                || (Array.isArray(statusData?.result) && statusData.result[0]?.url)
+                || statusData?.media_url
+                || statusData?.download_url
+                || (firstDataItem && (firstDataItem.url || firstDataItem.video_url || firstDataItem.result_url))
+                || (firstResult && (firstResult.url || firstResult.video_url || firstResult.result_url))
+                || (collectedUrls.length > 0 ? collectedUrls[0].split("=").slice(1).join("=") : null)
                 || null;
-              Logger.info("[DO] Video task completed", { taskId, urlFound: !!videoUrl, url: videoUrl?.slice(0, 80) });
+              Logger.info("[DO] Video task completed — URL extracted", { taskId, urlFound: !!videoUrl, url: videoUrl?.slice(0, 200), candidates: collectedUrls.length });
             } else if (FAILED_STATES.has(statusLower)) {
               taskFailed = true;
               Logger.warn("[DO] Video task failed (provider)", { taskId, status, response: JSON.stringify(statusData).slice(0, 200) });
