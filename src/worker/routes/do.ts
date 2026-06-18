@@ -37,7 +37,7 @@ export async function handleDOSend(request: Request, env: Env): Promise<Response
   if (!v.ok) return json({ error: v.error }, 401);
 
   try {
-    const body = await request.json();
+    const body = await request.json() as { toUserId?: string; contextToken?: string; text?: string };
     const { toUserId, contextToken, text } = body;
 
     if (!toUserId || !text) {

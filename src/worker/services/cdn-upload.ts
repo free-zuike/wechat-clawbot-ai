@@ -268,7 +268,7 @@ function extractUploadParam(obj: any): { upload_param?: string; thumb_upload_par
 export async function getUploadUrl(
   creds: ILinkCredentials,
   req: GetUploadUrlReq,
-): Promise<{ uploadFullUrl: string }> {
+): Promise<{ uploadFullUrl: string; thumbUploadParam?: string; thumbSize?: number; thumbWidth?: number; thumbHeight?: number }> {
   // 使用传入的 no_need_thumb 参数，不再强制覆盖
   const reqWithThumb = { ...req };
 
@@ -375,7 +375,7 @@ export async function uploadEncryptedToCdn(
     const resp = await fetch(uploadFullUrl, {
       method: "POST",
       headers: { "Content-Type": "application/octet-stream" },
-      body: ciphertext,
+      body: ciphertext.buffer as ArrayBuffer,
       signal: ctrl.signal,
     });
     clearTimeout(timer);

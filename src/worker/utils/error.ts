@@ -222,6 +222,7 @@ async function checkAuth(request: Request, env: Env): Promise<{ ok: boolean; err
     const url = new URL(request.url);
     const queryPwd = url.searchParams.get('pwd') || '';
     if (queryPwd === env.ADMIN_PASSWORD) return { ok: true };
+    const authHeader = request.headers.get('Authorization') || '';
     const m = authHeader.match(/^Basic\s+(.+)$/i);
     if (m) {
       try {

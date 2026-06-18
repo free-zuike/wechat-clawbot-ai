@@ -199,7 +199,7 @@ export async function runHealthChecks(env: Env): Promise<HealthCheckResult> {
     timestamp: new Date().toISOString(),
     uptimeMs: Date.now() - startTime,
     checks,
-    version: process.env.npm_package_version || 'unknown'
+    version: 'unknown'
   };
 }
 

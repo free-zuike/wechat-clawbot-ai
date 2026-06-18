@@ -7,6 +7,7 @@ import type { Env } from "../index";
 
 interface DebugResult {
   ok: boolean;
+  error?: string;
   message?: string;
   networkTest?: boolean;
   getUpdatesResult?: Record<string, unknown>;

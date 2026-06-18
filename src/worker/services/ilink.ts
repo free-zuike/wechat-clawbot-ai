@@ -145,7 +145,7 @@ async function post(
         response: text.slice(0, 1000),
         responseLength: text.length,
         responseHeaders: Object.fromEntries(
-          Array.from(r.headers.entries()).map(([k, v]) => [k, v.slice(0, 200)])
+          Array.from(r.headers as any).map(([k, v]: [string, string]) => [k, v.slice(0, 200)])
         ),
       });
       throw new ClawBotError('ILINK_PARSE_ERROR', 'Failed to parse response', 502, { 
@@ -184,7 +184,7 @@ export async function fetchQRCode(baseUrl = DEFAULT_BASE): Promise<{ qrcode: str
     throw new ClawBotError('ILINK_QRCODE_ERROR', `获取二维码失败: ${r.status}`, 502);
   }
   
-  const data = await r.json();
+  const data = await r.json() as any;
   if (!data.qrcode || !data.qrcode_img_content) {
     Logger.error(`[iLink] Invalid QR code response`, { response: JSON.stringify(data) });
     throw new ClawBotError('ILINK_QRCODE_ERROR', '返回数据无效', 502);
@@ -217,7 +217,7 @@ export async function getQRCodeStatus(qrcode: string, baseUrl = DEFAULT_BASE): P
       return { status: "wait" };
     }
     
-    const data = await r.json();
+    const data = await r.json() as any;
     const s = data?.status;
     
     const result = {
@@ -385,7 +385,7 @@ export async function sendMediaMessage(
   // 根据 weixin-ilink 官方 SDK，from_user_id 应该是空字符串
   // 参考: https://www.npmjs.com/package/weixin-ilink
   const msg: WeixinMessage = {
-    message_id: messageId,
+    message_id: parseInt(messageId) || Date.now(),
     from_user_id: "", // 空字符串，根据 iLink 协议规范
     to_user_id: toUserId,
     client_id: generateClientId(),

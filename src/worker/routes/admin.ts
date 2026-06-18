@@ -4,6 +4,7 @@
 import { json, verifyAdmin } from "../utils";
 import { Logger } from "../utils/error";
 import { alertService } from "../utils/alert";
+import { metrics } from "../utils/metrics";
 import type { Env } from "../index";
 
 // 简单的内存缓存（用于健康检查）
@@ -286,8 +287,7 @@ export async function handleResolveAlert(request: Request, env: Env): Promise<Re
       return json({ error: "缺少报警 ID" }, 400);
     }
 
-    alertService.init(env.CLAWBOT_KV);
-    const success = await alertService.resolveAlert(id);
+    const success = alertService.resolveAlert(id);
 
     if (!success) {
       return json({ error: "报警未找到或已解决" }, 404);
@@ -307,8 +307,7 @@ export async function handleResolveAllAlerts(request: Request, env: Env): Promis
   if (!v.ok) return json({ error: v.error }, 401);
 
   try {
-    alertService.init(env.CLAWBOT_KV);
-    const count = await alertService.resolveAllAlerts();
+    const count = alertService.resolveAllAlerts();
 
     Logger.info("[Admin] all alerts resolved", { count });
 

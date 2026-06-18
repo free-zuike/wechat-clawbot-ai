@@ -193,7 +193,7 @@ export class ILinkConnectionDO implements DurableObject {
       const sql = this.doState.storage.sql;
       const info = await sql.exec("PRAGMA table_info(pending_videos)");
       if (!info) return;
-      const rows = (info as any).toArray ? (info as any).toArray() : ((info as any[])[0] && (info as any[])[0].toArray ? (info as any[])[0].toArray() : []);
+      const rows = info.toArray ? info.toArray() : [];
       const cols = new Set(rows.map((r: any) => r.name as string));
       const needAdd: [string, string][] = [
         ["to_user_id", "TEXT"],
@@ -909,7 +909,7 @@ export class ILinkConnectionDO implements DurableObject {
                 try {
                   const r2 = await fetch(checkUrl2, { headers: { "Authorization": `Bearer ${task.api_key}` } });
                   if (r2.ok) {
-                    const j2 = await r2.json();
+                    const j2 = await r2.json() as any;
                     Logger.info("[DO] Agnes video lookup response", { response: JSON.stringify(j2).slice(0, 400) });
                     // 常见字段名
                     videoUrl = j2.url || j2.video_url || j2.videoUrl || j2.video || j2.remixed_from_video_id || j2.file_url || j2.data?.url || j2.data?.remixed_from_video_id;
@@ -953,7 +953,7 @@ export class ILinkConnectionDO implements DurableObject {
                   credsValid: !!(creds && creds.botToken && creds.baseUrl),
                   credsBaseUrl: creds?.baseUrl?.substring(0, 80),
                 });
-                await sendVideoMessage(creds, toUserId, contextToken, videoUrl, task.api_key);
+                await sendVideoMessage(creds, toUserId, contextToken, videoUrl, task.api_key as string);
                 sentSuccessfully = true;
                 Logger.info("[DO] Video sent to WeChat successfully", { taskId });
               } catch (e2: any) {

@@ -42,7 +42,7 @@ export async function getContextFromSQLite(sql: SqlStorage, userId: string): Pro
       `SELECT messages, last_updated FROM contexts WHERE user_id = ?`,
       userId
     );
-    const row = cursor.one<{ messages: string; last_updated: number }>();
+    const row = cursor.one() as { messages: string; last_updated: number } | null;
 
     if (row) {
       try {
