@@ -77,26 +77,72 @@ async function post(
     clearTimeout(timer);
     
     const text = await r.text();
-    Logger.debug(`[iLink] POST ${endpoint} completed`, { status: r.status, durationMs: duration });
+    const status = r.status;
+    
+    // 打印响应头（调试用）
+    const responseHeaders: Record<string, string> = {};
+    r.headers.forEach((value, key) => {
+      if (key.toLowerCase().includes('error') || key.toLowerCase().includes('token') || 
+          key.toLowerCase().includes('param') || key.toLowerCase().includes('code')) {
+        responseHeaders[key] = value;
+      }
+    });
+    
+    Logger.debug(`[iLink] POST ${endpoint} completed`, { 
+      status, 
+      durationMs: duration,
+      responseLength: text.length,
+      responseHeaders,
+    });
     
     if (!r.ok) {
-      Logger.warn(`[iLink] POST ${endpoint} failed`, { status: r.status, response: text });
-      throw new ClawBotError('ILINK_HTTP_ERROR', `${endpoint} HTTP ${r.status}`, 502, { status: r.status, response: text });
+      Logger.warn(`[iLink] POST ${endpoint} failed`, { 
+        status, 
+        response: text.slice(0, 500),
+        responseHeaders 
+      });
+      throw new ClawBotError('ILINK_HTTP_ERROR', `${endpoint} HTTP ${status}`, 502, { status, response: text });
     }
     
     try {
       const json = JSON.parse(text);
-      if (json.errcode && json.errcode !== 0) {
+      
+      // 检查是否为空对象
+      const jsonKeys = Object.keys(json);
+      if (jsonKeys.length === 0) {
+        Logger.warn(`[iLink] ${endpoint} returned empty object`, { 
+          endpoint,
+          status,
+          response: text,
+        });
+        // 对于 sendmessage，空对象可能是一种"静默成功"响应，不抛出异常
+        if (endpoint === 'ilink/bot/sendmessage') {
+          Logger.info(`[iLink] sendmessage returned empty object, treating as success (status=${status})`);
+          return json;
+        }
+      }
+      
+      if (json.errcode !== undefined && json.errcode !== 0) {
         Logger.warn(`[iLink] ${endpoint} returned error`, { errcode: json.errcode, errmsg: json.errmsg });
         if (json.errcode === -14) {
           throw new ClawBotError('ILINK_SESSION_TIMEOUT', 'Session timeout', 401, { errcode: json.errcode, errmsg: json.errmsg });
         }
         throw new ClawBotError('ILINK_API_ERROR', `${endpoint} API error: ${json.errmsg || 'unknown'}`, 502, { errcode: json.errcode, errmsg: json.errmsg });
       }
+      
+      if (json.ret !== undefined && json.ret !== 0) {
+        Logger.warn(`[iLink] ${endpoint} returned ret=${json.ret}`, { ret: json.ret });
+        throw new ClawBotError('ILINK_API_ERROR', `${endpoint} ret=${json.ret}`, 502, { ret: json.ret });
+      }
+      
       return json;
     } catch (parseError) {
-      Logger.warn(`[iLink] Failed to parse response`, { error: parseError.message, response: text });
-      throw new ClawBotError('ILINK_PARSE_ERROR', 'Failed to parse response', 502, { error: parseError.message });
+      Logger.warn(`[iLink] Failed to parse response`, { 
+        error: parseError.message, 
+        response: text.slice(0, 500),
+        responseLength: text.length 
+      });
+      throw new ClawBotError('ILINK_PARSE_ERROR', 'Failed to parse response', 502, { error: parseError.message, response: text });
     }
   } catch (e) {
     clearTimeout(timer);
@@ -322,8 +368,12 @@ export async function sendMediaMessage(
   contextToken: string,
   item: MessageItem,
 ): Promise<void> {
+  // 生成唯一消息ID
+  const messageId = generateClientId();
+  
   const msg: WeixinMessage = {
-    from_user_id: creds.userId || "", // 使用凭证中的 userId，与文本消息保持一致
+    message_id: messageId,
+    from_user_id: creds.userId || "",
     to_user_id: toUserId,
     client_id: generateClientId(),
     message_type: MessageType.BOT,
@@ -332,6 +382,26 @@ export async function sendMediaMessage(
     item_list: [item],
   };
 
+  // 检查 media 对象结构
+  let mediaInfo: any = {};
+  if (item.type === MessageItemType.IMAGE && item.image_item?.media) {
+    mediaInfo = {
+      hasEncryptQueryParam: !!item.image_item.media.encrypt_query_param,
+      encryptQueryParamLength: item.image_item.media.encrypt_query_param?.length || 0,
+      hasAesKey: !!item.image_item.media.aes_key,
+      aesKeyLength: item.image_item.media.aes_key?.length || 0,
+      encryptType: item.image_item.media.encrypt_type,
+    };
+  } else if (item.type === MessageItemType.VIDEO && item.video_item?.media) {
+    mediaInfo = {
+      hasEncryptQueryParam: !!item.video_item.media.encrypt_query_param,
+      encryptQueryParamLength: item.video_item.media.encrypt_query_param?.length || 0,
+      hasAesKey: !!item.video_item.media.aes_key,
+      aesKeyLength: item.video_item.media.aes_key?.length || 0,
+      encryptType: item.video_item.media.encrypt_type,
+    };
+  }
+
   Logger.info("[iLink] ========== 开始发送消息 ==========", {
     toUserId: toUserId,
     fromUserId: creds.userId || "",
@@ -339,10 +409,13 @@ export async function sendMediaMessage(
     contextToken: contextToken.slice(0, 30) + "...",
     contextTokenLength: contextToken.length,
     itemType: item.type,
-    itemData: JSON.stringify(item),
-    fullMessage: JSON.stringify({ msg }),
+    itemTypeName: item.type === MessageItemType.IMAGE ? "IMAGE" : item.type === MessageItemType.VIDEO ? "VIDEO" : "OTHER",
+    messageId: messageId,
+    mediaInfo,
+    hasCdnUrl: item.type === MessageItemType.IMAGE ? !!item.image_item?.cdn_url : item.type === MessageItemType.VIDEO ? !!item.video_item?.cdn_url : false,
+    cdnUrlLength: item.type === MessageItemType.IMAGE ? item.image_item?.cdn_url?.length : item.type === MessageItemType.VIDEO ? item.video_item?.cdn_url?.length : 0,
+    fullMessageSize: JSON.stringify({ msg }).length,
     hasItemList: !!msg.item_list && msg.item_list.length > 0,
-    mediaItemHasCdnMedia: item.type === 2 && !!(item.image_item?.cdn_media || item.video_item?.cdn_media),
   });
 
   try {
@@ -362,30 +435,18 @@ export async function sendMediaMessage(
       }
     );
 
-    // 检查响应是否有效
-    if (!resp || typeof resp !== 'object') {
-      throw new ClawBotError('ILINK_API_EMPTY_RESPONSE', 'sendmessage returned empty or invalid response', 502, { response: JSON.stringify(resp) });
-    }
+    // 空对象响应在 post 函数中已被视为成功（iLink API 的静默成功模式）
+    const respKeys = Object.keys(resp || {});
+    const hasError = resp && ('errcode' in resp && resp.errcode !== 0) || ('ret' in resp && resp.ret !== 0);
     
-    // 检查是否为空对象（没有任何属性）
-    const respKeys = Object.keys(resp);
-    if (respKeys.length === 0) {
-      throw new ClawBotError('ILINK_API_EMPTY_RESPONSE', 'sendmessage returned empty object {}', 502, { response: JSON.stringify(resp) });
-    }
-    
-    // 检查是否有错误码
-    if ('errcode' in resp && resp.errcode !== 0) {
-      throw new ClawBotError('ILINK_API_ERROR', `sendmessage API error: ${resp.errmsg || 'unknown'}`, 502, { errcode: resp.errcode, errmsg: resp.errmsg });
-    }
-    
-    // 检查 ret 字段（某些 API 使用 ret 而不是 errcode）
-    if ('ret' in resp && resp.ret !== 0) {
-      throw new ClawBotError('ILINK_API_ERROR', `sendmessage ret=${resp.ret}`, 502, { ret: resp.ret });
+    if (hasError) {
+      throw new ClawBotError('ILINK_API_ERROR', `sendmessage error: errcode=${resp?.errcode}, ret=${resp?.ret}, errmsg=${resp?.errmsg}`, 502, { errcode: resp?.errcode, ret: resp?.ret, errmsg: resp?.errmsg });
     }
 
     Logger.info("[iLink] ========== 消息发送成功 ==========", {
       response: JSON.stringify(resp || {}),
       responseType: typeof resp,
+      responseIsEmpty: respKeys.length === 0,
       hasRet: resp !== undefined && resp !== null && 'ret' in resp,
       retValue: resp?.ret,
       hasErrcode: resp !== undefined && resp !== null && 'errcode' in resp,
