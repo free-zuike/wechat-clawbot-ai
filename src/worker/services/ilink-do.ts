@@ -753,7 +753,7 @@ export class ILinkConnectionDO implements DurableObject {
       await this.initSQLite();
       await this.ensurePendingVideosColumns();
       const cursor = this.doState.storage.sql.exec(
-        `SELECT task_id, prompt, model, provider, base_url, api_key, to_user_id, context_token, account_id, created_at FROM pending_videos WHERE status = 'queued'`
+        `SELECT task_id, video_id, prompt, model, provider, base_url, api_key, to_user_id, context_token, account_id, created_at FROM pending_videos WHERE status = 'queued'`
       );
       const pending = cursor.toArray();
 
@@ -1283,6 +1283,13 @@ export class ILinkConnectionDO implements DurableObject {
                   // 异步任务：存储到 pending_videos，稍后由 checkPendingVideos 处理
                   // 若返回了 video_id 则一起存储（Agnes 等平台优先用 video_id 查询）
                   await this.ensurePendingVideosColumns();
+                  Logger.info("[DO] Storing pending video task", {
+                    taskId: result.taskId,
+                    videoId: result.videoId,
+                    from: from?.slice(0, 15),
+                    ctxToken: ctxToken?.slice(0, 15),
+                    accountId: useCreds?.accountId?.slice(0, 10)
+                  });
                   this.doState.storage.sql.exec(
                     `INSERT OR REPLACE INTO pending_videos (task_id, video_id, prompt, model, provider, base_url, api_key, status, to_user_id, context_token, account_id, created_at)
                      VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?)`,
