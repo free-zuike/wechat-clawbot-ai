@@ -264,6 +264,9 @@ export class ILinkConnectionDO implements DurableObject {
     if (url.pathname === "/send-video") {
       return this.handleSendVideo(request);
     }
+    if (url.pathname === "/broadcast-image") {
+      return this.handleBroadcastImage(request);
+    }
     if (url.pathname === "/store-pending-video") {
       return this.handleStorePendingVideo(request);
     }
@@ -1016,6 +1019,39 @@ export class ILinkConnectionDO implements DurableObject {
       }
     } catch (e: any) {
       Logger.error("[DO] Check pending videos error", { error: e.message });
+    }
+  }
+
+  // ========== 广播图片到 WebSocket（由 Queue 消费者调用）==========
+  private async handleBroadcastImage(request: Request): Promise<Response> {
+    try {
+      const body = await request.json() as { imageData: string | null; model?: string; provider?: string };
+      const { imageData, model, provider } = body;
+
+      if (!imageData) {
+        return new Response(JSON.stringify({ error: "缺少图片数据" }), {
+          status: 400, headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      // 广播到 WebSocket
+      this.broadcastToWebSockets({
+        type: "media_generated",
+        mediaType: "image",
+        url: imageData,
+        model: model,
+        provider: provider,
+      });
+
+      Logger.info("[DO] Image broadcasted to WebSocket");
+      return new Response(JSON.stringify({ success: true }), {
+        headers: { "Content-Type": "application/json" },
+      });
+    } catch (e: any) {
+      Logger.error("[DO] Broadcast image error", { error: e.message });
+      return new Response(JSON.stringify({ error: e.message }), {
+        status: 500, headers: { "Content-Type": "application/json" },
+      });
     }
   }
 

@@ -87,17 +87,30 @@ export async function handleChat(request: Request, env: Env): Promise<Response> 
             baseUrl: aiConfig.baseUrl,
             apiKey: aiConfig.apiKey,
           }, { delaySeconds: 0 });
-          Logger.info(`[chat][${requestId}] Video task queued`, { 
-            provider: aiConfig.provider,
-            baseUrl: aiConfig.baseUrl.substring(0, 50),
-            apiKeyPrefix: aiConfig.apiKey ? aiConfig.apiKey.slice(0, 8) : "EMPTY"
-          });
+          Logger.info(`[chat][${requestId}] Video task queued`);
         } catch (e: any) {
           Logger.error(`[chat][${requestId}] Queue send failed`, { error: e?.message });
           return json({ reply: `❌ 视频任务提交失败: ${e?.message}`, source: "error" } satisfies ChatResponse);
         }
         return json({ reply: `🎬 ${modelInfo}${videoModel}\n\n视频已加入生成队列（约 1-2 分钟），生成完成后会自动推送。`, source: "ai" } satisfies ChatResponse);
       } else {
+        // 图片也走 Queue 异步处理，避免 Worker 超时
+        try {
+          await env.CLAWBOT_QUEUE.send({
+            type: "image_generation",
+            prompt,
+            model: imageModel,
+            provider: aiConfig.provider,
+            baseUrl: aiConfig.baseUrl,
+            apiKey: aiConfig.apiKey,
+          }, { delaySeconds: 0 });
+          Logger.info(`[chat][${requestId}] Image task queued`);
+        } catch (e: any) {
+          Logger.error(`[chat][${requestId}] Queue send failed`, { error: e?.message });
+          return json({ reply: `❌ 图片任务提交失败: ${e?.message}`, source: "error" } satisfies ChatResponse);
+        }
+        return json({ reply: `🎨 ${modelInfo}${imageModel}\n\n图片已加入生成队列，生成完成后会自动推送。`, source: "ai" } satisfies ChatResponse);
+      }
         // 图片生成快，同步处理
         const imageData = await generateImage(env.AI, prompt, imageModel, aiConfig.provider, aiConfig.baseUrl, aiConfig.apiKey);
         if (imageData) {

@@ -60,14 +60,28 @@ export default {
     }
   },
 
-  // 队列消费者：提交视频生成任务（不等待完成）
+  // 队列消费者：处理图片/视频生成任务
   async queue(batch: MessageBatch<any>, env: Env): Promise<void> {
     for (const msg of batch.messages) {
       const { type, prompt, model, provider, baseUrl, apiKey } = msg.body;
       Logger.info("[queue] Task received", { type, prompt: prompt?.slice(0, 50), model, provider });
 
       try {
-        if (type === "video_generation") {
+        if (type === "image_generation") {
+          const { generateImage } = await import("./services/ai");
+          const imageData = await generateImage(env.AI, prompt, model, provider, baseUrl, apiKey);
+          if (imageData) {
+            const doId = env.ILINK_CONNECTION.idFromName("main");
+            const doStub = env.ILINK_CONNECTION.get(doId);
+            await doStub.fetch(new Request("http://localhost/broadcast-image", {
+              method: "POST",
+              body: JSON.stringify({ imageData: typeof imageData === "string" ? imageData : null, model, provider }),
+            }));
+            Logger.info("[queue] Image generated and broadcast");
+          } else {
+            Logger.error("[queue] Image generation returned null");
+          }
+        } else if (type === "video_generation") {
           // 检查必要的配置参数
           if (!baseUrl || !apiKey) {
             Logger.error("[queue] Video task missing config", { provider, hasBaseUrl: !!baseUrl, hasApiKey: !!apiKey, apiKeyPrefix: apiKey ? apiKey.slice(0, 6) : "EMPTY" });
