@@ -97,6 +97,7 @@ export default {
           const doStub = env.ILINK_CONNECTION.get(doId);
           await doStub.fetch(new Request("http://localhost/store-pending-video", {
             method: "POST",
+            headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ taskId, videoId, prompt, model, provider, baseUrl, apiKey }),
           }));
 
