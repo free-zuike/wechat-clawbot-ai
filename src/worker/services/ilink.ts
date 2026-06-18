@@ -115,11 +115,7 @@ async function post(
           status,
           response: text,
         });
-        // 对于 sendmessage，空对象可能是一种"静默成功"响应，不抛出异常
-        if (endpoint === 'ilink/bot/sendmessage') {
-          Logger.info(`[iLink] sendmessage returned empty object, treating as success (status=${status})`);
-          return json;
-        }
+        return json;
       }
       
       if (json.errcode !== undefined && json.errcode !== 0) {
@@ -136,11 +132,16 @@ async function post(
       }
       
       return json;
-    } catch (parseError) {
+    } catch (error) {
+      // 如果是 ClawBotError（包括 ILINK_API_ERROR、ILINK_SESSION_TIMEOUT），直接抛出
+      if (error instanceof ClawBotError) {
+        throw error;
+      }
+      // 否则是 JSON 解析错误
       Logger.error(`[iLink] Failed to parse response`, { 
         endpoint,
         status,
-        error: parseError.message, 
+        error: error.message, 
         response: text.slice(0, 1000),
         responseLength: text.length,
         responseHeaders: Object.fromEntries(
@@ -148,7 +149,7 @@ async function post(
         ),
       });
       throw new ClawBotError('ILINK_PARSE_ERROR', 'Failed to parse response', 502, { 
-        error: parseError.message, 
+        error: error.message, 
         response: text.slice(0, 500),
         endpoint,
         status,
@@ -416,15 +417,13 @@ export async function sendMediaMessage(
 
   Logger.info("[iLink] ========== 开始发送消息 ==========", {
     toUserId: toUserId,
-    fromUserId: "", // 空字符串，根据 iLink 协议规范
+    fromUserId: "",
     contextToken: contextToken.slice(0, 30) + "...",
     contextTokenLength: contextToken.length,
     itemType: item.type,
     itemTypeName: item.type === MessageItemType.IMAGE ? "IMAGE" : item.type === MessageItemType.VIDEO ? "VIDEO" : "OTHER",
     messageId: messageId,
     mediaInfo,
-    hasCdnUrl: item.type === MessageItemType.IMAGE ? !!item.image_item?.cdn_url : item.type === MessageItemType.VIDEO ? !!item.video_item?.cdn_url : false,
-    cdnUrlLength: item.type === MessageItemType.IMAGE ? item.image_item?.cdn_url?.length : item.type === MessageItemType.VIDEO ? item.video_item?.cdn_url?.length : 0,
     fullMessageSize: JSON.stringify({ msg }).length,
     hasItemList: !!msg.item_list && msg.item_list.length > 0,
   });
@@ -578,7 +577,7 @@ function buildMediaItem(
   fileMd5?: string,
   duration?: number,
 ): MessageItem {
-  // encrypt_type=0: 仅加密 fileid（无缩略图模式）
+  // encrypt_type=0: 仅加密 fileid
   const media = {
     encrypt_query_param: uploaded.downloadEncryptedQueryParam,
     aes_key: uploaded.aeskeyBase64,
@@ -589,9 +588,6 @@ function buildMediaItem(
   const thumbWidth = uploaded.thumbWidth || 0;
   const thumbHeight = uploaded.thumbHeight || 0;
 
-  // 构造 CDN URL（微信客户端需要这个字段才能正确显示媒体）
-  const cdnUrl = `https://novac2c.cdn.weixin.qq.com/c2c/download?encrypted_query_param=${encodeURIComponent(uploaded.downloadEncryptedQueryParam)}`;
-
   if (messageItemType === MessageItemType.IMAGE) {
     return {
       type: MessageItemType.IMAGE,
@@ -601,8 +597,6 @@ function buildMediaItem(
         thumb_size: thumbSize,
         thumb_height: thumbHeight,
         thumb_width: thumbWidth,
-        cdn_url: cdnUrl,
-        url: cdnUrl,
       },
     };
   }
@@ -619,8 +613,6 @@ function buildMediaItem(
         thumb_size: thumbSize,
         thumb_height: thumbHeight,
         thumb_width: thumbWidth,
-        cdn_url: cdnUrl,
-        url: cdnUrl,
       },
     };
   }

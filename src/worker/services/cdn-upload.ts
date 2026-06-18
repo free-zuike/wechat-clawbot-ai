@@ -557,13 +557,41 @@ export async function uploadMediaToCdn(
     elapsedMs: Date.now() - encryptStart,
   });
 
-  // 4. 上传到 CDN（POST 加密文件到 uploadFullUrl）
+  // 3b. 加密缩略图
+  const thumbCiphertext = await encryptAesEcb(thumbData, aeskeyHex);
+  Logger.info("[iLink] [Step 3b/4] Thumbnail encrypted", {
+    thumbCiphertextSize: thumbCiphertext.length,
+    thumbPaddedSize: thumbFilesize,
+  });
+
+  // 4. 上传主文件到 CDN
   const cdnStart = Date.now();
   const downloadEncryptedQueryParam = await uploadEncryptedToCdn(uploadFullUrl, filekey, ciphertext);
-  Logger.info("[iLink] [Step 4/4] CDN upload completed", {
+  Logger.info("[iLink] [Step 4/4] Main file CDN upload completed", {
     downloadParamLen: downloadEncryptedQueryParam.length,
     elapsedMs: Date.now() - cdnStart,
   });
+
+  // 4b. 上传缩略图到 CDN（如果有 thumbUploadParam）
+  let thumbDownloadParam = "";
+  if (thumbUploadParam && typeof thumbUploadParam === "string" && thumbUploadParam.length > 0) {
+    try {
+      // 构建缩略图上传 URL
+      let thumbUploadUrl = thumbUploadParam;
+      if (!thumbUploadParam.startsWith("http")) {
+        const cdnBaseUrl = uploadFullUrl.split("?")[0];
+        thumbUploadUrl = `${cdnBaseUrl}?${thumbUploadParam}`;
+      }
+      thumbDownloadParam = await uploadEncryptedToCdn(thumbUploadUrl, filekey + "_thumb", thumbCiphertext);
+      Logger.info("[iLink] [Step 4b/4] Thumbnail CDN upload completed", {
+        thumbDownloadParamLen: thumbDownloadParam.length,
+      });
+    } catch (thumbErr) {
+      Logger.warn("[iLink] [Step 4b/4] Thumbnail upload failed, continuing without thumb", {
+        error: thumbErr.message,
+      });
+    }
+  }
 
   Logger.info("[iLink] Full upload pipeline completed", { totalMs: Date.now() - startTime });
 
