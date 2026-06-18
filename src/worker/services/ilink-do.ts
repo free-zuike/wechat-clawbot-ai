@@ -1390,34 +1390,12 @@ export class ILinkConnectionDO implements DurableObject {
               if (imageData) {
                 if (typeof imageData === "string") {
                   // 返回的是 URL：带 API Key 下载后上传发送
-                  try {
-                    await sendImageMessage(useCreds!, from, ctxToken, imageData, cfg.aiApiKey);
-                    replyContent = `[图片生成] ${mediaPrompt}`;
-                  } catch (imgErr: any) {
-                    Logger.error("[DO] sendImageMessage failed, falling back to text", { error: imgErr?.message, imageUrl: imageData, mediaPrompt });
-                    // 检查是否是会话过期
-                    if (imgErr?.code === 'ILINK_API_EMPTY_RESPONSE' || imgErr?.code === 'ILINK_SESSION_TIMEOUT') {
-                      await sendTextMessage(useCreds!, from, ctxToken, `⚠️ 会话已过期，请重新发送消息或重新登录`);
-                    } else {
-                      await sendTextMessage(useCreds!, from, ctxToken, `🎨 ${modelInfo}\n\n图片已生成，请在管理后台查看`);
-                    }
-                    replyContent = `[图片生成] ${mediaPrompt}`;
-                  }
+                  await sendImageMessage(useCreds!, from, ctxToken, imageData, cfg.aiApiKey);
+                  replyContent = `[图片生成] ${mediaPrompt}`;
                 } else {
                   // Uint8Array：通过 uploadAndSendMedia 发送
-                  try {
-                    await uploadAndSendMedia(useCreds!, from, ctxToken, MessageItemType.IMAGE, "generated.png", imageData.buffer as ArrayBuffer, "image/png");
-                    replyContent = `[图片生成] ${mediaPrompt}`;
-                  } catch (imgErr: any) {
-                    Logger.error("[DO] uploadAndSendMedia failed", { error: imgErr?.message });
-                    // 检查是否是会话过期
-                    if (imgErr?.code === 'ILINK_API_EMPTY_RESPONSE' || imgErr?.code === 'ILINK_SESSION_TIMEOUT') {
-                      await sendTextMessage(useCreds!, from, ctxToken, `⚠️ 会话已过期，请重新发送消息或重新登录`);
-                    } else {
-                      await sendTextMessage(useCreds!, from, ctxToken, `🎨 ${modelInfo}\n\n图片已生成，请在管理后台查看`);
-                    }
-                    replyContent = `[图片生成] ${mediaPrompt}`;
-                  }
+                  await uploadAndSendMedia(useCreds!, from, ctxToken, MessageItemType.IMAGE, "generated.png", imageData.buffer as ArrayBuffer, "image/png");
+                  replyContent = `[图片生成] ${mediaPrompt}`;
                 }
               } else {
                 await sendTextMessage(useCreds!, from, ctxToken, `❌ 图片生成失败 (${modelInfo})\n请稍后重试或换个描述试试`);

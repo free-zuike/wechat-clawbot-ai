@@ -16,7 +16,7 @@ export const UploadMediaType = { IMAGE: 1, VIDEO: 2, FILE: 3, VOICE: 4 } as cons
 
 const CDN_BASE_URL = "https://novac2c.cdn.weixin.qq.com/c2c";
 const DEFAULT_API_MS = 15000;
-const DEFAULT_UPLOAD_MS = 30000;
+const DEFAULT_UPLOAD_MS = 60000; // 增加到 60 秒，大文件需要更长时间
 const CHANNEL_VERSION = "weixin-ilink/0.1.0";
 
 // ========== 工具 ==========
