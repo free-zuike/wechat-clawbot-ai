@@ -131,7 +131,11 @@ async function post(
       }
       
       if (json.ret !== undefined && json.ret !== 0) {
-        Logger.warn(`[iLink] ${endpoint} returned ret=${json.ret}`, { ret: json.ret });
+        Logger.warn(`[iLink] ${endpoint} returned ret=${json.ret}`, { ret: json.ret, fullResponse: JSON.stringify(json).slice(0, 500) });
+        // ret=-1 通常表示会话过期或凭证无效
+        if (json.ret === -1) {
+          throw new ClawBotError('ILINK_SESSION_TIMEOUT', 'Session timeout (ret=-1)', 401, { ret: json.ret });
+        }
         throw new ClawBotError('ILINK_API_ERROR', `${endpoint} ret=${json.ret}`, 502, { ret: json.ret });
       }
       
