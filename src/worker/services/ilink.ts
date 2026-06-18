@@ -401,7 +401,7 @@ export async function uploadAndSendMedia(
   await sendMediaMessage(creds, toUserId, contextToken, item);
 }
 
-// ========== 发送图片消息（尝试多种方式）==========
+// ========== 发送图片消息（优先下载+上传 CDN，iLink 可能无法加载外部 URL）==========
 export async function sendImageMessage(
   creds: ILinkCredentials,
   toUserId: string,
@@ -409,7 +409,23 @@ export async function sendImageMessage(
   imageUrl: string,
   apiKey?: string,
 ): Promise<void> {
-  // 方式1：直接发送带 URL 的图片消息（不需要上传）
+  // 方式1：下载图片后上传到 CDN 发送（最可靠）
+  try {
+    const dlHeaders: Record<string, string> = {};
+    if (apiKey) dlHeaders["Authorization"] = `Bearer ${apiKey}`;
+    const imgResp = await fetch(imageUrl, { headers: dlHeaders, signal: AbortSignal.timeout(60000) });
+    if (imgResp.ok) {
+      const buffer = await imgResp.arrayBuffer();
+      const contentType = imgResp.headers.get("content-type") || "image/png";
+      await uploadAndSendMedia(creds, toUserId, contextToken, MessageItemType.IMAGE, "generated.png", buffer, contentType);
+      Logger.info("[iLink] Image sent via upload");
+      return;
+    }
+  } catch (e: any) {
+    Logger.warn("[iLink] Upload image failed, trying direct URL", { error: e?.message });
+  }
+
+  // 方式2：回退到直接发送带 URL 的图片消息
   const msg: WeixinMessage = {
     from_user_id: "",
     to_user_id: toUserId,
@@ -432,26 +448,10 @@ export async function sendImageMessage(
         shouldRetry: (error) => !(error instanceof ClawBotError && error.code === 'ILINK_SESSION_TIMEOUT')
       }
     );
-    Logger.info("[iLink] Image message sent via direct URL");
+    Logger.info("[iLink] Image message sent via direct URL fallback");
     return;
   } catch (e: any) {
-    Logger.warn("[iLink] Direct image URL send failed, trying upload", { error: e?.message });
-  }
-
-  // 方式2：下载图片后通过 getuploadurl 上传（带 API Key 认证）
-  try {
-    const dlHeaders: Record<string, string> = {};
-    if (apiKey) dlHeaders["Authorization"] = `Bearer ${apiKey}`;
-    const imgResp = await fetch(imageUrl, { headers: dlHeaders, signal: AbortSignal.timeout(60000) });
-    if (imgResp.ok) {
-      const buffer = await imgResp.arrayBuffer();
-      const contentType = imgResp.headers.get("content-type") || "image/png";
-      await uploadAndSendMedia(creds, toUserId, contextToken, MessageItemType.IMAGE, "generated.png", buffer, contentType);
-      Logger.info("[iLink] Image sent via upload");
-      return;
-    }
-  } catch (e: any) {
-    Logger.warn("[iLink] Upload image failed", { error: e?.message });
+    Logger.warn("[iLink] Direct image URL send also failed", { error: e?.message });
   }
 
   throw new ClawBotError('ILINK_IMAGE_SEND_FAILED', 'All image send methods failed');
