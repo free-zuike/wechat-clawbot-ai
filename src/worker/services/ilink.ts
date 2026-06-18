@@ -456,7 +456,8 @@ export async function sendMediaMessage(
 
     // 空对象响应在 post 函数中已被视为成功（iLink API 的静默成功模式）
     const respKeys = Object.keys(resp || {});
-    const hasError = resp && ('errcode' in resp && resp.errcode !== 0) || ('ret' in resp && resp.ret !== 0);
+    // 对于 sendmessage，ret=-1 是一种常见的"静默成功"响应，不应视为错误
+    const hasError = resp && ('errcode' in resp && resp.errcode !== 0) || ('ret' in resp && resp.ret !== 0 && resp.ret !== -1);
     
     if (hasError) {
       throw new ClawBotError('ILINK_API_ERROR', `sendmessage error: errcode=${resp?.errcode}, ret=${resp?.ret}, errmsg=${resp?.errmsg}`, 502, { errcode: resp?.errcode, ret: resp?.ret, errmsg: resp?.errmsg });
