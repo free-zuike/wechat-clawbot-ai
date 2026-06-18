@@ -339,18 +339,29 @@ export async function sendMediaMessage(
     msgFull: JSON.stringify({ msg }).slice(0, 500),
   });
 
-  const resp = await withRetry(
-    () => post(creds, "ilink/bot/sendmessage", { msg }, DEFAULT_API_MS),
-    {
-      retries: 2,
-      baseDelayMs: 500,
-      shouldRetry: (error) => !(error instanceof ClawBotError && error.code === 'ILINK_SESSION_TIMEOUT')
-    }
-  );
+  try {
+    const resp = await withRetry(
+      () => post(creds, "ilink/bot/sendmessage", { msg }, DEFAULT_API_MS),
+      {
+        retries: 2,
+        baseDelayMs: 500,
+        onRetry: (attempt, error) => Logger.warn(`[iLink] Retrying sendmessage (attempt ${attempt})`, { error: error.message }),
+        shouldRetry: (error) => !(error instanceof ClawBotError && error.code === 'ILINK_SESSION_TIMEOUT')
+      }
+    );
 
-  Logger.info("[iLink] Media message sent", {
-    respPreview: JSON.stringify(resp || {}).slice(0, 300),
-  });
+    Logger.info("[iLink] Media message sent successfully", {
+      respPreview: JSON.stringify(resp || {}).slice(0, 300),
+    });
+  } catch (e: any) {
+    Logger.error("[iLink] Media message send failed", {
+      errorCode: e?.code || "UNKNOWN",
+      errorMessage: e?.message || String(e),
+      toUserId: toUserId.slice(0, 12),
+      itemType: item.type,
+    });
+    throw e;
+  }
 }
 
 // ========== 高级媒体发送：先上传到 CDN，再发送 CDNMedia 引用消息 ==========
