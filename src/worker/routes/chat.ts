@@ -38,16 +38,26 @@ export async function handleChat(request: Request, env: Env): Promise<Response> 
     const quick = tryQuickReply(trimmed);
     if (quick) return json({ reply: quick, source: "shortcut" } satisfies ChatResponse);
 
-    const kv = await configCache.getOrLoad("config", async () => {
-      let kvConfig: Record<string, unknown> = {};
-      try {
-        const raw = await env.CLAWBOT_KV.get("clawbot:config");
-        if (raw) kvConfig = JSON.parse(raw);
-      } catch (e) {
-        Logger.warn("[chat] config read failed", { error: (e as Error).message });
+    // 直接从 KV 读取原始配置（包含真实 apiKey），不与管理后台的掩码配置共享缓存
+    let kv: Record<string, unknown> = {};
+    try {
+      const raw = await env.CLAWBOT_KV.get("clawbot:config");
+      if (raw) kv = JSON.parse(raw);
+    } catch (e) {
+      Logger.warn("[chat] config read failed", { error: (e as Error).message });
+    }
+    // 清理可能存在的掩码值（兼容旧数据）
+    try {
+      if (Array.isArray(kv.aiPresets)) {
+        kv.aiPresets = (kv.aiPresets as any[]).map(p => ({
+          ...p,
+          apiKey: typeof p.apiKey === "string" && p.apiKey.includes("***") ? "" : p.apiKey
+        }));
       }
-      return kvConfig;
-    }, 10000);
+      if (typeof kv.aiApiKey === "string" && kv.aiApiKey.includes("***")) {
+        kv.aiApiKey = "";
+      }
+    } catch (_) {}
 
     const aiConfig = resolveAIConfig(kv);
     const systemPrompt = (kv.aiSystemPrompt as string) || "";
@@ -77,7 +87,11 @@ export async function handleChat(request: Request, env: Env): Promise<Response> 
             baseUrl: aiConfig.baseUrl,
             apiKey: aiConfig.apiKey,
           }, { delaySeconds: 0 });
-          Logger.info(`[chat][${requestId}] Video task queued`);
+          Logger.info(`[chat][${requestId}] Video task queued`, { 
+            provider: aiConfig.provider,
+            baseUrl: aiConfig.baseUrl.substring(0, 50),
+            apiKeyPrefix: aiConfig.apiKey ? aiConfig.apiKey.slice(0, 8) : "EMPTY"
+          });
         } catch (e: any) {
           Logger.error(`[chat][${requestId}] Queue send failed`, { error: e?.message });
           return json({ reply: `❌ 视频任务提交失败: ${e?.message}`, source: "error" } satisfies ChatResponse);
