@@ -990,17 +990,17 @@ export class ILinkConnectionDO implements DurableObject {
                 `UPDATE pending_videos SET status = 'completed', video_url = ? WHERE task_id = ?`,
                 videoUrl, taskId
               );
-              // WebSocket 广播到管理后台
-              this.broadcastToWebSockets({
-                type: "media_generated",
-                mediaType: "video",
-                url: videoUrl,
-                model: task.model,
-                provider: task.provider,
-                prompt: task.prompt,
-              });
-              Logger.info("[DO] Video completed", { taskId, url: videoUrl.slice(0, 80) });
             }
+            // 无论是否发送到微信，都广播到 WebSocket（管理后台显示）
+            this.broadcastToWebSockets({
+              type: "media_generated",
+              mediaType: "video",
+              url: videoUrl,
+              model: task.model,
+              provider: task.provider,
+              prompt: task.prompt,
+            });
+            Logger.info("[DO] Video completed", { taskId, url: videoUrl.slice(0, 80), sentToWeChat: sentSuccessfully });
             // 如果发送失败（下载 502 等），什么也不做，下次 cron 继续
           } else if (taskFailed) {
             this.doState.storage.sql.exec(
@@ -1010,6 +1010,12 @@ export class ILinkConnectionDO implements DurableObject {
             if (creds && toUserId && contextToken) {
               await sendTextMessage(creds, toUserId, contextToken, `❌ 视频生成失败 (${modelInfo})\n请稍后重试或换个描述试试`).catch(() => {});
             }
+            this.broadcastToWebSockets({
+              type: "media_error",
+              message: `视频生成失败 (${task.provider} · ${task.model})`,
+              model: task.model,
+              provider: task.provider,
+            });
             Logger.error("[DO] Video generation failed", { taskId });
           }
           // stillProcessing: 什么也不做，下次 cron 再检查
