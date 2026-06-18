@@ -645,6 +645,15 @@ export class ILinkConnectionDO implements DurableObject {
       const body = await request.json() as { toUserId?: string; contextToken?: string; text?: string };
       const { toUserId, contextToken, text } = body;
 
+      Logger.info("[DO] handleSend called", {
+        toUserId: toUserId?.slice(0, 20),
+        contextTokenLen: contextToken?.length,
+        textPreview: text?.slice(0, 50),
+        hasCreds: !!this.ilinkCreds,
+        botTokenLen: this.ilinkCreds?.botToken?.length,
+        accountId: this.ilinkCreds?.accountId?.slice(0, 15),
+      });
+
       if (!toUserId || !text) {
         return new Response(JSON.stringify({ error: "缺少参数" }), {
           status: 400,
@@ -661,7 +670,7 @@ export class ILinkConnectionDO implements DurableObject {
         headers: { "Content-Type": "application/json" },
       });
     } catch (e: any) {
-      Logger.error("[DO] Send error", { error: e.message });
+      Logger.error("[DO] Send error", { error: e.message, stack: e.stack?.slice(0, 500) });
       return new Response(JSON.stringify({ error: e.message }), {
         status: 500,
         headers: { "Content-Type": "application/json" },

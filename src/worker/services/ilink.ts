@@ -324,13 +324,15 @@ export async function sendTextMessage(
     item_list: [{ type: MessageItemType.TEXT, text_item: { text } }],
   };
 
-  Logger.debug(`[iLink] Sending message`, {
+  Logger.info(`[iLink] Sending message`, {
     toUserId: toUserId.slice(0, 12),
     fromUserId: (creds.userId || "").slice(0, 12),
     textLength: text.length,
+    textPreview: text.slice(0, 50),
+    contextToken: contextToken.slice(0, 20) + "...",
   });
   
-  await withRetry(
+  const response = await withRetry(
     () => post(creds, "ilink/bot/sendmessage", { msg }, DEFAULT_API_MS),
     {
       retries: 2,
@@ -340,7 +342,32 @@ export async function sendTextMessage(
     }
   );
   
-  Logger.debug(`[iLink] Message sent successfully`);
+  // 验证响应是否表示消息已成功发送
+  const responseStr = JSON.stringify(response);
+  Logger.info(`[iLink] Message API response`, { 
+    response: responseStr.slice(0, 500),
+    responseLength: responseStr.length,
+    hasRet: response?.ret !== undefined,
+    retValue: response?.ret,
+    hasErrcode: response?.errcode !== undefined,
+    errcodeValue: response?.errcode,
+    errmsg: response?.errmsg,
+    msgId: response?.msg_id || response?.message_id,
+  });
+  
+  // 检查响应中是否有错误指示
+  if (response && typeof response === 'object') {
+    if (response.ret !== undefined && response.ret !== 0) {
+      Logger.error(`[iLink] Message send returned error ret=${response.ret}`, { response: responseStr.slice(0, 300) });
+    }
+    if (response.errcode !== undefined && response.errcode !== 0) {
+      Logger.error(`[iLink] Message send returned errcode=${response.errcode}`, { response: responseStr.slice(0, 300) });
+    }
+    // 如果响应为空对象，可能表示消息未实际发送
+    if (Object.keys(response).length === 0) {
+      Logger.warn(`[iLink] Message send returned empty response - message may not have been delivered`, { response: responseStr });
+    }
+  }
 }
 
 // ========== 分段发送长消息 ==========
