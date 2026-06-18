@@ -362,6 +362,21 @@ export async function sendMediaMessage(
       }
     );
 
+    // 检查响应是否有效
+    if (!resp || typeof resp !== 'object') {
+      throw new ClawBotError('ILINK_API_EMPTY_RESPONSE', 'sendmessage returned empty or invalid response', 502, { response: JSON.stringify(resp) });
+    }
+    
+    // 检查是否有错误码
+    if ('errcode' in resp && resp.errcode !== 0) {
+      throw new ClawBotError('ILINK_API_ERROR', `sendmessage API error: ${resp.errmsg || 'unknown'}`, 502, { errcode: resp.errcode, errmsg: resp.errmsg });
+    }
+    
+    // 检查 ret 字段（某些 API 使用 ret 而不是 errcode）
+    if ('ret' in resp && resp.ret !== 0) {
+      throw new ClawBotError('ILINK_API_ERROR', `sendmessage ret=${resp.ret}`, 502, { ret: resp.ret });
+    }
+
     Logger.info("[iLink] ========== 消息发送成功 ==========", {
       response: JSON.stringify(resp || {}),
       responseType: typeof resp,

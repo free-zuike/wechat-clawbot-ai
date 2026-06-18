@@ -337,13 +337,7 @@ export async function getUploadUrl(
   const thumbWidth = respObj["thumb_width"] || respObj["thumbWidth"] || 0;
   const thumbHeight = respObj["thumb_height"] || respObj["thumbHeight"] || 0;
   
-  Logger.info(`[iLink] getuploadurl thumb info`, {
-    hasThumbParam: !!thumbUploadParam,
-    thumbParamLen: thumbUploadParam ? (thumbUploadParam as string).length : 0,
-    thumbSize,
-    thumbWidth,
-    thumbHeight,
-  });
+  Logger.info(`[iLink] getuploadurl thumb info — hasThumbParam=${!!thumbUploadParam} thumbParamLen=${thumbUploadParam ? (thumbUploadParam as string).length : 0} thumbSize=${thumbSize} thumbWidth=${thumbWidth} thumbHeight=${thumbHeight}`);
   
   return { uploadFullUrl, thumbUploadParam, thumbSize, thumbWidth, thumbHeight };
 }
