@@ -323,7 +323,7 @@ export async function sendMediaMessage(
   item: MessageItem,
 ): Promise<void> {
   const msg: WeixinMessage = {
-    from_user_id: "", // 空字符串，根据 iLink 协议规范
+    from_user_id: creds.userId || "", // 使用凭证中的 userId，与文本消息保持一致
     to_user_id: toUserId,
     client_id: generateClientId(),
     message_type: MessageType.BOT,
@@ -479,6 +479,7 @@ export async function uploadAndSendMedia(
  *   - encrypt_type=1: 打包缩略图/中图（需要单独上传缩略图，否则微信会显示"已过期或已被清理"）
  *   - mid_size: 文件大小（明文，不是加密大小）
  *   - thumb_size/width/height: 即使 0 值也需存在，否则微信解析失败
+ *   - cdn_url: CDN 下载地址（微信客户端需要这个字段才能正确显示媒体）
  */
 function buildMediaItem(
   messageItemType: number,
@@ -507,6 +508,9 @@ function buildMediaItem(
   const thumbWidth = uploaded.thumbWidth || 0;
   const thumbHeight = uploaded.thumbHeight || 0;
 
+  // 构造 CDN URL（微信客户端需要这个字段才能正确显示媒体）
+  const cdnUrl = `https://novac2c.cdn.weixin.qq.com/c2c/download?encrypted_query_param=${encodeURIComponent(uploaded.downloadEncryptedQueryParam)}`;
+
   if (messageItemType === MessageItemType.IMAGE) {
     return {
       type: MessageItemType.IMAGE,
@@ -516,6 +520,8 @@ function buildMediaItem(
         thumb_size: thumbSize,
         thumb_height: thumbHeight,
         thumb_width: thumbWidth,
+        cdn_url: cdnUrl,
+        url: cdnUrl,
       },
     };
   }
@@ -532,6 +538,8 @@ function buildMediaItem(
         thumb_size: thumbSize,
         thumb_height: thumbHeight,
         thumb_width: thumbWidth,
+        cdn_url: cdnUrl,
+        url: cdnUrl,
       },
     };
   }
