@@ -367,6 +367,12 @@ export async function sendMediaMessage(
       throw new ClawBotError('ILINK_API_EMPTY_RESPONSE', 'sendmessage returned empty or invalid response', 502, { response: JSON.stringify(resp) });
     }
     
+    // 检查是否为空对象（没有任何属性）
+    const respKeys = Object.keys(resp);
+    if (respKeys.length === 0) {
+      throw new ClawBotError('ILINK_API_EMPTY_RESPONSE', 'sendmessage returned empty object {}', 502, { response: JSON.stringify(resp) });
+    }
+    
     // 检查是否有错误码
     if ('errcode' in resp && resp.errcode !== 0) {
       throw new ClawBotError('ILINK_API_ERROR', `sendmessage API error: ${resp.errmsg || 'unknown'}`, 502, { errcode: resp.errcode, errmsg: resp.errmsg });
