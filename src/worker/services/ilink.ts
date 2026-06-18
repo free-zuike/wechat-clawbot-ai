@@ -465,35 +465,9 @@ export async function sendVideoMessage(
   apiKey?: string,
 ): Promise<void> {
   // iLink 协议不支持直接用外部 URL 发送视频，需要先下载再上传到 CDN
-  try {
-    await sendFileFromUrl(creds, toUserId, contextToken, videoUrl, MessageItemType.VIDEO, "generated_video.mp4", apiKey);
-    Logger.info("[iLink] Video message sent (download + upload)");
-  } catch (e: any) {
-    Logger.warn("[iLink] Video download+upload failed, falling back to direct URL", { error: e?.message });
-    // 回退：直接发送 URL（可能显示为"未知"但至少不会完全失败）
-    const msg: WeixinMessage = {
-      from_user_id: "",
-      to_user_id: toUserId,
-      client_id: generateClientId(),
-      message_type: MessageType.BOT,
-      message_state: MessageState.FINISH,
-      context_token: contextToken,
-      item_list: [{
-        type: MessageItemType.VIDEO,
-        video_item: { url: videoUrl, thumb_url: "", width: 0, height: 0, duration: 0 },
-      }],
-    };
-
-    await withRetry(
-      () => post(creds, "ilink/bot/sendmessage", { msg }, DEFAULT_API_MS),
-      {
-        retries: 2,
-        baseDelayMs: 500,
-        shouldRetry: (error) => !(error instanceof ClawBotError && error.code === 'ILINK_SESSION_TIMEOUT')
-      }
-    );
-    Logger.info("[iLink] Video message sent (direct URL fallback)");
-  }
+  // 失败时不降级，让上层（checkPendingVideos / 消息处理）决定跨 cron 重试
+  await sendFileFromUrl(creds, toUserId, contextToken, videoUrl, MessageItemType.VIDEO, "generated_video.mp4", apiKey);
+  Logger.info("[iLink] Video message sent (download + upload)");
 }
 
 export async function sendFileFromUrl(
@@ -509,7 +483,7 @@ export async function sendFileFromUrl(
   // 媒体刚生成时 CDN 可能短暂不可用（502），重试几次
   const headers: Record<string, string> = {};
   if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
-  const maxRetries = 4;
+  const maxRetries = 6;
   let resp: Response | null = null;
   let lastError: string | null = null;
 

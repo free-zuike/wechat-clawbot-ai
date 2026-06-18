@@ -871,40 +871,39 @@ export class ILinkConnectionDO implements DurableObject {
           }
 
           if (videoUrl) {
-            this.doState.storage.sql.exec(
-              `UPDATE pending_videos SET status = 'completed', video_url = ? WHERE task_id = ?`,
-              videoUrl, taskId
-            );
-
-            // 发送视频给微信用户
+            // 尝试发送视频给微信用户。CDN 可能需要时间准备（502），
+            // 下载失败时不标记 completed，下次 cron 继续尝试
+            let sentSuccessfully = false;
             if (creds && toUserId && contextToken) {
-              // 先发文本消息确保用户收到通知（cron 有时间限制，文本消息快）
-              // 不暴露需要认证的 URL，只告知已生成
               try {
-                await sendTextMessage(creds, toUserId, contextToken, `🎬 ${modelInfo}\n\n视频已生成，正在发送中...`);
+                const apiKey = task.api_key as string;
+                await sendVideoMessage(creds, toUserId, contextToken, videoUrl, apiKey);
+                sentSuccessfully = true;
+                Logger.info("[DO] Video sent to WeChat successfully", { taskId, toUserId: toUserId.slice(0, 10) });
               } catch (e2: any) {
-                Logger.error("[DO] Text notification failed", { taskId, error: e2?.message });
+                Logger.warn("[DO] Video send failed (CDN may not be ready) — keeping task pending", { taskId, error: e2?.message });
               }
-              // 异步尝试发送视频文件（下载+上传到 CDN，可能超时）
-              const apiKey = task.api_key as string;
-              sendVideoMessage(creds, toUserId, contextToken, videoUrl, apiKey)
-                .then(() => Logger.info("[DO] Video file sent to WeChat", { taskId, toUserId: toUserId.slice(0, 10) }))
-                .catch((e: any) => Logger.warn("[DO] Video file send failed (text already sent)", { taskId, error: e?.message }));
             } else {
               Logger.warn("[DO] Cannot send video — credentials/user info missing", { taskId, hasCreds: !!creds, hasToUserId: !!toUserId, hasContextToken: !!contextToken });
             }
 
-            // WebSocket 广播到管理后台
-            this.broadcastToWebSockets({
-              type: "media_generated",
-              mediaType: "video",
-              url: videoUrl,
-              model: task.model,
-              provider: task.provider,
-              prompt: task.prompt,
-            });
-
-            Logger.info("[DO] Video completed", { taskId, url: videoUrl.slice(0, 80) });
+            if (sentSuccessfully) {
+              this.doState.storage.sql.exec(
+                `UPDATE pending_videos SET status = 'completed', video_url = ? WHERE task_id = ?`,
+                videoUrl, taskId
+              );
+              // WebSocket 广播到管理后台
+              this.broadcastToWebSockets({
+                type: "media_generated",
+                mediaType: "video",
+                url: videoUrl,
+                model: task.model,
+                provider: task.provider,
+                prompt: task.prompt,
+              });
+              Logger.info("[DO] Video completed", { taskId, url: videoUrl.slice(0, 80) });
+            }
+            // 如果发送失败（下载 502 等），什么也不做，下次 cron 继续
           } else if (taskFailed) {
             this.doState.storage.sql.exec(
               `UPDATE pending_videos SET status = 'failed' WHERE task_id = ?`,
