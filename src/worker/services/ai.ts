@@ -301,40 +301,46 @@ export async function generateImage(
   const imageModel = model || DEFAULT_IMAGE_MODEL;
   Logger.info("[ai] Generating image", { prompt: prompt.slice(0, 80), model: imageModel, provider: provider || "cloudflare" });
 
-  // 非 Cloudflare 提供商：走 OpenAI 兼容 API
+  // 非 Cloudflare 提供商（如 Agnes AI）：POST /v1/images/generations
+  // Agnes 要求 response_format 放在 extra_body 中，文生图用 return_base64 或 extra_body.response_format
   if (provider && provider !== "cloudflare" && baseUrl && apiKey) {
-    Logger.info("[ai] Using OpenAI compat for image", { baseUrl: baseUrl.slice(0, 30), apiKeyPrefix: apiKey.slice(0, 6), model: imageModel });
     try {
       let base = baseUrl.replace(/\/+$/, "");
-      base = base.replace(/\/v1\/(chat\/completions|images\/generations|videos\/generations)$/i, "");
+      base = base.replace(/\/v1\/(chat\/completions|images\/generations|videos?\/generations|videos\/?|videos)$/i, "");
+      base = base.replace(/\/v1$/, "");
       const url = base + "/v1/images/generations";
       const resp = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
-        body: JSON.stringify({ model: imageModel, prompt, n: 1, size: "1024x1024" }),
+        body: JSON.stringify({
+          model: imageModel,
+          prompt,
+          size: "1024x768",
+          extra_body: { response_format: "url" },
+        }),
       });
       if (!resp.ok) {
         const errBody = await resp.text().catch(() => "");
-        Logger.error("[ai] Image API error", { status: resp.status, body: errBody.slice(0, 200) });
+        Logger.error("[ai] Image API error", { status: resp.status, body: errBody.slice(0, 200), url });
         return null;
       }
       const data = await resp.json() as any;
       const item = data?.data?.[0];
+      if (item?.url) {
+        Logger.info("[ai] Image URL received", { url: item.url.slice(0, 80) });
+        return item.url;
+      }
       if (item?.b64_json) {
         const binary = atob(item.b64_json);
         const bytes = new Uint8Array(binary.length);
         for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+        Logger.info("[ai] Image Base64 decoded", { size: bytes.length });
         return bytes;
       }
-      if (item?.url) {
-        // 直接返回 URL，避免下载转换
-        Logger.info("[ai] Image URL received", { url: item.url });
-        return item.url;
-      }
-      Logger.warn("[ai] Unexpected image response", { keys: Object.keys(data || {}) });
+      Logger.warn("[ai] Unexpected image response", { keys: Object.keys(data || {}), dataKeys: data?.data ? Object.keys(data.data) : [] });
       return null;
     } catch (e: any) {
-      Logger.error("[ai] Image generation failed (OpenAI compat)", { error: e?.message });
+      Logger.error("[ai] Image generation failed", { error: e?.message });
       return null;
     }
   }
