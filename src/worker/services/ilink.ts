@@ -91,6 +91,7 @@ async function post(
         if (json.errcode === -14) {
           throw new ClawBotError('ILINK_SESSION_TIMEOUT', 'Session timeout', 401, { errcode: json.errcode, errmsg: json.errmsg });
         }
+        throw new ClawBotError('ILINK_API_ERROR', `${endpoint} API error: ${json.errmsg || 'unknown'}`, 502, { errcode: json.errcode, errmsg: json.errmsg });
       }
       return json;
     } catch (parseError) {
