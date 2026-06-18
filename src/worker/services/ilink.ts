@@ -1,6 +1,7 @@
 // iLink 协议实现 - 基于 weixin-ilink SDK 逆向（源自 @tencent-weixin/openclaw-weixin）
 
 import { Logger, withRetry, ClawBotError } from "../utils/error";
+import { md5Hex } from "../utils/md5";
 import { uploadMediaToCdn, UploadMediaType } from "./cdn-upload";
 import type { WeixinMessage, MessageItem, GetUpdatesResp, ILinkCredentials } from "../types";
 
@@ -256,7 +257,7 @@ export async function sendTextMessage(
   text: string,
 ): Promise<void> {
   const msg: WeixinMessage = {
-    from_user_id: "",
+    from_user_id: creds.userId || "",
     to_user_id: toUserId,
     client_id: generateClientId(),
     message_type: MessageType.BOT,
@@ -264,10 +265,11 @@ export async function sendTextMessage(
     context_token: contextToken,
     item_list: [{ type: MessageItemType.TEXT, text_item: { text } }],
   };
-  
-  Logger.debug(`[iLink] Sending message`, { 
-    toUserId: maskToken(toUserId), 
-    textLength: text.length 
+
+  Logger.debug(`[iLink] Sending message`, {
+    toUserId: toUserId.slice(0, 12),
+    fromUserId: (creds.userId || "").slice(0, 12),
+    textLength: text.length,
   });
   
   await withRetry(
@@ -320,7 +322,7 @@ export async function sendMediaMessage(
   item: MessageItem,
 ): Promise<void> {
   const msg: WeixinMessage = {
-    from_user_id: "",
+    from_user_id: creds.userId || "",
     to_user_id: toUserId,
     client_id: generateClientId(),
     message_type: MessageType.BOT,
@@ -330,10 +332,10 @@ export async function sendMediaMessage(
   };
 
   Logger.info("[iLink] Sending media message (sendmessage API)", {
-    toUserId: toUserId.slice(0, 20),
+    toUserId: toUserId.slice(0, 12),
+    fromUserId: (creds.userId || "").slice(0, 12),
     itemType: item.type,
-    hasMedia: !!(item as any).media || !!(item as any).image_item || !!(item as any).video_item,
-    msgSize: JSON.stringify({ msg }).length,
+    msgFull: JSON.stringify({ msg }).slice(0, 500),
   });
 
   const resp = await withRetry(
@@ -373,7 +375,8 @@ export async function uploadAndSendMedia(
   const fileBytes = fileData instanceof Uint8Array ? fileData : new Uint8Array(fileData);
   const mediaType = toUploadMediaType(messageItemType);
 
-  // 提取视频时长（仅对视频有效）
+  // 计算 MD5 和提取视频时长
+  const rawMd5 = md5Hex(fileBytes);
   const videoDuration = messageItemType === MessageItemType.VIDEO ? extractMp4Duration(fileBytes) : undefined;
   Logger.info("[iLink] [uploadAndSendMedia] Starting media upload & send", {
     toUserId: toUserId.slice(0, 12),
@@ -383,18 +386,21 @@ export async function uploadAndSendMedia(
     fileSize: fileBytes.length,
     contentType,
     videoDuration,
+    rawMd5: rawMd5.slice(0, 16),
   });
 
   try {
     // 1. 上传到 iLink CDN（getuploadurl + AES 加密 + POST）
     const uploaded = await uploadMediaToCdn(creds, toUserId, fileBytes, mediaType);
 
-    // 2. 构造 CDNMedia 引用消息体（传入视频时长）
-    const item = buildMediaItem(messageItemType, uploaded, fileName, fileBytes.length, videoDuration);
+    // 2. 构造 CDNMedia 引用消息体
+    const item = buildMediaItem(messageItemType, uploaded, fileName, fileBytes.length, rawMd5, videoDuration);
     Logger.info("[iLink] [uploadAndSendMedia] Building media item", {
       itemType: item.type,
       hasMedia: !!(item as any).image_item?.media || !!(item as any).video_item?.media || !!(item as any).file_item?.media,
       videoDuration,
+      encryptType: (item as any).image_item?.media?.encrypt_type ?? (item as any).video_item?.media?.encrypt_type,
+      itemPreview: JSON.stringify(item).slice(0, 300),
     });
 
     // 3. 发送消息
@@ -416,11 +422,11 @@ export async function uploadAndSendMedia(
 
 /**
  * 构造媒体消息项（CDNMedia 格式）
- * @param messageItemType 媒体类型
- * @param uploaded 上传结果信息
- * @param fileName 文件名
- * @param fileSize 文件大小（明文）
- * @param duration 视频时长（秒），仅对视频有效
+ * 关键协议要点：
+ *   - encrypt_type=0: 仅加密 fileid（无缩略图，最可靠）
+ *   - encrypt_type=1: 打包缩略图/中图（需要单独上传缩略图，否则微信会显示"已过期或已被清理"）
+ *   - mid_size: 文件大小（明文，不是加密大小）
+ *   - thumb_size/width/height: 即使 0 值也需存在，否则微信解析失败
  */
 function buildMediaItem(
   messageItemType: number,
@@ -432,26 +438,30 @@ function buildMediaItem(
   },
   fileName: string,
   fileSize: number,
+  fileMd5?: string,
   duration?: number,
 ): MessageItem {
+  // encrypt_type=0: 仅加密 fileid（无缩略图模式）
   const media = {
     encrypt_query_param: uploaded.downloadEncryptedQueryParam,
     aes_key: uploaded.aeskeyBase64,
-    encrypt_type: 1,
+    encrypt_type: 0,
   };
 
   if (messageItemType === MessageItemType.IMAGE) {
-    // mid_size 应该是文件大小（明文），不是加密大小
     return {
       type: MessageItemType.IMAGE,
       image_item: {
         media,
         mid_size: fileSize,
+        thumb_size: 0,
+        thumb_height: 0,
+        thumb_width: 0,
       },
     };
   }
   if (messageItemType === MessageItemType.VIDEO) {
-    const playLength = (duration && duration > 0) ? duration * 1000 : 0; // 毫秒
+    const playLength = (duration && duration > 0) ? duration * 1000 : 0;
     return {
       type: MessageItemType.VIDEO,
       video_item: {
@@ -459,6 +469,10 @@ function buildMediaItem(
         video_size: fileSize,
         play_length: playLength,
         duration: playLength,
+        video_md5: fileMd5 || "",
+        thumb_size: 0,
+        thumb_height: 0,
+        thumb_width: 0,
       },
     };
   }
@@ -468,6 +482,7 @@ function buildMediaItem(
       file_item: {
         media,
         file_name: fileName,
+        file_size: fileSize,
       },
     };
   }

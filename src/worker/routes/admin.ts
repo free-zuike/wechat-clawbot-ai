@@ -388,7 +388,7 @@ export async function handleStats(request: Request, env: Env): Promise<Response>
 export async function handleHealth(request: Request, env: Env): Promise<Response> {
   try {
     // 使用缓存 - 避免频繁重复读取
-    const cached = getCache<{
+    const cached = getCached<{
       kv: string;
       loggedIn: boolean;
       totalPolls: number;

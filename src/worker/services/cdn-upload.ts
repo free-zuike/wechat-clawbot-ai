@@ -385,7 +385,7 @@ export async function uploadEncryptedToCdn(
     const contentDisposition = resp.headers.get("content-disposition");
 
     Logger.info(`[iLink] CDN response headers analysis`, {
-      headerNames: Array.from(resp.headers.keys()).join(","),
+      headerNames: Array.from(resp.headers as any).join(","),
       xEncryptedParam: downloadParam ? `present(len=${downloadParam.length})` : "MISSING",
       contentDisposition: contentDisposition || "none",
       status: resp.status,
