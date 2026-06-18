@@ -6,6 +6,22 @@ import { Logger } from "../utils/error";
 import { alertService } from "../utils/alert";
 import type { Env } from "../index";
 
+// 简单的内存缓存（用于健康检查）
+const healthCache = new Map<string, { data: unknown; expireAt: number }>();
+
+function getCached<T>(key: string): T | null {
+  const entry = healthCache.get(key);
+  if (entry && entry.expireAt > Date.now()) {
+    return entry.data as T;
+  }
+  healthCache.delete(key);
+  return null;
+}
+
+function setCache(key: string, data: unknown, ttlMs: number): void {
+  healthCache.set(key, { data, expireAt: Date.now() + ttlMs });
+}
+
 interface AlertRecord {
   id: string;
   level: "info" | "warning" | "error" | "critical";
@@ -314,6 +330,24 @@ export async function handleStats(request: Request, env: Env): Promise<Response>
     const page = parsePage(url);
     const limit = parseLimit(url);
 
+    // 从 DO 获取运行时统计
+    let polls = 0;
+    let handled = 0;
+    let aiCalls = 0;
+    let aiFails = 0;
+    try {
+      const doId = env.ILINK_CONNECTION.idFromName("main");
+      const doStub = env.ILINK_CONNECTION.get(doId);
+      const doResp = await doStub.fetch(new Request("http://localhost/status"), { signal: AbortSignal.timeout(5000) });
+      const doData = await doResp.json() as { stats?: { polls?: number; handled?: number; aiCalls?: number; aiFails?: number } };
+      if (doData?.stats) {
+        polls = doData.stats.polls || 0;
+        handled = doData.stats.handled || 0;
+        aiCalls = doData.stats.aiCalls || 0;
+        aiFails = doData.stats.aiFails || 0;
+      }
+    } catch (_e) {}
+
     // 会话数（KV context）
     let totalSessions = 0;
     try {
@@ -354,7 +388,7 @@ export async function handleStats(request: Request, env: Env): Promise<Response>
 export async function handleHealth(request: Request, env: Env): Promise<Response> {
   try {
     // 使用缓存 - 避免频繁重复读取
-    const cached = statusCache.get<{
+    const cached = getCache<{
       kv: string;
       loggedIn: boolean;
       totalPolls: number;
@@ -370,16 +404,30 @@ export async function handleHealth(request: Request, env: Env): Promise<Response
 
     if (cached) return json(cached);
 
-    // 登录状态从 DO 读取
+    // 从 DO 获取登录状态和运行时统计
     let loggedIn = false;
+    let totalPolls = 0;
+    let totalHandled = 0;
+    let totalAICalls = 0;
+    let totalAIFails = 0;
     try {
       const doId = env.ILINK_CONNECTION.idFromName("main");
       const doStub = env.ILINK_CONNECTION.get(doId);
       const doResp = await doStub.fetch(new Request("http://localhost/status"), { signal: AbortSignal.timeout(3000) });
-      const doData = await doResp.json() as { hasCredentials?: boolean };
+      const doData = await doResp.json() as {
+        hasCredentials?: boolean;
+        stats?: { polls?: number; handled?: number; aiCalls?: number; aiFails?: number };
+      };
       loggedIn = !!doData?.hasCredentials;
+      if (doData?.stats) {
+        totalPolls = doData.stats.polls || 0;
+        totalHandled = doData.stats.handled || 0;
+        totalAICalls = doData.stats.aiCalls || 0;
+        totalAIFails = doData.stats.aiFails || 0;
+      }
     } catch (_e) {}
 
+    const alertSummary = alertService.getSummary();
     const healthStatus = {
       kv: "OK",
       loggedIn,
@@ -395,7 +443,7 @@ export async function handleHealth(request: Request, env: Env): Promise<Response
     };
 
     // 缓存 3 秒
-    statusCache.set("health", healthStatus, 3000);
+    setCache("health", healthStatus, 3000);
 
     return json(healthStatus);
   } catch (e: any) {

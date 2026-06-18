@@ -829,13 +829,13 @@ export class ILinkConnectionDO implements DurableObject {
         let base = (task.base_url as string).replace(/\/+$/, "");
         base = base.replace(/\/v1\/(chat\/completions|images\/generations|videos?\/generations|videos\/?|videos)$/i, "");
         base = base.replace(/\/v1$/, "");
-        const accountId = task.account_id as string | undefined;
+        const taskAccountId = task.account_id as string | undefined;
         const modelInfo = `🤖 ${task.provider} · ${task.model}`;
 
-        // 凭证解析：先按 accountId 找，找不到时尝试所有账号，最后用 ilinkCreds
+        // 凭证解析：先按 taskAccountId 找，找不到时尝试所有账号，最后用 ilinkCreds
         let creds: ILinkCredentials | null = null;
-        if (accountId && this.accounts.has(accountId)) {
-          creds = this.accounts.get(accountId)!.creds;
+        if (taskAccountId && this.accounts.has(taskAccountId)) {
+          creds = this.accounts.get(taskAccountId)!.creds;
         } else {
           const allAccounts = Array.from(this.accounts.values());
           if (allAccounts.length > 0) {
@@ -845,7 +845,7 @@ export class ILinkConnectionDO implements DurableObject {
           }
         }
         if (!creds) {
-          Logger.warn("[DO] No credentials available for video delivery", { taskId, accountId, toUserId: toUserId?.slice(0, 10) });
+          Logger.warn("[DO] No credentials available for video delivery", { taskId, accountId: taskAccountId, toUserId: toUserId?.slice(0, 10) });
         }
 
         const isCloudflare = task.provider === "cloudflare" || (task.base_url as string).startsWith("cf://");

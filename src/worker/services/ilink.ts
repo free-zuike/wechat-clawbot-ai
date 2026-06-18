@@ -373,6 +373,8 @@ export async function uploadAndSendMedia(
   const fileBytes = fileData instanceof Uint8Array ? fileData : new Uint8Array(fileData);
   const mediaType = toUploadMediaType(messageItemType);
 
+  // 提取视频时长（仅对视频有效）
+  const videoDuration = messageItemType === MessageItemType.VIDEO ? extractMp4Duration(fileBytes) : undefined;
   Logger.info("[iLink] [uploadAndSendMedia] Starting media upload & send", {
     toUserId: toUserId.slice(0, 12),
     messageItemType,
@@ -380,17 +382,19 @@ export async function uploadAndSendMedia(
     fileName,
     fileSize: fileBytes.length,
     contentType,
+    videoDuration,
   });
 
   try {
     // 1. 上传到 iLink CDN（getuploadurl + AES 加密 + POST）
     const uploaded = await uploadMediaToCdn(creds, toUserId, fileBytes, mediaType);
 
-    // 2. 构造 CDNMedia 引用消息体
-    const item = buildMediaItem(messageItemType, uploaded, fileName, fileBytes.length);
+    // 2. 构造 CDNMedia 引用消息体（传入视频时长）
+    const item = buildMediaItem(messageItemType, uploaded, fileName, fileBytes.length, videoDuration);
     Logger.info("[iLink] [uploadAndSendMedia] Building media item", {
       itemType: item.type,
       hasMedia: !!(item as any).image_item?.media || !!(item as any).video_item?.media || !!(item as any).file_item?.media,
+      videoDuration,
     });
 
     // 3. 发送消息
@@ -412,6 +416,11 @@ export async function uploadAndSendMedia(
 
 /**
  * 构造媒体消息项（CDNMedia 格式）
+ * @param messageItemType 媒体类型
+ * @param uploaded 上传结果信息
+ * @param fileName 文件名
+ * @param fileSize 文件大小（明文）
+ * @param duration 视频时长（秒），仅对视频有效
  */
 function buildMediaItem(
   messageItemType: number,
@@ -423,6 +432,7 @@ function buildMediaItem(
   },
   fileName: string,
   fileSize: number,
+  duration?: number,
 ): MessageItem {
   const media = {
     encrypt_query_param: uploaded.downloadEncryptedQueryParam,
@@ -440,12 +450,14 @@ function buildMediaItem(
     };
   }
   if (messageItemType === MessageItemType.VIDEO) {
+    const playLength = (duration && duration > 0) ? duration * 1000 : 0; // 毫秒
     return {
       type: MessageItemType.VIDEO,
       video_item: {
         media,
-        video_size: uploaded.fileSizeCiphertext,
-        play_length: 0,
+        video_size: fileSize, // 使用实际文件大小，而非加密大小
+        play_length: playLength,
+        duration: playLength,
       },
     };
   }
@@ -455,7 +467,6 @@ function buildMediaItem(
       file_item: {
         media,
         file_name: fileName,
-        // 注意：file_item.len 在官方 SDK 中是明文大小（字符串）
       },
     };
   }
@@ -563,6 +574,57 @@ function generateClientId(): string {
   }
   const hex = Array.from(arr).map(b => b.toString(16).padStart(2, "0")).join("");
   return `ilink-${Date.now()}-${hex}`;
+}
+
+/**
+ * 从 MP4 二进制数据中提取视频时长（秒）
+ * MP4 结构：moov -> mvhd -> duration / timescale
+ */
+function extractMp4Duration(data: Uint8Array): number | null {
+  try {
+    let offset = 0;
+    while (offset < data.length - 8) {
+      const size = (data[offset] << 24) | (data[offset + 1] << 16) | (data[offset + 2] << 8) | data[offset + 3];
+      const type = String.fromCharCode(data[offset + 4], data[offset + 5], data[offset + 6], data[offset + 7]);
+
+      if (size === 0 || size < 8) break;
+      if (offset + size > data.length) break;
+
+      if (type === "moov") {
+        // 递归解析 moov 盒子找 mvhd
+        const moovData = data.slice(offset + 8, offset + size);
+        return parseMoovForDuration(moovData);
+      }
+
+      offset += size;
+    }
+  } catch (_) {}
+  return null;
+}
+
+function parseMoovForDuration(moovData: Uint8Array): number | null {
+  let offset = 0;
+  while (offset < moovData.length - 8) {
+    const size = (moovData[offset] << 24) | (moovData[offset + 1] << 16) | (moovData[offset + 2] << 8) | moovData[offset + 3];
+    const type = String.fromCharCode(moovData[offset + 4], moovData[offset + 5], moovData[offset + 6], moovData[offset + 7]);
+
+    if (size === 0 || size < 8) break;
+    if (offset + size > moovData.length) break;
+
+    if (type === "mvhd") {
+      // mvhd 结构: version(1) + flags(3) + creation_time(4) + modification_time(4) + timescale(4) + duration(4) + ...
+      if (moovData.length >= offset + 4 + 4 + 4 + 4 + 4) {
+        const timescale = (moovData[offset + 16] << 24) | (moovData[offset + 17] << 16) | (moovData[offset + 18] << 8) | moovData[offset + 19];
+        const duration = (moovData[offset + 20] << 24) | (moovData[offset + 21] << 16) | (moovData[offset + 22] << 8) | moovData[offset + 23];
+        if (timescale > 0) {
+          return Math.round(duration / timescale);
+        }
+      }
+    }
+
+    offset += size;
+  }
+  return null;
 }
 
 function maskToken(token: string): string {
