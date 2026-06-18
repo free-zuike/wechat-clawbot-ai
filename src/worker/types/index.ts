@@ -1,13 +1,59 @@
 // 前后端共用的 TypeScript 类型定义
 
 // ========== 消息相关类型 ==========
+// CDN 媒体引用（iLink 协议要求）
+export interface CDNMedia {
+  /** CDN 下载加密参数（来自 getuploadurl 或上传响应头 x-encrypted-param） */
+  encrypt_query_param?: string;
+  /** AES-128 key，base64 编码 */
+  aes_key?: string;
+  /** 加密类型: 0=仅加密 fileid, 1=打包缩略图/中图等信息 */
+  encrypt_type?: number;
+}
+
+// ========== 消息相关类型 ==========
 export interface MessageItem {
   type?: number;
   text_item?: { text?: string };
   voice_item?: { text?: string; encode_type?: number; playtime?: number };
-  image_item?: { url?: string; cdn_url?: string; width?: number; height?: number };
-  file_item?: { url?: string; cdn_url?: string; file_name?: string; file_size?: number };
-  video_item?: { url?: string; cdn_url?: string; thumb_url?: string; width?: number; height?: number; duration?: number };
+  /** 新协议：iLink CDN 媒体引用 */
+  image_item?: {
+    media?: CDNMedia;
+    mid_size?: number;
+    thumb_size?: number;
+    thumb_height?: number;
+    thumb_width?: number;
+    /** 兼容旧格式 */
+    url?: string;
+    cdn_url?: string;
+    width?: number;
+    height?: number;
+  };
+  file_item?: {
+    media?: CDNMedia;
+    file_name?: string;
+    file_size?: number;
+    /** 兼容旧格式 */
+    url?: string;
+    cdn_url?: string;
+  };
+  video_item?: {
+    media?: CDNMedia;
+    video_size?: number;
+    play_length?: number;
+    video_md5?: string;
+    thumb_media?: CDNMedia;
+    thumb_size?: number;
+    thumb_height?: number;
+    thumb_width?: number;
+    /** 兼容旧格式 */
+    url?: string;
+    cdn_url?: string;
+    thumb_url?: string;
+    width?: number;
+    height?: number;
+    duration?: number;
+  };
   ref_msg?: { title?: string; message_item?: MessageItem };
 }
 

@@ -763,14 +763,36 @@ export class ILinkConnectionDO implements DurableObject {
       const now = Date.now();
       const MAX_AGE_MS = 24 * 60 * 60 * 1000; // 任务 24 小时后超时放弃
 
+      // 清理永远无法发送的旧任务（缺少 to_user_id / context_token）
+      // 这些任务在生产部署前就存在了，永远等不到有效的发送目标
+      const orphanIds: string[] = [];
+      for (const task of pending) {
+        const tid = task.task_id as string;
+        const tu = task.to_user_id as string | undefined;
+        const ct = task.context_token as string | undefined;
+        if (!tu || !ct) orphanIds.push(tid);
+      }
+      if (orphanIds.length > 0) {
+        try {
+          const placeholders = orphanIds.map(() => "?").join(",");
+          this.doState.storage.sql.exec(
+            `DELETE FROM pending_videos WHERE task_id IN (${placeholders})`,
+            ...orphanIds
+          );
+          Logger.info("[DO] Cleaned orphan pending videos", { count: orphanIds.length, ids: orphanIds.slice(0, 5) });
+        } catch (e: any) {
+          Logger.warn("[DO] Failed to clean orphan tasks", { error: e?.message });
+        }
+      }
+
       for (const task of pending) {
         const taskId = task.task_id as string;
 
-        // 跳过缺少用户信息的任务（通常是管理后台测试产生的）
+        // 跳过缺少用户信息的任务（旧的孤儿任务会在上面被清理）
         const toUserId = task.to_user_id as string | undefined;
         const contextToken = task.context_token as string | undefined;
         if (!toUserId || !contextToken) {
-          Logger.warn("[DO] Skipping video task with missing user info", { taskId });
+          // 已经在 cleanup 中删除；如果还在这里说明 cleanup 失败，安全跳过
           continue;
         }
 
@@ -784,13 +806,17 @@ export class ILinkConnectionDO implements DurableObject {
             taskId
           );
           const modelInfo = `🤖 ${task.provider} · ${task.model}`;
-          const store = this.state.stores.get(STORE_KEY) || {};
-          const credsMap = store.accounts as any;
-          const sendCreds = task.account_id && credsMap?.[task.account_id]
-            ? credsMap[task.account_id]
-            : (Object.values(credsMap || {})[0] as ILinkCredentials | undefined) || store.ilinkCreds;
+          // 凭证解析：先按 accountId 找，找不到时用第一个账号或 ilinkCreds
+          const accountId = task.account_id as string | undefined;
+          let sendCreds: ILinkCredentials | null = null;
+          if (accountId && this.accounts.has(accountId)) {
+            sendCreds = this.accounts.get(accountId)!.creds;
+          } else {
+            const allAccounts = Array.from(this.accounts.values());
+            sendCreds = allAccounts[0]?.creds || this.ilinkCreds;
+          }
           if (sendCreds) {
-            sendTextMessage(sendCreds as ILinkCredentials, toUserId, contextToken, `❌ 视频下载超时 (${modelInfo})\n生成成功但下载失败，可重新生成`)
+            sendTextMessage(sendCreds, toUserId, contextToken, `❌ 视频下载超时 (${modelInfo})\n生成成功但下载失败，可重新生成`)
               .catch(() => {});
           }
           continue;

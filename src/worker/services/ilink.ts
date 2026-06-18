@@ -1,6 +1,7 @@
 // iLink 协议实现 - 基于 weixin-ilink SDK 逆向（源自 @tencent-weixin/openclaw-weixin）
 
 import { Logger, withRetry, ClawBotError } from "../utils/error";
+import { uploadMediaToCdn, UploadMediaType } from "./cdn-upload";
 import type { WeixinMessage, MessageItem, GetUpdatesResp, ILinkCredentials } from "../types";
 
 export const MessageType = { NONE: 0, USER: 1, BOT: 2 } as const;
@@ -8,11 +9,27 @@ export const MessageItemType = { NONE: 0, TEXT: 1, IMAGE: 2, VOICE: 3, FILE: 4, 
 export const MessageState = { NEW: 0, GENERATING: 1, FINISH: 2 } as const;
 export const TypingStatus = { TYPING: 1, CANCEL: 2 } as const;
 
+// 重新导出 CDN 上传相关的公开 API
+export { uploadMediaToCdn, UploadMediaType } from "./cdn-upload";
+
 // ========== 常量 ==========
 const DEFAULT_BASE = "https://ilinkai.weixin.qq.com";
 const DEFAULT_CHANNEL_VERSION = "weixin-ilink/0.1.0";
 const DEFAULT_LONG_POLL_MS = 35000;
 const DEFAULT_API_MS = 15000;
+
+// MessageItemType → UploadMediaType 映射
+// MessageItemType: IMAGE=2, VOICE=3, FILE=4, VIDEO=5
+// UploadMediaType:  IMAGE=1, VOICE=4, FILE=3, VIDEO=2
+function toUploadMediaType(messageItemType: number): number {
+  switch (messageItemType) {
+    case MessageItemType.IMAGE: return UploadMediaType.IMAGE;
+    case MessageItemType.VIDEO: return UploadMediaType.VIDEO;
+    case MessageItemType.FILE: return UploadMediaType.FILE;
+    case MessageItemType.VOICE: return UploadMediaType.VOICE;
+    default: throw new ClawBotError("ILINK_INVALID_MEDIA", `Unsupported message item type: ${messageItemType}`, 400);
+  }
+}
 
 // ========== 工具: 生成随机 X-WECHAT-UIN (Cloudflare Workers 兼容)
 function randomWechatUin(): string {
@@ -292,63 +309,9 @@ export async function sendTextChunked(
   return chunks.length;
 }
 
-// ========== 媒体上传 ==========
-export async function getUploadUrl(
-  creds: ILinkCredentials,
-  fileType: number,
-  fileName: string,
-  fileSize: number,
-): Promise<{ upload_url: string; file_id: string }> {
-  try {
-    const resp = await post(creds, "ilink/bot/getuploadurl", {
-      file_type: fileType,
-      file_name: fileName,
-      file_size: fileSize,
-    }, DEFAULT_API_MS);
-    Logger.info("[iLink] getUploadUrl full response", { 
-      response: JSON.stringify(resp).slice(0, 500),
-      hasUploadUrl: 'upload_url' in resp,
-      hasUrl: 'url' in resp,
-      hasData: 'data' in resp,
-      keys: Object.keys(resp || {}).slice(0, 20)
-    });
-    // 尝试多种字段名
-    const uploadUrl = resp.upload_url || resp.url || resp.uploadUrl || resp.data?.upload_url || resp.data?.url || "";
-    const fileId = resp.file_id || resp.fileId || resp.data?.file_id || resp.data?.fileId || "";
-    Logger.info("[iLink] getUploadUrl parsed", { upload_url: uploadUrl, file_id: fileId });
-    return { upload_url: uploadUrl, file_id: fileId };
-  } catch (e: any) {
-    Logger.error("[iLink] getUploadUrl failed", { error: e.message, stack: e.stack?.slice(0, 300) });
-    throw e;
-  }
-}
-
-export async function uploadFile(
-  uploadUrl: string,
-  fileData: ArrayBuffer,
-  contentType: string,
-): Promise<void> {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 30000);
-
-  try {
-    const resp = await fetch(uploadUrl, {
-      method: "PUT",
-      headers: { "Content-Type": contentType },
-      body: fileData,
-      signal: ctrl.signal,
-    });
-    clearTimeout(timer);
-    if (!resp.ok) {
-      throw new ClawBotError('ILINK_UPLOAD_FAILED', `Upload failed: ${resp.status}`, 502);
-    }
-    Logger.info("[iLink] File uploaded successfully");
-  } catch (e) {
-    clearTimeout(timer);
-    if (e instanceof ClawBotError) throw e;
-    throw new ClawBotError('ILINK_UPLOAD_FAILED', `Upload error: ${(e as Error).message}`, 502);
-  }
-}
+// ========== 媒体上传（已迁移到 cdn-upload.ts）==========
+// 上传流程：getuploadurl → AES-128-ECB 加密 → POST 加密文件到 CDN
+// 旧实现（直接 PUT 明文 + file_type）已废弃，参见 ./cdn-upload.ts
 
 export async function sendMediaMessage(
   creds: ILinkCredentials,
@@ -378,110 +341,140 @@ export async function sendMediaMessage(
   Logger.debug("[iLink] Media message sent");
 }
 
-// ========== 高级媒体发送（获取上传URL → 上传 → 发送）==========
+// ========== 高级媒体发送：先上传到 CDN，再发送 CDNMedia 引用消息 ==========
+/**
+ * 上传媒体到 iLink CDN 并发送消息
+ * @param creds iLink 登录凭证
+ * @param toUserId 目标用户 ID
+ * @param contextToken 会话上下文 token
+ * @param messageItemType MessageItemType 常量（IMAGE/VIDEO/FILE/VOICE）
+ * @param fileName 文件名（FILE 类型时使用）
+ * @param fileData 文件明文二进制
+ * @param contentType 仅用于日志
+ */
 export async function uploadAndSendMedia(
   creds: ILinkCredentials,
   toUserId: string,
   contextToken: string,
-  fileType: number,
+  messageItemType: number,
   fileName: string,
-  fileData: ArrayBuffer,
-  contentType: string,
+  fileData: ArrayBuffer | Uint8Array,
+  contentType?: string,
 ): Promise<void> {
-  // 1. 获取预签名上传 URL
-  const { upload_url, file_id } = await getUploadUrl(creds, fileType, fileName, fileData.byteLength);
-  if (!upload_url) {
-    throw new ClawBotError('ILINK_UPLOAD_FAILED', `getUploadUrl returned empty upload_url. Response may be invalid.`, 500);
-  }
+  const fileBytes = fileData instanceof Uint8Array ? fileData : new Uint8Array(fileData);
+  const mediaType = toUploadMediaType(messageItemType);
 
-  // 2. 上传文件到 CDN
-  await uploadFile(upload_url, fileData, contentType);
+  Logger.info("[iLink] Uploading & sending media", {
+    toUserId: toUserId.slice(0, 12),
+    messageItemType,
+    mediaType,
+    fileName,
+    fileSize: fileBytes.length,
+    contentType,
+  });
 
-  // 3. 构造媒体消息
-  let item: MessageItem;
-  if (fileType === MessageItemType.IMAGE) {
-    item = { type: MessageItemType.IMAGE, image_item: { cdn_url: upload_url, url: upload_url, width: 0, height: 0 } };
-  } else if (fileType === MessageItemType.FILE) {
-    item = { type: MessageItemType.FILE, file_item: { url: upload_url, file_name: fileName, file_size: fileData.byteLength } };
-  } else if (fileType === MessageItemType.VOICE) {
-    item = { type: MessageItemType.VOICE, voice_item: { text: "", encode_type: 0, playtime: 0 } };
-  } else if (fileType === MessageItemType.VIDEO) {
-    item = { type: MessageItemType.VIDEO, video_item: { url: upload_url, thumb_url: "", width: 0, height: 0, duration: 0 } };
-  } else {
-    throw new ClawBotError('ILINK_INVALID_MEDIA', `Unsupported file type: ${fileType}`);
-  }
+  // 1. 上传到 iLink CDN（getuploadurl + AES 加密 + POST）
+  const uploaded = await uploadMediaToCdn(creds, toUserId, fileBytes, mediaType);
 
-  // 4. 发送媒体消息
+  // 2. 构造 CDNMedia 引用消息体
+  const item = buildMediaItem(messageItemType, uploaded, fileName, fileBytes.length);
+
+  // 3. 发送消息
   await sendMediaMessage(creds, toUserId, contextToken, item);
+  Logger.info("[iLink] Media sent via CDN upload", {
+    filekey: uploaded.filekey,
+    fileSize: uploaded.fileSize,
+    fileSizeCiphertext: uploaded.fileSizeCiphertext,
+  });
 }
 
-// ========== 发送图片消息（优先下载+上传 CDN，iLink 可能无法加载外部 URL）==========
+/**
+ * 构造媒体消息项（CDNMedia 格式）
+ */
+function buildMediaItem(
+  messageItemType: number,
+  uploaded: {
+    downloadEncryptedQueryParam: string;
+    aeskeyBase64: string;
+    fileSize: number;
+    fileSizeCiphertext: number;
+  },
+  fileName: string,
+  fileSize: number,
+): MessageItem {
+  const media = {
+    encrypt_query_param: uploaded.downloadEncryptedQueryParam,
+    aes_key: uploaded.aeskeyBase64,
+    encrypt_type: 1,
+  };
+
+  if (messageItemType === MessageItemType.IMAGE) {
+    return {
+      type: MessageItemType.IMAGE,
+      image_item: {
+        media,
+        mid_size: uploaded.fileSizeCiphertext,
+      },
+    };
+  }
+  if (messageItemType === MessageItemType.VIDEO) {
+    return {
+      type: MessageItemType.VIDEO,
+      video_item: {
+        media,
+        video_size: uploaded.fileSizeCiphertext,
+        play_length: 0,
+      },
+    };
+  }
+  if (messageItemType === MessageItemType.FILE) {
+    return {
+      type: MessageItemType.FILE,
+      file_item: {
+        media,
+        file_name: fileName,
+        // 注意：file_item.len 在官方 SDK 中是明文大小（字符串）
+      },
+    };
+  }
+  throw new ClawBotError("ILINK_INVALID_MEDIA", `Unsupported message item type: ${messageItemType}`, 400);
+}
+
+// ========== 发送图片消息（先下载，再上传到 iLink CDN 发送）==========
 export async function sendImageMessage(
   creds: ILinkCredentials,
   toUserId: string,
   contextToken: string,
   imageUrl: string,
-  apiKey?: string,
+  _apiKey?: string,
 ): Promise<void> {
-  // 方式1：下载图片后上传到 CDN 发送（最可靠）
-  try {
-    const dlHeaders: Record<string, string> = {};
-    if (apiKey) dlHeaders["Authorization"] = `Bearer ${apiKey}`;
-    const imgResp = await fetch(imageUrl, { headers: dlHeaders, signal: AbortSignal.timeout(60000) });
-    if (imgResp.ok) {
-      const buffer = await imgResp.arrayBuffer();
-      const contentType = imgResp.headers.get("content-type") || "image/png";
-      await uploadAndSendMedia(creds, toUserId, contextToken, MessageItemType.IMAGE, "generated.png", buffer, contentType);
-      Logger.info("[iLink] Image sent via upload");
-      return;
-    }
-  } catch (e: any) {
-    Logger.warn("[iLink] Upload image failed, trying direct URL", { error: e?.message });
+  // iLink CDN 不接受外部 URL，必须先下载再上传
+  // 下载（带 API Key，部分 CDN 需要鉴权）
+  const headers: Record<string, string> = {};
+  if (_apiKey) headers["Authorization"] = `Bearer ${_apiKey}`;
+  const imgResp = await fetch(imageUrl, { headers, signal: AbortSignal.timeout(60000) });
+  if (!imgResp.ok) {
+    throw new ClawBotError("ILINK_IMAGE_DOWNLOAD_FAILED", `Image download HTTP ${imgResp.status}`, 502);
   }
+  const buffer = new Uint8Array(await imgResp.arrayBuffer());
+  const contentType = imgResp.headers.get("content-type") || "image/png";
 
-  // 方式2：回退到直接发送带 URL 的图片消息
-  const msg: WeixinMessage = {
-    from_user_id: "",
-    to_user_id: toUserId,
-    client_id: generateClientId(),
-    message_type: MessageType.BOT,
-    message_state: MessageState.FINISH,
-    context_token: contextToken,
-    item_list: [{
-      type: MessageItemType.IMAGE,
-      image_item: { url: imageUrl, cdn_url: imageUrl, width: 0, height: 0 },
-    }],
-  };
-
-  try {
-    await withRetry(
-      () => post(creds, "ilink/bot/sendmessage", { msg }, DEFAULT_API_MS),
-      {
-        retries: 2,
-        baseDelayMs: 500,
-        shouldRetry: (error) => !(error instanceof ClawBotError && error.code === 'ILINK_SESSION_TIMEOUT')
-      }
-    );
-    Logger.info("[iLink] Image message sent via direct URL fallback");
-    return;
-  } catch (e: any) {
-    Logger.warn("[iLink] Direct image URL send also failed", { error: e?.message });
-  }
-
-  throw new ClawBotError('ILINK_IMAGE_SEND_FAILED', 'All image send methods failed');
+  await uploadAndSendMedia(creds, toUserId, contextToken, MessageItemType.IMAGE, "generated.png", buffer, contentType);
+  Logger.info("[iLink] Image sent via CDN upload");
 }
-// ========== 发送视频消息 ==========
+
+// ========== 发送视频消息（先下载，再上传到 iLink CDN 发送）==========
 export async function sendVideoMessage(
   creds: ILinkCredentials,
   toUserId: string,
   contextToken: string,
   videoUrl: string,
-  apiKey?: string,
+  _apiKey?: string,
 ): Promise<void> {
-  // iLink 协议不支持直接用外部 URL 发送视频，需要先下载再上传到 CDN
+  // iLink CDN 不接受外部 URL，必须先下载再上传
   // 失败时不降级，让上层（checkPendingVideos / 消息处理）决定跨 cron 重试
-  await sendFileFromUrl(creds, toUserId, contextToken, videoUrl, MessageItemType.VIDEO, "generated_video.mp4", apiKey);
-  Logger.info("[iLink] Video message sent (download + upload)");
+  await sendFileFromUrl(creds, toUserId, contextToken, videoUrl, MessageItemType.VIDEO, "generated_video.mp4", _apiKey);
+  Logger.info("[iLink] Video message sent (download + CDN upload)");
 }
 
 export async function sendFileFromUrl(
@@ -491,37 +484,28 @@ export async function sendFileFromUrl(
   fileUrl: string,
   fileType: number,
   fileName: string,
-  apiKey?: string,
+  _apiKey?: string,
 ): Promise<void> {
   // 下载文件（带 API Key 认证，部分提供商的媒体 URL 需要鉴权）
   // 媒体刚生成时 CDN 可能短暂不可用（502），重试几次
-  // 注意：Agnes 返回的视频 URL 是 Google Cloud Storage 的，可能不需要/不接受 Agnes 的 API Key
   const maxRetries = 6;
   let resp: Response | null = null;
   let lastError: string | null = null;
 
-  // 先尝试不带 Authorization 头（适用于公开 CDN URL）
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     try {
+      // 注：Agnes 返回的视频 URL 是 Google Cloud Storage，通常公开可访问
+      // 如有需要可启用 Authorization 头
       const headers: Record<string, string> = {};
-      // 第 1-2 次尝试不带 Authorization（公开 CDN），后面尝试带 Authorization（需要鉴权的 URL）
-      if (attempt >= 2 && apiKey) {
-        headers["Authorization"] = `Bearer ${apiKey}`;
-      }
       resp = await fetch(fileUrl, { headers, signal: AbortSignal.timeout(60000) });
       if (resp.ok) break;
       const errBody = await resp.text().catch(() => "");
-      const respHeaders: Record<string, string> = {};
-      resp.headers.forEach((v, k) => { respHeaders[k.toLowerCase()] = v; });
       lastError = `HTTP ${resp.status}`;
       Logger.warn("[iLink] Download attempt failed, retrying", {
         attempt: attempt + 1,
         status: resp.status,
         url: fileUrl.substring(0, 120),
-        headersSent: Object.keys(headers).map(h => h.toLowerCase()),
-        contentType: resp.headers.get("content-type"),
-        body: errBody.slice(0, 500),
-        responseHeaders: Object.entries(respHeaders).map(([k, v]) => `${k}=${v.slice(0, 80)}`),
+        body: errBody.slice(0, 300),
       });
       if (attempt < maxRetries - 1) {
         await new Promise((r) => setTimeout(r, 2000 + attempt * 2000));
@@ -540,13 +524,11 @@ export async function sendFileFromUrl(
   }
 
   if (!resp || !resp.ok) {
-    throw new ClawBotError('ILINK_DOWNLOAD_FAILED', `Download failed after ${maxRetries} retries: ${lastError}`);
+    throw new ClawBotError("ILINK_DOWNLOAD_FAILED", `Download failed after ${maxRetries} retries: ${lastError}`);
   }
 
-  const buffer = await resp.arrayBuffer();
-  const contentType = resp.headers.get("content-type") || "application/octet-stream";
-
-  await uploadAndSendMedia(creds, toUserId, contextToken, fileType, fileName, buffer, contentType);
+  const buffer = new Uint8Array(await resp.arrayBuffer());
+  await uploadAndSendMedia(creds, toUserId, contextToken, fileType, fileName, buffer);
 }
 
 // ========== 工具 ==========
