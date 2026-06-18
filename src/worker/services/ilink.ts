@@ -332,14 +332,21 @@ export async function sendMediaMessage(
     item_list: [item],
   };
 
-  Logger.info("[iLink] Sending media message (sendmessage API)", {
-    toUserId: toUserId.slice(0, 12),
-    fromUserId: (creds.userId || "").slice(0, 12),
+  Logger.info("[iLink] ========== 开始发送消息 ==========", {
+    toUserId: toUserId,
+    fromUserId: creds.userId || "",
+    contextToken: contextToken.slice(0, 20) + "...",
     itemType: item.type,
-    msgFull: JSON.stringify({ msg }).slice(0, 500),
+    itemData: JSON.stringify(item).slice(0, 300),
+    fullMessage: JSON.stringify({ msg }).slice(0, 800),
   });
 
   try {
+    Logger.info("[iLink] POST 请求准备", {
+      url: creds.baseUrl + "/ilink/bot/sendmessage",
+      botToken: creds.botToken.slice(0, 20) + "...",
+    });
+    
     const resp = await withRetry(
       () => post(creds, "ilink/bot/sendmessage", { msg }, DEFAULT_API_MS),
       {
@@ -350,14 +357,16 @@ export async function sendMediaMessage(
       }
     );
 
-    Logger.info("[iLink] Media message sent successfully", {
-      respPreview: JSON.stringify(resp || {}).slice(0, 300),
+    Logger.info("[iLink] ========== 消息发送成功 ==========", {
+      response: JSON.stringify(resp || {}),
+      toUserId: toUserId,
     });
   } catch (e: any) {
-    Logger.error("[iLink] Media message send failed", {
+    Logger.error("[iLink] ========== 消息发送失败 ==========", {
       errorCode: e?.code || "UNKNOWN",
       errorMessage: e?.message || String(e),
-      toUserId: toUserId.slice(0, 12),
+      errorDetails: e?.data || {},
+      toUserId: toUserId,
       itemType: item.type,
     });
     throw e;
