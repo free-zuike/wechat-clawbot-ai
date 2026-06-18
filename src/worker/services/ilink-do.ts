@@ -1392,10 +1392,23 @@ export class ILinkConnectionDO implements DurableObject {
             return;
           }
 
+          // 生成期间定期刷新 typing 状态（每 4 秒刷新一次）
+          let typingInterval: ReturnType<typeof setInterval> | null = null;
+          const startTypingKeepAlive = () => {
+            typingInterval = setInterval(() => {
+              sendTypingStatus(useCreds!, from, ctxToken, true).catch(() => {});
+            }, 4000);
+          };
+          const stopTypingKeepAlive = () => {
+            if (typingInterval) { clearInterval(typingInterval); typingInterval = null; }
+            sendTypingStatus(useCreds!, from, ctxToken, false).catch(() => {});
+          };
+
           try {
             if (isVideo) {
               // 异步提交视频任务：先提交 taskId，存到 pending_videos
               // 之后由 checkPendingVideos 轮询完成后发送视频
+              startTypingKeepAlive();
               const result = await submitVideoTask(this.env.AI, mediaPrompt, cfg.aiVideoModel, cfg.aiProvider, cfg.aiBaseUrl, cfg.aiApiKey);
               const modelInfo = `🤖 ${cfg.aiProvider} · ${cfg.aiVideoModel}`;
               if (result) {
@@ -1428,7 +1441,9 @@ export class ILinkConnectionDO implements DurableObject {
               } else {
                 await sendTextMessage(useCreds!, from, ctxToken, `❌ 视频生成失败 (${modelInfo})\n请稍后重试或换个描述试试`);
               }
+              stopTypingKeepAlive();
             } else {
+              startTypingKeepAlive();
               const imageData = await generateImage(this.env.AI, mediaPrompt, cfg.aiImageModel, cfg.aiProvider, cfg.aiBaseUrl, cfg.aiApiKey);
               const modelInfo = `🤖 ${cfg.aiProvider} · ${cfg.aiImageModel}`;
               Logger.info("[DO] Image generation result", { success: !!imageData, type: typeof imageData });
@@ -1450,16 +1465,17 @@ export class ILinkConnectionDO implements DurableObject {
               } else {
                 await sendTextMessage(useCreds!, from, ctxToken, `❌ 图片生成失败 (${modelInfo})\n请稍后重试或换个描述试试`);
               }
+              stopTypingKeepAlive();
             }
           } catch (genErr: any) {
             Logger.error("[DO] Media generation error", { error: genErr?.message });
             await sendTextMessage(useCreds!, from, ctxToken, `生成失败: ${genErr?.message || "未知错误"}`);
+            stopTypingKeepAlive();
           }
 
           replyAt = new Date().toISOString();
           aiSuccessCount++;
           await this.markMessageProcessed(messageId);
-          sendTypingStatus(useCreds!, from, ctxToken, false).catch(() => {});
 
           const pendingMsg = { messageId, fromUserId: from, content: text, timestamp: createdAt, replyContent, replyAt, processed: true };
           this.state.pendingMessages.push(pendingMsg);
