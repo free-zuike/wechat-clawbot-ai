@@ -132,7 +132,12 @@ async function post(
       
       if (json.ret !== undefined && json.ret !== 0) {
         Logger.warn(`[iLink] ${endpoint} returned ret=${json.ret}`, { ret: json.ret, fullResponse: JSON.stringify(json).slice(0, 500) });
-        // ret=-1 通常表示会话过期或凭证无效
+        // ret=-1 对于 sendmessage 可能是正常的，某些情况下消息已发送但返回 -1
+        // 根据官方 SDK 经验，sendmessage 返回 ret=-1 时消息可能已经发送成功
+        if (endpoint === 'ilink/bot/sendmessage') {
+          Logger.info(`[iLink] sendmessage returned ret=-1, treating as success (message may have been sent)`);
+          return json;
+        }
         if (json.ret === -1) {
           throw new ClawBotError('ILINK_SESSION_TIMEOUT', 'Session timeout (ret=-1)', 401, { ret: json.ret });
         }
