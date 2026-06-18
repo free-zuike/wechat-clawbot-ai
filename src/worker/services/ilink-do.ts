@@ -751,15 +751,45 @@ export class ILinkConnectionDO implements DurableObject {
       await this.initSQLite();
       await this.ensurePendingVideosColumns();
       const cursor = this.doState.storage.sql.exec(
-        `SELECT task_id, prompt, model, provider, base_url, api_key, to_user_id, context_token, account_id FROM pending_videos WHERE status = 'queued'`
+        `SELECT task_id, prompt, model, provider, base_url, api_key, to_user_id, context_token, account_id, created_at FROM pending_videos WHERE status = 'queued'`
       );
       const pending = cursor.toArray();
 
       if (pending.length === 0) return;
       Logger.info("[DO] Checking pending videos", { count: pending.length });
 
+      const now = Date.now();
+      const MAX_AGE_MS = 24 * 60 * 60 * 1000; // 任务 24 小时后超时放弃
+
       for (const task of pending) {
         const taskId = task.task_id as string;
+
+        // 超时保护：任务超过 24 小时且仍未下载成功，标记失败，避免永远重试
+        const createdAt = Number(task.created_at) || now;
+        const ageMs = now - createdAt;
+        if (ageMs > MAX_AGE_MS) {
+          Logger.warn("[DO] Video task timed out (> 24h) — marking as failed", { taskId, ageHours: Math.round(ageMs / 3600000) });
+          this.doState.storage.sql.exec(
+            `UPDATE pending_videos SET status = 'failed' WHERE task_id = ?`,
+            taskId
+          );
+          const toUserId = task.to_user_id as string | undefined;
+          const contextToken = task.context_token as string | undefined;
+          const modelInfo = `🤖 ${task.provider} · ${task.model}`;
+          if (toUserId && contextToken) {
+            const store = this.state.stores.get(STORE_KEY) || {};
+            const credsMap = store.accounts as any;
+            const sendCreds = task.account_id && credsMap?.[task.account_id]
+              ? credsMap[task.account_id]
+              : (Object.values(credsMap || {})[0] as ILinkCredentials | undefined) || store.ilinkCreds;
+            if (sendCreds) {
+              sendTextMessage(sendCreds as ILinkCredentials, toUserId, contextToken, `❌ 视频下载超时 (${modelInfo})\n生成成功但下载失败，可重新生成`)
+                .catch(() => {});
+            }
+          }
+          continue;
+        }
+
         const base = (task.base_url as string).replace(/\/+$/, "").replace(/\/v1\/(chat\/completions|images\/generations|video\/generations)$/i, "");
         const toUserId = task.to_user_id as string | undefined;
         const contextToken = task.context_token as string | undefined;
