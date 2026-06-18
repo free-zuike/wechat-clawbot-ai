@@ -51,7 +51,7 @@ async function callOpenAICompatible(params: {
   baseUrl: string;
   apiKey: string;
   model: string;
-  messages: Array<{ role: string; content: string | Array<{ type: string; text?: string; image_url?: { url: string } }> };
+  messages: Array<{ role: string; content: string | any[] }>;
   maxTokens: number;
   temperature?: number;
 }): Promise<string> {
