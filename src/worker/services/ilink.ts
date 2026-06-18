@@ -378,7 +378,10 @@ export async function uploadAndSendMedia(
   contentType: string,
 ): Promise<void> {
   // 1. 获取预签名上传 URL
-  const { upload_url } = await getUploadUrl(creds, fileType, fileName, fileData.byteLength);
+  const { upload_url, file_id } = await getUploadUrl(creds, fileType, fileName, fileData.byteLength);
+  if (!upload_url) {
+    throw new ClawBotError('ILINK_UPLOAD_FAILED', `getUploadUrl returned empty upload_url. Response may be invalid.`, 500);
+  }
 
   // 2. 上传文件到 CDN
   await uploadFile(upload_url, fileData, contentType);
