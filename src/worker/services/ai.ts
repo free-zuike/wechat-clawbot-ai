@@ -476,13 +476,13 @@ export async function submitVideoTask(
 
       if (url) {
         Logger.info("[ai] Video task returned immediate URL", { url: url.slice(0, 80) });
-        return { taskId: taskId || `sync_${Date.now()}`, videoId, baseUrl: base, provider: effectiveProvider, apiKey, model: videoModel, prompt, url };
+        return { taskId: taskId || `sync_${Date.now()}`, videoId, baseUrl, provider: effectiveProvider, apiKey, model: videoModel, prompt, url };
       }
       if (!taskId && !videoId) {
         Logger.warn("[ai] No task_id or video_id in response", { keys: Object.keys(submitData || {}) });
         return null;
       }
-      return { taskId, videoId, baseUrl: base, provider: effectiveProvider, apiKey, model: videoModel, prompt };
+      return { taskId, videoId, baseUrl, provider: effectiveProvider, apiKey, model: videoModel, prompt };
     } catch (e: any) {
       Logger.error("[ai] Video task submit failed", { error: e?.message });
       return null;

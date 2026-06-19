@@ -101,16 +101,10 @@ export default {
             }));
             continue;
           }
-          // 提交视频生成任务到 Agnes AI（使用 /v1/videos，非标准 /v1/video/generations）
-          let base = (baseUrl || "").replace(/[\s/]+$/, "").trim();
-          let vidApiPath = "/v1/videos";
-          const vidPatternMatch = base.match(/\/(v\d+)\/(chat\/completions|images\/generations|videos?\/?|videos)$/i);
-          if (vidPatternMatch) {
-            vidApiPath = `/${vidPatternMatch[1]}/${vidPatternMatch[2]}`;
-            base = base.replace(/\/v\d+\/(chat\/completions|images\/generations|videos?\/?|videos)$/i, "");
-          }
-          base = base.replace(/\/v\d+$/, "");
-          const resp = await fetch(`${base}${vidApiPath}`, {
+          // 提交视频生成任务到 Agnes AI
+          const { base: vBase, version: vVer } = parseApiUrl(baseUrl || "");
+          const submitUrl = `${vBase}/${vVer}/videos`;
+          const resp = await fetch(submitUrl, {
             method: "POST",
             headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
             body: JSON.stringify({ model, prompt, num_frames: 121, frame_rate: 24 }),
@@ -118,7 +112,7 @@ export default {
 
           if (!resp.ok) {
             const errBody = await resp.text().catch(() => "");
-            Logger.error("[queue] Video submit failed", { status: resp.status, body: errBody.slice(0, 200), url: `${base}/v1/videos`, apiKeyPrefix: apiKey.slice(0, 6) });
+            Logger.error("[queue] Video submit failed", { status: resp.status, body: errBody.slice(0, 200), url: submitUrl, apiKeyPrefix: apiKey.slice(0, 6) });
             continue;
           }
 
@@ -156,35 +150,40 @@ export default {
           }
 
           // 查询视频状态
-          await new Promise(r => setTimeout(r, 1000 + Math.random() * 1000)); // 避免短时间大量请求
-          let base = (baseUrl || "").replace(/[\s/]+$/, "").trim();
-          let chkApiPath = "/v1/videos";
-          const chkPatternMatch = base.match(/\/(v\d+)\/(chat\/completions|images\/generations|videos?\/?|videos)$/i);
-          if (chkPatternMatch) {
-            chkApiPath = `/${chkPatternMatch[1]}/${chkPatternMatch[2]}`;
-            base = base.replace(/\/v\d+\/(chat\/completions|images\/generations|videos?\/?|videos)$/i, "");
-          }
-          base = base.replace(/\/v\d+$/, "");
-          const checkUrl = videoId
-            ? `${base}/agnesapi?video_id=${encodeURIComponent(videoId)}`
-            : `${base}/v1/videos/${taskId}`;
+          await new Promise(r => setTimeout(r, 1000 + Math.random() * 1000));
+          const { base: cBase, version: cVer } = parseApiUrl(baseUrl || "");
+          // 智谱AI用 /async-result/{id}，其他提供商用旧版兼容格式
+          const isZhipu = (baseUrl || "").includes("bigmodel.cn");
+          const checkUrl = isZhipu
+            ? `${cBase}/${cVer}/async-result/${encodeURIComponent(taskId || videoId)}`
+            : videoId
+              ? `${cBase}/agnesapi?video_id=${encodeURIComponent(videoId)}`
+              : `${cBase}/${cVer}/videos/${taskId}`;
           const checkResp = await fetch(checkUrl, {
             headers: { "Authorization": `Bearer ${apiKey}` },
           });
 
           if (!checkResp.ok) {
-            Logger.error("[queue] video_check status query failed", { status: checkResp.status, taskId });
+            Logger.error("[queue] video_check status query failed", { status: checkResp.status, taskId, url: checkUrl });
             continue;
           }
 
           const statusData = await checkResp.json() as any;
-          Logger.info("[queue] video_check status", { taskId, status: statusData.status, progress: statusData.progress });
+          // 智谱AI: task_status (SUCCESS/PROCESSING/FAIL), 其他: status (completed/failed)
+          const taskStatus = statusData.task_status || statusData.status;
+          Logger.info("[queue] video_check status", { taskId, taskStatus, model });
 
-          if (statusData.status === "completed") {
-            // 视频完成
-            const videoUrl = statusData.remixed_from_video_id || statusData.url;
+          // 统一判断：完成
+          const isCompleted = taskStatus === "completed" || taskStatus === "SUCCESS" || taskStatus === "success";
+          const isFailed = taskStatus === "failed" || taskStatus === "FAIL" || taskStatus === "fail";
+
+          if (isCompleted) {
+            // 视频完成 — 智谱AI: video_result[0].url, Agnes: remixed_from_video_id
+            const videoUrl = statusData.video_result?.[0]?.url
+              || statusData.remixed_from_video_id
+              || statusData.url;
             if (!videoUrl) {
-              Logger.error("[queue] video_check completed but no URL", { data: JSON.stringify(statusData).slice(0, 200) });
+              Logger.error("[queue] video_check completed but no URL", { data: JSON.stringify(statusData).slice(0, 300) });
               continue;
             }
 
@@ -221,7 +220,7 @@ export default {
                 Logger.error("[queue] Video broadcast failed", { error: e?.message, taskId });
               }
             }
-          } else if (statusData.status === "failed") {
+          } else if (isFailed) {
             Logger.error("[queue] Video generation failed", { taskId, error: JSON.stringify(statusData.error).slice(0, 200) });
             const doId = env.ILINK_CONNECTION.idFromName("main");
             const doStub = env.ILINK_CONNECTION.get(doId);
