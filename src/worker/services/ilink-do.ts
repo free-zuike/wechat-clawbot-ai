@@ -1393,6 +1393,14 @@ export class ILinkConnectionDO implements DurableObject {
       let imageUrl: string | undefined;
       let hasRealText = false;
       for (const item of (msg.item_list || [])) {
+        Logger.info("[DO] Message item", {
+          type: item.type,
+          hasImageItem: !!item.image_item,
+          cdnUrl: item.image_item?.cdn_url?.slice(0, 80),
+          imgUrl: item.image_item?.url?.slice(0, 80),
+          hasTextItem: !!item.text_item,
+          text: item.text_item?.text?.slice(0, 20),
+        });
         if (item.type === MessageItemType.IMAGE) {
           imageUrl = item.image_item?.cdn_url || item.image_item?.url;
         }
@@ -1413,6 +1421,8 @@ export class ILinkConnectionDO implements DurableObject {
         await this.markMessageProcessed(`${useCreds?.accountId || "default"}:${this.generateMessageId(msg, imageUrl)}`);
         return;
       }
+
+      Logger.info("[DO] Image cache decision", { imageUrl: imageUrl?.slice(0, 80), hasRealText, from: from?.slice(0, 10), itemTypes: (msg.item_list || []).map((i: any) => i.type) });
 
       if (!text) return;
 
