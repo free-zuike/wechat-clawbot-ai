@@ -7,14 +7,39 @@
       <div v-if="messages.length === 0" style="text-align: center; color: var(--text-dim); padding: 40px 20px">
         👋 开始输入你的问题吧...
       </div>
-      <div v-for="(msg, i) in messages" :key="i" class="msg" :class="msg.role">
+      <div v-for="(msg, i) in messages" :key="i" class="msg" :class="msg.role"
+        @mouseenter="hoverIdx = i" @mouseleave="hoverIdx = -1">
         <div class="bubble">
-          <template v-if="renderMessage(msg.text).isImage">
-            <div v-html="renderMessage(msg.text).html"></div>
+          <!-- 编辑模式 -->
+          <template v-if="editingIdx === i">
+            <div class="edit-area">
+              <textarea
+                v-model="editText"
+                class="edit-input"
+                rows="3"
+                @keydown.enter.ctrl="submitEdit"
+                @keydown.escape="cancelEdit"
+              ></textarea>
+              <div class="edit-actions">
+                <button class="btn small" @click="submitEdit">✓ 确认</button>
+                <button class="btn small secondary" @click="cancelEdit">✗ 取消</button>
+              </div>
+            </div>
           </template>
+          <!-- 普通显示 -->
           <template v-else>
-            {{ renderMessage(msg.text).text }}
+            <template v-if="renderMessage(msg.text).isImage">
+              <div v-html="renderMessage(msg.text).html"></div>
+            </template>
+            <template v-else>
+              {{ renderMessage(msg.text).text }}
+            </template>
           </template>
+        </div>
+        <!-- 用户消息的操作按钮 -->
+        <div v-if="msg.role === 'u' && hoverIdx === i && editingIdx !== i" class="msg-actions">
+          <button class="action-btn" title="编辑并重新发送" @click="startEdit(i, msg.text)">✏️</button>
+          <button class="action-btn" title="重新发送" @click="$emit('resend', msg.text)">🔄</button>
         </div>
       </div>
     </div>
@@ -40,13 +65,37 @@
 </template>
 
 <script setup lang="ts">
+import { ref } from "vue";
+
 defineProps<{
   messages: Array<{ role: string; text: string }>;
   input: string;
   loading: boolean;
 }>();
 
-defineEmits(["send", "update:input"]);
+const emit = defineEmits(["send", "update:input", "edit"]);
+
+const hoverIdx = ref(-1);
+const editingIdx = ref(-1);
+const editText = ref("");
+
+function startEdit(idx: number, text: string) {
+  editingIdx.value = idx;
+  editText.value = text;
+}
+
+function cancelEdit() {
+  editingIdx.value = -1;
+  editText.value = "";
+}
+
+function submitEdit() {
+  if (editText.value.trim() && editingIdx.value >= 0) {
+    emit("edit", editingIdx.value, editText.value.trim());
+    editingIdx.value = -1;
+    editText.value = "";
+  }
+}
 
 function renderMessage(text: string): { isImage: boolean; html: string; text: string } {
   // 检测 markdown 图片
@@ -82,5 +131,60 @@ function renderMessage(text: string): { isImage: boolean; html: string; text: st
 .chat-box {
   max-height: 500px;
   overflow-y: auto;
+}
+.msg {
+  position: relative;
+}
+.msg-actions {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+.msg:hover .msg-actions {
+  opacity: 1;
+}
+.action-btn {
+  background: var(--bg-card);
+  border: 1px solid var(--border-light);
+  border-radius: 4px;
+  cursor: pointer;
+  padding: 2px 6px;
+  font-size: 12px;
+  transition: background 0.2s;
+}
+.action-btn:hover {
+  background: var(--border-light);
+}
+.edit-area {
+  width: 100%;
+}
+.edit-input {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid var(--border-light);
+  border-radius: 6px;
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font-size: 14px;
+  resize: vertical;
+  font-family: inherit;
+}
+.edit-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+.btn.small {
+  padding: 4px 10px;
+  font-size: 12px;
+}
+.btn.secondary {
+  background: var(--bg-card);
+  color: var(--text-primary);
+  border: 1px solid var(--border-light);
 }
 </style>

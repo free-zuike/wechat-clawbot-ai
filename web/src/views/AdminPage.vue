@@ -107,6 +107,8 @@
           :loading="chatLoading"
           @send="handleSendChat"
           @update:input="(v: string) => chatInput = v"
+          @resend="(text: string) => { chatInput = text; handleSendChat(); }"
+          @edit="(idx: number, newText: string) => handleEditChat(idx, newText)"
         />
       </section>
 
@@ -399,6 +401,22 @@ async function handleSendChat() {
     if (e instanceof ApiError && e.isCancelled) { chatLoading.value = false; return; }
     chatMessages.value.push({ role: "b", text: "错误: " + handleApiError(e, "AI 回复失败") });
   } finally { chatLoading.value = false; }
+}
+
+// ===== Chat Edit: 修改用户消息并重新发送 =====
+function handleEditChat(idx: number, newText: string) {
+  if (idx < 0 || idx >= chatMessages.value.length) return;
+  // 找到对应的用户消息，删除后续的 bot 回复
+  chatMessages.value.splice(idx);
+  // 设置新的输入并发送
+  chatMessages.value.push({ role: "u", text: newText });
+  chatInput.value = "";
+  chatLoading.value = true;
+  chat(newText).then(d => {
+    if (d) chatMessages.value.push({ role: "b", text: d.reply + (d.source === "shortcut" ? " [快捷回复]" : "") });
+  }).catch(e => {
+    chatMessages.value.push({ role: "b", text: "错误: " + handleApiError(e, "AI 回复失败") });
+  }).finally(() => { chatLoading.value = false; });
 }
 
 // ===== QR =====
