@@ -348,6 +348,7 @@ export async function generateImage(
         model: imageModel,
         prompt,
         size: imageSize,
+        watermark_enabled: false,
         extra_body: { response_format: "url" },
       };
       // 以图生图：添加 image_url 参数
