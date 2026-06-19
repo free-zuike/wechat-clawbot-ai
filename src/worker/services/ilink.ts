@@ -314,40 +314,16 @@ export async function sendTextMessage(
   toUserId: string,
   contextToken: string,
   text: string,
-  quoteItem?: { title: string; refText: string },
 ): Promise<void> {
-  let payload: Record<string, unknown>;
-
-  if (quoteItem) {
-    // 引用格式：扁平结构 + quote_item
-    payload = {
-      to_user_id: toUserId,
-      context_token: contextToken,
-      msg_type: 1,
-      msg_content: {
-        text_item: { text },
-        quote_item: {
-          title: quoteItem.title,
-          ref_item: {
-            type: 1,
-            text_item: { text: quoteItem.refText },
-          },
-        },
-      },
-    };
-  } else {
-    // 普通格式：msg 包装 + item_list
-    const msg: WeixinMessage = {
-      from_user_id: creds.userId || "",
-      to_user_id: toUserId,
-      client_id: generateClientId(),
-      message_type: MessageType.BOT,
-      message_state: MessageState.FINISH,
-      context_token: contextToken,
-      item_list: [{ type: MessageItemType.TEXT, text_item: { text } }],
-    };
-    payload = { msg };
-  }
+  const msg: WeixinMessage = {
+    from_user_id: creds.userId || "",
+    to_user_id: toUserId,
+    client_id: generateClientId(),
+    message_type: MessageType.BOT,
+    message_state: MessageState.FINISH,
+    context_token: contextToken,
+    item_list: [{ type: MessageItemType.TEXT, text_item: { text } }],
+  };
 
   Logger.info(`[iLink] Sending message`, {
     toUserId: toUserId.slice(0, 12),
@@ -358,7 +334,7 @@ export async function sendTextMessage(
   });
   
   const response = await withRetry(
-    () => post(creds, "ilink/bot/sendmessage", payload, DEFAULT_API_MS),
+    () => post(creds, "ilink/bot/sendmessage", { msg }, DEFAULT_API_MS),
     {
       retries: 2,
       baseDelayMs: 500,
@@ -402,10 +378,9 @@ export async function sendTextChunked(
   contextToken: string,
   text: string,
   maxLength: number = 4000,
-  quoteItem?: { title: string; refText: string },
 ): Promise<number> {
   if (text.length <= maxLength) {
-    await sendTextMessage(creds, toUserId, contextToken, text, quoteItem);
+    await sendTextMessage(creds, toUserId, contextToken, text);
     return 1;
   }
 
