@@ -1010,13 +1010,8 @@ export class ILinkConnectionDO implements DurableObject {
               `UPDATE pending_videos SET status = 'failed' WHERE task_id = ?`,
               taskId
             );
-            if (creds && toUserId && contextToken) {
+            if (taskSource !== "chat" && creds && toUserId && contextToken) {
               await sendTextMessage(creds, toUserId, contextToken, `❌ 视频生成失败 (${modelInfo})\n请稍后重试或换个描述试试`).catch(() => {});
-            }
-            if (taskSource !== "chat") {
-              if (creds && toUserId && contextToken) {
-                await sendTextMessage(creds, toUserId, contextToken, `❌ 视频生成失败 (${modelInfo})\n请稍后重试或换个描述试试`).catch(() => {});
-              }
             }
             this.broadcastToWebSockets({
               type: "media_error",
@@ -1025,7 +1020,6 @@ export class ILinkConnectionDO implements DurableObject {
               provider: task.provider,
               source: taskSource || undefined,
             });
-            }
             Logger.error("[DO] Video generation failed", { taskId });
           }
           // stillProcessing: 什么也不做，下次 cron 再检查
@@ -1376,6 +1370,9 @@ export class ILinkConnectionDO implements DurableObject {
 
       const from = msg.from_user_id;
       const ctxToken = msg.context_token;
+
+      // 构造消息引用（回复时引用用户原始消息）
+      const refMsg = { title: text.slice(0, 100), messageItem: msg.item_list?.[0] };
       if (!from || !ctxToken) return;
 
       const createdAt = msg.create_time_ms
@@ -1446,7 +1443,7 @@ export class ILinkConnectionDO implements DurableObject {
               if (result) {
                 if (result.url) {
                   // 同步返回了 URL：先发文本通知，再异步尝试发送视频文件
-                  await sendTextMessage(useCreds!, from, ctxToken, `🎬 ${modelInfo}\n\n视频已生成，正在发送中...`);
+                  await sendTextMessage(useCreds!, from, ctxToken, `🎬 ${modelInfo}\n\n视频已生成，正在发送中...`, refMsg);
                   replyContent = `[视频生成] ${mediaPrompt}`;
                   sendVideoMessage(useCreds!, from, ctxToken, result.url, cfg.aiApiKey)
                     .then(() => Logger.info("[DO] Sync video file sent to WeChat"))
@@ -1467,11 +1464,11 @@ export class ILinkConnectionDO implements DurableObject {
                      VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?)`,
                     result.taskId, result.videoId || null, result.prompt, result.model, result.provider, result.baseUrl, result.apiKey, from, ctxToken, useCreds?.accountId || null, Date.now()
                   );
-                  await sendTextMessage(useCreds!, from, ctxToken, `🎬 ${modelInfo}\n\n视频生成任务已提交，稍后生成完成后会自动发送给您。`);
+                  await sendTextMessage(useCreds!, from, ctxToken, `🎬 ${modelInfo}\n\n视频生成任务已提交，稍后生成完成后会自动发送给您。`, refMsg);
                   replyContent = `[视频生成] ${mediaPrompt}`;
                 }
               } else {
-                await sendTextMessage(useCreds!, from, ctxToken, `❌ 视频生成失败 (${modelInfo})\n请稍后重试或换个描述试试`);
+                await sendTextMessage(useCreds!, from, ctxToken, `❌ 视频生成失败 (${modelInfo})\n请稍后重试或换个描述试试`, refMsg);
               }
               stopTypingKeepAlive();
             } else {
@@ -1482,7 +1479,7 @@ export class ILinkConnectionDO implements DurableObject {
               if (imageData) {
                 if (typeof imageData === "string") {
                   // URL：使用简单方式发送
-                  await sendImageSimple(useCreds!, from, ctxToken, imageData);
+                  await sendImageSimple(useCreds!, from, ctxToken, imageData, refMsg);
                   replyContent = `[图片生成] ${mediaPrompt}`;
                   // 广播图片到 WebSocket（管理后台显示）
                   this.broadcastToWebSockets({ type: "media_generated", mediaType: "image", url: imageData, model: cfg.aiImageModel, provider: cfg.aiProvider });
@@ -1490,18 +1487,18 @@ export class ILinkConnectionDO implements DurableObject {
                   // Uint8Array：转换为 Blob URL 后发送
                   const blob = new Blob([imageData.buffer as ArrayBuffer], { type: "image/png" });
                   const blobUrl = URL.createObjectURL(blob);
-                  await sendImageSimple(useCreds!, from, ctxToken, blobUrl);
+                  await sendImageSimple(useCreds!, from, ctxToken, blobUrl, refMsg);
                   URL.revokeObjectURL(blobUrl);
                   replyContent = `[图片生成] ${mediaPrompt}`;
                 }
               } else {
-                await sendTextMessage(useCreds!, from, ctxToken, `❌ 图片生成失败 (${modelInfo})\n请稍后重试或换个描述试试`);
+                await sendTextMessage(useCreds!, from, ctxToken, `❌ 图片生成失败 (${modelInfo})\n请稍后重试或换个描述试试`, refMsg);
               }
               stopTypingKeepAlive();
             }
           } catch (genErr: any) {
             Logger.error("[DO] Media generation error", { error: genErr?.message });
-            await sendTextMessage(useCreds!, from, ctxToken, `生成失败: ${genErr?.message || "未知错误"}`);
+            await sendTextMessage(useCreds!, from, ctxToken, `生成失败: ${genErr?.message || "未知错误"}`, refMsg);
             stopTypingKeepAlive();
           }
 
@@ -1528,7 +1525,7 @@ export class ILinkConnectionDO implements DurableObject {
         // 发送回复（自动分段）+ AI 信息
         const aiInfo = `🤖 ${cfg.aiProvider} · ${aiModel}`;
         const fullReply = `${reply}\n\n— ${aiInfo}`;
-        const chunks = await sendTextChunked(useCreds!, from, ctxToken, fullReply);
+        const chunks = await sendTextChunked(useCreds!, from, ctxToken, fullReply, undefined, refMsg);
         replyContent = reply;
         replyAt = new Date().toISOString();
         aiSuccessCount++;
