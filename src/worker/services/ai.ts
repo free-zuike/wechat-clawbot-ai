@@ -279,7 +279,7 @@ export function extractMediaPrompt(text: string, type: "image" | "video"): strin
 
 const DEFAULT_IMAGE_MODEL = "@cf/black-forest-labs/flux-1-schnell";
 const DEFAULT_VIDEO_MODEL = "bytedance/seedance-2.0-fast";
-const DEFAULT_IMAGE_SIZE = "1024x768";
+const DEFAULT_IMAGE_SIZE = "1024x1024";
 const DEFAULT_NUM_FRAMES = 121;
 const DEFAULT_FRAME_RATE = 24;
 
