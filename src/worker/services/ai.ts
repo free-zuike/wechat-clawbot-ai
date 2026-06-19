@@ -247,9 +247,8 @@ export function getDefaultSystemPrompt(): string {
 
 // ========== 图片/视频生成（使用 /命令 触发）==========
 
-// 支持的命令：/画 /image /图片 /图, /视频 /video /vid
-const IMAGE_CMD_PATTERN = /^\/(画|image|图片|图)\s*/i;
-const VIDEO_CMD_PATTERN = /^\/(视频|video|vid|录)\s*/i;
+const IMAGE_CMD_PATTERN = /^\/(图片|pic)\s*/i;
+const VIDEO_CMD_PATTERN = /^\/(视频|video)\s*/i;
 
 export function isImageGenerationRequest(text: string): boolean {
   return IMAGE_CMD_PATTERN.test(text.trim());
