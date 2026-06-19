@@ -245,48 +245,23 @@ export function getDefaultSystemPrompt(): string {
   return DEFAULT_SYSTEM_PROMPT;
 }
 
-// ========== 图片/视频生成（Cloudflare Workers AI）==========
+// ========== 图片/视频生成（使用 /命令 触发）==========
 
-const IMAGE_KEYWORDS = /画|描绘|绘制|生成.*图片|生成.*一张|帮我.*画|给我.*画|画.*一个|画.*一幅|来.*一张|来.*幅|draw|generate image|create image/i;
-const VIDEO_KEYWORDS = /生成.*视频|制作.*视频|做.*视频|帮我.*视频|录.*视频|拍.*视频|generate video|create video|make a video/i;
-const IMAGE_PROMPT_PREFIXES = ["画", "描绘", "绘制", "生成图片", "生成一张", "帮我画", "给我画", "画一个", "画一幅", "画张", "来一张", "来幅"];
-const VIDEO_PROMPT_PREFIXES = ["生成视频", "制作视频", "做一个视频", "帮我做视频", "帮我生成视频", "录一段", "拍一段", "成一个视频", "做个视频", "拍个视频", "录个视频", "生成一个视频"];
+// 支持的命令：/画 /image /图片 /图, /视频 /video /vid
+const IMAGE_CMD_PATTERN = /^\/(画|image|图片|图)\s*/i;
+const VIDEO_CMD_PATTERN = /^\/(视频|video|vid|录)\s*/i;
 
 export function isImageGenerationRequest(text: string): boolean {
-  return IMAGE_KEYWORDS.test(text.trim());
+  return IMAGE_CMD_PATTERN.test(text.trim());
 }
 
 export function isVideoGenerationRequest(text: string): boolean {
-  return VIDEO_KEYWORDS.test(text.trim());
+  return VIDEO_CMD_PATTERN.test(text.trim());
 }
 
 export function extractMediaPrompt(text: string, type: "image" | "video"): string {
-  const prefixes = type === "image" ? IMAGE_PROMPT_PREFIXES : VIDEO_PROMPT_PREFIXES;
-  let prompt = text.trim();
-
-  // 尝试从开头匹配前缀
-  for (const prefix of prefixes) {
-    if (prompt.startsWith(prefix)) {
-      prompt = prompt.slice(prefix.length).trim();
-      break;
-    }
-  }
-
-  // 如果开头没匹配到，尝试在整段文字中查找并提取前缀后面的内容
-  if (prompt === text.trim()) {
-    for (const prefix of prefixes) {
-      const idx = prompt.indexOf(prefix);
-      if (idx !== -1) {
-        prompt = prompt.slice(idx + prefix.length).trim();
-        break;
-      }
-    }
-  }
-
-  // 移除开头的量词：一个、一幅、一张、一段 等
-  prompt = prompt.replace(/^(一个|一幅|一张|一段)/, "").trim();
-  // 移除结尾的标点和多余文字
-  prompt = prompt.replace(/[。！？.!?,，]+$/, "").trim();
+  const pattern = type === "image" ? IMAGE_CMD_PATTERN : VIDEO_CMD_PATTERN;
+  const prompt = text.trim().replace(pattern, "").trim();
   return prompt || text.trim();
 }
 
@@ -296,7 +271,7 @@ const DEFAULT_IMAGE_SIZE = "1024x768";
 const DEFAULT_NUM_FRAMES = 121;
 const DEFAULT_FRAME_RATE = 24;
 
-/** 从用户文本中解析图片尺寸，如 "512x512"、"1024*768"、"正方形" 等 */
+/** 从用户文本中解析图片尺寸，如 "/画 512x512 赛博朋克" */
 export function extractImageSize(text: string): string | undefined {
   // 匹配 WxH 或 W*H 格式
   const sizeMatch = text.match(/(\d{2,4})\s*[x×*]\s*(\d{2,4})/i);
@@ -314,7 +289,7 @@ export function extractImageSize(text: string): string | undefined {
   return undefined;
 }
 
-/** 从用户文本中解析视频时长（秒），如 "10秒"、"15s"、"长一点" 等 */
+/** 从用户文本中解析视频时长（秒），如 "/视频 10秒 赛博朋克" */
 export function extractVideoDuration(text: string): { numFrames: number; frameRate: number } | undefined {
   // 匹配数字+秒/s
   const durationMatch = text.match(/(\d+(?:\.\d+)?)\s*(?:秒|s|second)/i);
