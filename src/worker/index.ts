@@ -170,31 +170,39 @@ export default {
           Logger.info("[queue] video_check status", { taskId, status: statusData.status, progress: statusData.progress });
 
           if (statusData.status === "completed") {
-            // 视频完成，下载并发送
+            // 视频完成
             const videoUrl = statusData.remixed_from_video_id || statusData.url;
             if (!videoUrl) {
               Logger.error("[queue] video_check completed but no URL", { data: JSON.stringify(statusData).slice(0, 200) });
               continue;
             }
 
-            // 下载视频并发送到微信
             const doId = env.ILINK_CONNECTION.idFromName("main");
             const doStub = env.ILINK_CONNECTION.get(doId);
-            try {
-              await doStub.fetch(new Request("http://localhost/send-video", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ videoUrl, toUserId: msg.body.toUserId, contextToken: msg.body.contextToken, accountId: msg.body.accountId, source }),
-              }));
-              // 标记完成
-              await doStub.fetch(new Request("http://localhost/store-pending-video", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ taskId, status: "completed" }),
-              }));
-              Logger.info("[queue] Video sent to WeChat", { taskId });
-            } catch (e: any) {
-              Logger.error("[queue] Video send failed", { error: e?.message, taskId });
+
+            if (source !== "chat" && msg.body.toUserId && msg.body.contextToken) {
+              // 微信来源：发送到微信
+              try {
+                await doStub.fetch(new Request("http://localhost/send-video", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ videoUrl, toUserId: msg.body.toUserId, contextToken: msg.body.contextToken, accountId: msg.body.accountId, model, provider, prompt, source }),
+                }));
+                Logger.info("[queue] Video sent to WeChat", { taskId });
+              } catch (e: any) {
+                Logger.error("[queue] Video send failed", { error: e?.message, taskId });
+              }
+            } else {
+              // AI测试来源：广播到 WebSocket
+              try {
+                await doStub.fetch(new Request("http://localhost/broadcast-image", {
+                  method: "POST",
+                  body: JSON.stringify({ imageData: videoUrl, model, provider, source }),
+                }));
+                Logger.info("[queue] Video broadcasted to WebSocket", { taskId });
+              } catch (e: any) {
+                Logger.error("[queue] Video broadcast failed", { error: e?.message, taskId });
+              }
             }
           } else if (statusData.status === "failed") {
             Logger.error("[queue] Video generation failed", { taskId, error: JSON.stringify(statusData.error).slice(0, 200) });
