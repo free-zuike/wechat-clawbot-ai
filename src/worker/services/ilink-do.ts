@@ -993,17 +993,16 @@ export class ILinkConnectionDO implements DurableObject {
                 videoUrl, taskId
               );
             }
-            // 非 chat 来源才广播到 WebSocket（管理后台显示）
-            if (taskSource !== "chat") {
-              this.broadcastToWebSockets({
-                type: "media_generated",
-                mediaType: "video",
-                url: videoUrl,
-                model: task.model,
-                provider: task.provider,
-                prompt: task.prompt,
-              });
-            }
+            // 广播到 WebSocket（管理后台显示），chat 来源的视频也广播
+            this.broadcastToWebSockets({
+              type: "media_generated",
+              mediaType: "video",
+              url: videoUrl,
+              model: task.model,
+              provider: task.provider,
+              prompt: task.prompt,
+              source: taskSource || undefined,
+            });
             Logger.info("[DO] Video completed", { taskId, url: videoUrl.slice(0, 80), sentToWeChat: sentSuccessfully, source: taskSource });
             // 如果发送失败（下载 502 等），什么也不做，下次 cron 继续
           } else if (taskFailed) {
@@ -1015,12 +1014,17 @@ export class ILinkConnectionDO implements DurableObject {
               await sendTextMessage(creds, toUserId, contextToken, `❌ 视频生成失败 (${modelInfo})\n请稍后重试或换个描述试试`).catch(() => {});
             }
             if (taskSource !== "chat") {
-              this.broadcastToWebSockets({
-                type: "media_error",
-                message: `视频生成失败 (${task.provider} · ${task.model})`,
-                model: task.model,
-                provider: task.provider,
-              });
+              if (creds && toUserId && contextToken) {
+                await sendTextMessage(creds, toUserId, contextToken, `❌ 视频生成失败 (${modelInfo})\n请稍后重试或换个描述试试`).catch(() => {});
+              }
+            }
+            this.broadcastToWebSockets({
+              type: "media_error",
+              message: `视频生成失败 (${task.provider} · ${task.model})`,
+              model: task.model,
+              provider: task.provider,
+              source: taskSource || undefined,
+            });
             }
             Logger.error("[DO] Video generation failed", { taskId });
           }
@@ -1037,8 +1041,8 @@ export class ILinkConnectionDO implements DurableObject {
   // ========== 广播图片到 WebSocket（由 Queue 消费者调用）==========
   private async handleBroadcastImage(request: Request): Promise<Response> {
     try {
-      const body = await request.json() as { imageData: string | null; model?: string; provider?: string; error?: boolean; message?: string };
-      const { imageData, model, provider, error: isError, message: errorMsg } = body;
+      const body = await request.json() as { imageData: string | null; model?: string; provider?: string; error?: boolean; message?: string; source?: string };
+      const { imageData, model, provider, error: isError, message: errorMsg, source } = body;
 
       // 错误通知（图片/视频生成失败）
       if (isError) {
@@ -1047,6 +1051,7 @@ export class ILinkConnectionDO implements DurableObject {
           message: errorMsg || "生成失败",
           model,
           provider,
+          source,
         });
         Logger.info("[DO] Error broadcasted to WebSocket", { errorMsg });
         return new Response(JSON.stringify({ success: true }), {
@@ -1067,6 +1072,7 @@ export class ILinkConnectionDO implements DurableObject {
         url: imageData,
         model: model,
         provider: provider,
+        source,
       });
 
       Logger.info("[DO] Image broadcasted to WebSocket");

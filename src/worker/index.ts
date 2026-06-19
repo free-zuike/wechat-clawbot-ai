@@ -71,27 +71,23 @@ export default {
         if (type === "image_generation") {
           const { generateImage } = await import("./services/ai");
           const imageData = await generateImage(env.AI, prompt, model, provider, baseUrl, apiKey);
-          if (imageData) {
-            if (!isFromChat) {
+            if (imageData) {
               const doId = env.ILINK_CONNECTION.idFromName("main");
               const doStub = env.ILINK_CONNECTION.get(doId);
               await doStub.fetch(new Request("http://localhost/broadcast-image", {
                 method: "POST",
-                body: JSON.stringify({ imageData: typeof imageData === "string" ? imageData : null, model, provider }),
+                body: JSON.stringify({ imageData: typeof imageData === "string" ? imageData : null, model, provider, source }),
               }));
-            }
-            Logger.info("[queue] Image generated" + (isFromChat ? " (chat, no broadcast)" : " and broadcast"));
-          } else {
-            Logger.error("[queue] Image generation returned null");
-            if (!isFromChat) {
+              Logger.info("[queue] Image generated" + (isFromChat ? " (chat)" : " and broadcast"));
+            } else {
+              Logger.error("[queue] Image generation returned null");
               const doId = env.ILINK_CONNECTION.idFromName("main");
               const doStub = env.ILINK_CONNECTION.get(doId);
               await doStub.fetch(new Request("http://localhost/broadcast-image", {
                 method: "POST",
-                body: JSON.stringify({ error: true, message: `图片生成失败 (${provider} · ${model})`, model, provider }),
+                body: JSON.stringify({ error: true, message: `图片生成失败 (${provider} · ${model})`, model, provider, source }),
               }));
             }
-          }
         } else if (type === "video_generation") {
           // 检查必要的配置参数
           if (!baseUrl || !apiKey) {

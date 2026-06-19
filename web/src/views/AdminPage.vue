@@ -220,11 +220,13 @@ const pollResult = ref(""); const isPolling = ref(false);
 const wsConnected = ref(false); const wsMessages = ref<Array<{ type: string; data: any }>>([]);
 let ws: WebSocket | null = null; let wsRetryCount = 0;
 
-// 合并实时消息：将 media_generated 附加到相邻的 message 上
+// 合并实时消息：将 media_generated 附加到相邻的 message 上，跳过 chat 来源
 const mergedMessages = computed(() => {
   const result: Array<{ type: string; data: any; _media?: { url: string; mediaType: string; model?: string; provider?: string }; _error?: string }> = [];
   for (let i = 0; i < wsMessages.value.length; i++) {
     const msg = wsMessages.value[i];
+    // AI测试来源的媒体/错误不显示在实时消息区
+    if ((msg.type === "media_generated" || msg.type === "media_error") && msg.source === "chat") continue;
     if (msg.type === "media_generated" && msg.url) {
       // 向前合并：如果前一条是 message，附加到前一条
       if (result.length > 0 && result[result.length - 1].type === "message" && result[result.length - 1].data?.replyContent) {
@@ -449,21 +451,23 @@ function connectWebSocket() {
       if (msg.type === "connected") return;
       wsMessages.value.push(msg);
       if (wsMessages.value.length > 200) wsMessages.value.shift();
-      // Queue 生成的图片/视频 → 添加到 AI 测试聊天区
+      // Queue 生成的图片/视频 → 添加到 AI 测试聊天区（chat 来源）或实时消息区（微信来源）
       if (msg.type === "media_generated" && msg.url) {
-        const icon = msg.mediaType === "video" ? "🎬" : "🎨";
-        const modelInfo = `${msg.provider || "unknown"} · ${msg.model || "unknown"}`;
-        chatMessages.value.push({
-          role: "b",
-          text: `${icon} ${modelInfo}\n\n${msg.mediaType === "video" ? "视频已生成！" : "图片已生成！"}\n\n${msg.mediaType === "video" ? `<video src="${msg.url}" controls style="max-width:100%;border-radius:8px"></video>` : `![生成的图片](${msg.url})`}`,
-        });
+        if (msg.source === "chat") {
+          const icon = msg.mediaType === "video" ? "🎬" : "🎨";
+          const modelInfo = `${msg.provider || "unknown"} · ${msg.model || "unknown"}`;
+          chatMessages.value.push({
+            role: "b",
+            text: `${icon} ${modelInfo}\n\n${msg.mediaType === "video" ? "视频已生成！" : "图片已生成！"}\n\n${msg.mediaType === "video" ? `<video src="${msg.url}" controls style="max-width:100%;border-radius:8px"></video>` : `![生成的图片](${msg.url})`}`,
+          });
+        }
+        // 微信来源的已在 mergedMessages 实时消息区显示
       }
-      // Queue 生成失败 → 添加到 AI 测试聊天区
+      // 生成失败通知
       if (msg.type === "media_error") {
-        chatMessages.value.push({
-          role: "b",
-          text: `❌ ${msg.message || "生成失败"}`,
-        });
+        if (msg.source === "chat") {
+          chatMessages.value.push({ role: "b", text: `❌ ${msg.message || "生成失败"}` });
+        }
       }
     } catch {}
   };
