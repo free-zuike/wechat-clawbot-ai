@@ -150,6 +150,7 @@ export default {
           }
 
           // 查询视频状态
+          await new Promise(r => setTimeout(r, 1000 + Math.random() * 1000)); // 避免短时间大量请求
           let base = (baseUrl || "").replace(/\/+$/, "");
           base = base.replace(/\/v1\/(chat\/completions|images\/generations|videos?\/generations|videos\/?|videos)$/i, "");
           base = base.replace(/\/v1$/, "");
