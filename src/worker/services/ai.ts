@@ -456,7 +456,9 @@ export async function submitVideoTask(
   if (effectiveProvider !== "cloudflare" && baseUrl && apiKey) {
     try {
       const { base, version } = parseApiUrl(baseUrl);
-      const submitUrl = `${base}/${version}/videos`;
+      // 智谱AI用 /videos/generations，其他提供商用 /videos
+      const isZhipu = baseUrl.includes("bigmodel.cn");
+      const submitUrl = isZhipu ? `${base}/${version}/videos/generations` : `${base}/${version}/videos`;
       const resp = await fetch(submitUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },

@@ -101,9 +101,10 @@ export default {
             }));
             continue;
           }
-          // 提交视频生成任务到 Agnes AI
+          // 提交视频生成任务
           const { base: vBase, version: vVer } = parseApiUrl(baseUrl || "");
-          const submitUrl = `${vBase}/${vVer}/videos`;
+          const isZhipu = (baseUrl || "").includes("bigmodel.cn");
+          const submitUrl = isZhipu ? `${vBase}/${vVer}/videos/generations` : `${vBase}/${vVer}/videos`;
           const resp = await fetch(submitUrl, {
             method: "POST",
             headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
