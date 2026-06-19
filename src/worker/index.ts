@@ -84,10 +84,19 @@ export default {
               Logger.error("[queue] Image generation returned null");
               const doId = env.ILINK_CONNECTION.idFromName("main");
               const doStub = env.ILINK_CONNECTION.get(doId);
+              const errMsg = `图片生成失败 (${provider} · ${model})`;
               await doStub.fetch(new Request("http://localhost/broadcast-image", {
                 method: "POST",
-                body: JSON.stringify({ error: true, message: `图片生成失败 (${provider} · ${model})`, model, provider, source }),
+                body: JSON.stringify({ error: true, message: errMsg, model, provider, source }),
               }));
+              // 如果有微信来源信息，也发送错误给用户
+              if (isFromChat && msg.body.toUserId) {
+                await doStub.fetch(new Request("http://localhost/send-text", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ text: `❌ ${errMsg}\n请稍后重试`, toUserId: msg.body.toUserId, contextToken: msg.body.contextToken, accountId: msg.body.accountId }),
+                }));
+              }
             }
         } else if (type === "video_generation") {
           // 检查必要的配置参数

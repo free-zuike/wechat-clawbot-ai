@@ -363,7 +363,12 @@ export async function generateImage(
       if (!resp.ok) {
         const errBody = await resp.text().catch(() => "");
         Logger.error("[ai] Image API error", { status: resp.status, body: errBody.slice(0, 200), url });
-        return null;
+        let errMsg = `图片生成失败 (HTTP ${resp.status})`;
+        try {
+          const parsed = JSON.parse(errBody);
+          errMsg = parsed?.error?.message || errMsg;
+        } catch { errMsg = errBody.slice(0, 100) || errMsg; }
+        throw new Error(errMsg);
       }
       const data = await resp.json() as any;
       const item = data?.data?.[0];
