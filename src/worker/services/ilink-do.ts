@@ -5,7 +5,7 @@
 import { Logger } from "../utils/error";
 import { generateSessionToken } from "../utils";
 import { getUpdates, sendTextMessage, sendTextChunked, sendTypingStatus, extractMessageText, getQRCodeStatus, sendImageMessage, sendVideoMessage, sendImageSimple, uploadAndSendMedia, MessageType, MessageItemType, downloadImageFromCdn } from "./ilink";
-import { callAIWithContext, isImageGenerationRequest, isVideoGenerationRequest, extractMediaPrompt, generateImage, generateVideo, submitVideoTask } from "./ai";
+import { callAIWithContext, isImageGenerationRequest, isVideoGenerationRequest, extractMediaPrompt, extractImageSize, extractVideoDuration, extractUrl, generateImage, generateVideo, submitVideoTask } from "./ai";
 import { sendWebhook } from "./webhook";
 import { clearContextSQLite } from "./context";
 import type { ILinkCredentials, WeixinMessage } from "../types";
@@ -1525,7 +1525,8 @@ export class ILinkConnectionDO implements DurableObject {
               // 异步提交视频任务：先提交 taskId，存到 pending_videos
               // 之后由 checkPendingVideos 轮询完成后发送视频
               startTypingKeepAlive();
-              const result = await submitVideoTask(this.env.AI, mediaPrompt, cfg.aiVideoModel, cfg.aiProvider, cfg.aiBaseUrl, cfg.aiApiKey);
+              const videoParams = extractVideoDuration(text);
+              const result = await submitVideoTask(this.env.AI, mediaPrompt, cfg.aiVideoModel, cfg.aiProvider, cfg.aiBaseUrl, cfg.aiApiKey, videoParams?.numFrames, videoParams?.frameRate);
               const modelInfo = `🤖 ${cfg.aiProvider} · ${cfg.aiVideoModel}`;
               if (result) {
                 if (result.url) {
@@ -1579,7 +1580,8 @@ export class ILinkConnectionDO implements DurableObject {
               stopTypingKeepAlive();
             } else {
               startTypingKeepAlive();
-              const imageData = await generateImage(this.env.AI, mediaPrompt, cfg.aiImageModel, cfg.aiProvider, cfg.aiBaseUrl, cfg.aiApiKey, imageUrl);
+              const imageSize = extractImageSize(text);
+              const imageData = await generateImage(this.env.AI, mediaPrompt, cfg.aiImageModel, cfg.aiProvider, cfg.aiBaseUrl, cfg.aiApiKey, imageUrl, imageSize);
               const modelInfo = `🤖 ${cfg.aiProvider} · ${cfg.aiImageModel}`;
               Logger.info("[DO] Image generation result", { success: !!imageData, type: typeof imageData });
               if (imageData) {

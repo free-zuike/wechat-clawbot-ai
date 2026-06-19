@@ -292,6 +292,49 @@ export function extractMediaPrompt(text: string, type: "image" | "video"): strin
 
 const DEFAULT_IMAGE_MODEL = "@cf/black-forest-labs/flux-1-schnell";
 const DEFAULT_VIDEO_MODEL = "bytedance/seedance-2.0-fast";
+const DEFAULT_IMAGE_SIZE = "1024x768";
+const DEFAULT_NUM_FRAMES = 121;
+const DEFAULT_FRAME_RATE = 24;
+
+/** 从用户文本中解析图片尺寸，如 "512x512"、"1024*768"、"正方形" 等 */
+export function extractImageSize(text: string): string | undefined {
+  // 匹配 WxH 或 W*H 格式
+  const sizeMatch = text.match(/(\d{2,4})\s*[x×*]\s*(\d{2,4})/i);
+  if (sizeMatch) {
+    const w = Math.min(parseInt(sizeMatch[1]), 2048);
+    const h = Math.min(parseInt(sizeMatch[2]), 2048);
+    return `${w}x${h}`;
+  }
+  // 中文关键词
+  if (/正方形|方形/.test(text)) return "1024x1024";
+  if (/横版|宽屏|宽幅/.test(text)) return "1920x1080";
+  if (/竖版|竖屏|手机/.test(text)) return "1080x1920";
+  if (/高清|大图/.test(text)) return "1920x1920";
+  if (/缩略|小图|小/.test(text)) return "512x512";
+  return undefined;
+}
+
+/** 从用户文本中解析视频时长（秒），如 "10秒"、"15s"、"长一点" 等 */
+export function extractVideoDuration(text: string): { numFrames: number; frameRate: number } | undefined {
+  // 匹配数字+秒/s
+  const durationMatch = text.match(/(\d+(?:\.\d+)?)\s*(?:秒|s|second)/i);
+  if (durationMatch) {
+    const seconds = Math.min(Math.max(parseFloat(durationMatch[1]), 1), 30);
+    const fps = 24;
+    return { numFrames: Math.round(seconds * fps), frameRate: fps };
+  }
+  // 中文关键词
+  if (/长一点|长视频/.test(text)) return { numFrames: 24 * 8, frameRate: 24 };
+  if (/短一点|短视频/.test(text)) return { numFrames: 24 * 3, frameRate: 24 };
+  if (/超长/.test(text)) return { numFrames: 24 * 15, frameRate: 24 };
+  return undefined;
+}
+
+/** 从用户文本中提取 URL */
+export function extractUrl(text: string): string | undefined {
+  const urlMatch = text.match(/(https?:\/\/[^\s<>"{}|\\^`\[\]]+)/i);
+  return urlMatch ? urlMatch[1] : undefined;
+}
 
 export async function generateImage(
   aiBinding: any,
@@ -301,9 +344,11 @@ export async function generateImage(
   baseUrl?: string,
   apiKey?: string,
   imageUrl?: string,
+  size?: string,
 ): Promise<Uint8Array | string | null> {
   const imageModel = model || DEFAULT_IMAGE_MODEL;
-  Logger.info("[ai] Generating image", { prompt: prompt.slice(0, 80), model: imageModel, provider: provider || "cloudflare", hasImageRef: !!imageUrl });
+  const imageSize = size || DEFAULT_IMAGE_SIZE;
+  Logger.info("[ai] Generating image", { prompt: prompt.slice(0, 80), model: imageModel, provider: provider || "cloudflare", hasImageRef: !!imageUrl, size: imageSize });
 
   // 非 Cloudflare 提供商（如 Agnes AI）：POST /v1/images/generations
   // Agnes 要求 response_format 放在 extra_body 中，文生图用 return_base64 或 extra_body.response_format
@@ -317,7 +362,7 @@ export async function generateImage(
       const body: any = {
         model: imageModel,
         prompt,
-        size: "1024x768",
+        size: imageSize,
         extra_body: { response_format: "url" },
       };
       // 以图生图：添加 image_url 参数
@@ -411,10 +456,14 @@ export async function submitVideoTask(
   provider?: string,
   baseUrl?: string,
   apiKey?: string,
+  numFrames?: number,
+  frameRate?: number,
 ): Promise<{ taskId: string; videoId?: string; baseUrl: string; provider: string; apiKey: string; model: string; prompt: string; url?: string } | null> {
   const videoModel = model || DEFAULT_VIDEO_MODEL;
   const effectiveProvider = provider || "cloudflare";
-  Logger.info("[ai] Submitting video task", { prompt: prompt.slice(0, 50), model: videoModel, provider: effectiveProvider });
+  const effectiveNumFrames = numFrames || DEFAULT_NUM_FRAMES;
+  const effectiveFrameRate = frameRate || DEFAULT_FRAME_RATE;
+  Logger.info("[ai] Submitting video task", { prompt: prompt.slice(0, 50), model: videoModel, provider: effectiveProvider, numFrames: effectiveNumFrames, frameRate: effectiveFrameRate });
 
   // 非 Cloudflare 提供商（如 Agnes AI）：POST /v1/videos，返回 task_id 和 video_id
   // Agnes 查询结果推荐用 GET /agnesapi?video_id=
@@ -427,7 +476,7 @@ export async function submitVideoTask(
       const resp = await fetch(submitUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
-        body: JSON.stringify({ model: videoModel, prompt, num_frames: 121, frame_rate: 24 }),
+        body: JSON.stringify({ model: videoModel, prompt, num_frames: effectiveNumFrames, frame_rate: effectiveFrameRate }),
       });
       if (!resp.ok) {
         const errBody = await resp.text().catch(() => "");
