@@ -1386,6 +1386,15 @@ export class ILinkConnectionDO implements DurableObject {
       const text = extractMessageText(msg);
       if (!text) return;
 
+      // 提取消息中的图片 URL（用于以图生图）
+      let imageUrl: string | undefined;
+      for (const item of (msg.item_list || [])) {
+        if (item.type === MessageItemType.IMAGE) {
+          imageUrl = item.image_item?.cdn_url || item.image_item?.url;
+          if (imageUrl) break;
+        }
+      }
+
       const from = msg.from_user_id;
       const ctxToken = msg.context_token;
 
@@ -1509,7 +1518,7 @@ export class ILinkConnectionDO implements DurableObject {
               stopTypingKeepAlive();
             } else {
               startTypingKeepAlive();
-              const imageData = await generateImage(this.env.AI, mediaPrompt, cfg.aiImageModel, cfg.aiProvider, cfg.aiBaseUrl, cfg.aiApiKey);
+              const imageData = await generateImage(this.env.AI, mediaPrompt, cfg.aiImageModel, cfg.aiProvider, cfg.aiBaseUrl, cfg.aiApiKey, imageUrl);
               const modelInfo = `🤖 ${cfg.aiProvider} · ${cfg.aiImageModel}`;
               Logger.info("[DO] Image generation result", { success: !!imageData, type: typeof imageData });
               if (imageData) {

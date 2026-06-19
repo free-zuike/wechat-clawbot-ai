@@ -300,27 +300,34 @@ export async function generateImage(
   provider?: string,
   baseUrl?: string,
   apiKey?: string,
+  imageUrl?: string,
 ): Promise<Uint8Array | string | null> {
   const imageModel = model || DEFAULT_IMAGE_MODEL;
-  Logger.info("[ai] Generating image", { prompt: prompt.slice(0, 80), model: imageModel, provider: provider || "cloudflare" });
+  Logger.info("[ai] Generating image", { prompt: prompt.slice(0, 80), model: imageModel, provider: provider || "cloudflare", hasImageRef: !!imageUrl });
 
   // 非 Cloudflare 提供商（如 Agnes AI）：POST /v1/images/generations
   // Agnes 要求 response_format 放在 extra_body 中，文生图用 return_base64 或 extra_body.response_format
+  // 以图生图：传递 image_url 参数
   if (provider && provider !== "cloudflare" && baseUrl && apiKey) {
     try {
       let base = baseUrl.replace(/\/+$/, "");
       base = base.replace(/\/v1\/(chat\/completions|images\/generations|videos?\/generations|videos\/?|videos)$/i, "");
       base = base.replace(/\/v1$/, "");
       const url = base + "/v1/images/generations";
+      const body: any = {
+        model: imageModel,
+        prompt,
+        size: "1024x768",
+        extra_body: { response_format: "url" },
+      };
+      // 以图生图：添加 image_url 参数
+      if (imageUrl) {
+        body.image_url = imageUrl;
+      }
       const resp = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
-        body: JSON.stringify({
-          model: imageModel,
-          prompt,
-          size: "1024x768",
-          extra_body: { response_format: "url" },
-        }),
+        body: JSON.stringify(body),
       });
       if (!resp.ok) {
         const errBody = await resp.text().catch(() => "");
