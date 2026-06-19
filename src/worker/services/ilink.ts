@@ -314,7 +314,6 @@ export async function sendTextMessage(
   toUserId: string,
   contextToken: string,
   text: string,
-  refMsg?: { title: string; messageItem?: MessageItem },
 ): Promise<void> {
   const msg: WeixinMessage = {
     from_user_id: creds.userId || "",
@@ -325,14 +324,6 @@ export async function sendTextMessage(
     context_token: contextToken,
     item_list: [{ type: MessageItemType.TEXT, text_item: { text } }],
   };
-
-  // 消息引用：引用用户的原始消息
-  if (refMsg) {
-    msg.ref_msg = {
-      title: refMsg.title,
-      ...(refMsg.messageItem ? { message_item: refMsg.messageItem } : {}),
-    };
-  }
 
   Logger.info(`[iLink] Sending message`, {
     toUserId: toUserId.slice(0, 12),
@@ -387,10 +378,9 @@ export async function sendTextChunked(
   contextToken: string,
   text: string,
   maxLength: number = 4000,
-  refMsg?: { title: string; messageItem?: MessageItem },
 ): Promise<number> {
   if (text.length <= maxLength) {
-    await sendTextMessage(creds, toUserId, contextToken, text, refMsg);
+    await sendTextMessage(creds, toUserId, contextToken, text);
     return 1;
   }
 
@@ -399,9 +389,8 @@ export async function sendTextChunked(
     chunks.push(text.slice(i, i + maxLength));
   }
 
-  for (let i = 0; i < chunks.length; i++) {
-    // 只有第一段消息带引用，避免重复引用
-    await sendTextMessage(creds, toUserId, contextToken, chunks[i], i === 0 ? refMsg : undefined);
+  for (const chunk of chunks) {
+    await sendTextMessage(creds, toUserId, contextToken, chunk);
   }
 
   Logger.info(`[iLink] Message chunked`, { total: text.length, chunks: chunks.length });
@@ -417,7 +406,6 @@ export async function sendMediaMessage(
   toUserId: string,
   contextToken: string,
   item: MessageItem,
-  refMsg?: { title: string; messageItem?: MessageItem },
 ): Promise<void> {
   // 生成唯一消息ID
   const messageId = generateClientId();
@@ -433,7 +421,6 @@ export async function sendMediaMessage(
     message_state: MessageState.FINISH,
     context_token: contextToken,
     item_list: [item],
-    ...(refMsg ? { ref_msg: { title: refMsg.title, ...(refMsg.messageItem ? { message_item: refMsg.messageItem } : {}) } } : {}),
   };
 
   // 检查 media 对象结构
@@ -534,7 +521,6 @@ export async function sendImageSimple(
   toUserId: string,
   contextToken: string,
   imageUrl: string,
-  refMsg?: { title: string; messageItem?: MessageItem },
 ): Promise<void> {
   Logger.info("[iLink] sendImageSimple", { toUserId, imageUrl: imageUrl.substring(0, 80) });
   
@@ -544,7 +530,7 @@ export async function sendImageSimple(
   const fileBytes = new Uint8Array(await imgResp.arrayBuffer());
   
   // 2. 使用统一的 uploadAndSendMedia 上传并发送
-  await uploadAndSendMedia(creds, toUserId, contextToken, MessageItemType.IMAGE, "generated.png", fileBytes, "image/png", refMsg);
+  await uploadAndSendMedia(creds, toUserId, contextToken, MessageItemType.IMAGE, "generated.png", fileBytes, "image/png");
   
   Logger.info("[iLink] sendImageSimple: success");
 }
@@ -568,7 +554,6 @@ export async function uploadAndSendMedia(
   fileName: string,
   fileData: ArrayBuffer | Uint8Array,
   contentType?: string,
-  refMsg?: { title: string; messageItem?: MessageItem },
 ): Promise<void> {
   const fileBytes = fileData instanceof Uint8Array ? fileData : new Uint8Array(fileData);
   const mediaType = toUploadMediaType(messageItemType);
@@ -602,7 +587,7 @@ export async function uploadAndSendMedia(
     });
 
     // 3. 发送消息
-    await sendMediaMessage(creds, toUserId, contextToken, item, refMsg);
+    await sendMediaMessage(creds, toUserId, contextToken, item);
     Logger.info("[iLink] [uploadAndSendMedia] Media sent via CDN upload", {
       filekey: uploaded.filekey,
       fileSize: uploaded.fileSize,
@@ -727,11 +712,10 @@ export async function sendVideoMessage(
   contextToken: string,
   videoUrl: string,
   _apiKey?: string,
-  refMsg?: { title: string; messageItem?: MessageItem },
 ): Promise<void> {
   // iLink CDN 不接受外部 URL，必须先下载再上传
   // 失败时不降级，让上层（checkPendingVideos / 消息处理）决定跨 cron 重试
-  await sendFileFromUrl(creds, toUserId, contextToken, videoUrl, MessageItemType.VIDEO, "generated_video.mp4", _apiKey, refMsg);
+  await sendFileFromUrl(creds, toUserId, contextToken, videoUrl, MessageItemType.VIDEO, "generated_video.mp4", _apiKey);
   Logger.info("[iLink] Video message sent (download + CDN upload)");
 }
 
@@ -743,7 +727,6 @@ export async function sendFileFromUrl(
   fileType: number,
   fileName: string,
   _apiKey?: string,
-  refMsg?: { title: string; messageItem?: MessageItem },
 ): Promise<void> {
   // 下载文件（带 API Key 认证，部分提供商的媒体 URL 需要鉴权）
   // 媒体刚生成时 CDN 可能短暂不可用（502），重试几次
@@ -787,7 +770,7 @@ export async function sendFileFromUrl(
   }
 
   const buffer = new Uint8Array(await resp.arrayBuffer());
-  await uploadAndSendMedia(creds, toUserId, contextToken, fileType, fileName, buffer, undefined, refMsg);
+  await uploadAndSendMedia(creds, toUserId, contextToken, fileType, fileName, buffer);
 }
 
 // ========== 工具 ==========
