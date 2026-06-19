@@ -55,9 +55,14 @@ async function callOpenAICompatible(params: {
   maxTokens: number;
   temperature?: number;
 }): Promise<string> {
-  let base = params.baseUrl.replace(/\/+$/, "");
-  base = base.replace(/\/v1\/(chat\/completions|images\/generations|videos?\/generations|videos\/?|videos)$/i, "");
-  base = base.replace(/\/v1$/, "");
+  let base = params.baseUrl.replace(/[\s/]+$/, "").trim();
+  // 移除已有的 API 路径（支持 /v1/, /v2/, /v3/, /v4/ 等）
+  const apiPatterns = ["/chat/completions", "/images/generations", "/videos/generations", "/videos"];
+  for (const pattern of apiPatterns) {
+    const regex = new RegExp(`/v\\d+${pattern.replace(/\//g, "\\/")}$`, "i");
+    base = base.replace(regex, "");
+  }
+  base = base.replace(/\/v\d+$/, "");
   const url = base + "/v1/chat/completions";
 
   const resp = await fetch(url, {
@@ -329,9 +334,13 @@ export async function generateImage(
   // 以图生图：传递 image_url 参数
   if (provider && provider !== "cloudflare" && baseUrl && apiKey) {
     try {
-      let base = baseUrl.replace(/\/+$/, "");
-      base = base.replace(/\/v1\/(chat\/completions|images\/generations|videos?\/generations|videos\/?|videos)$/i, "");
-      base = base.replace(/\/v1$/, "");
+      let base = baseUrl.replace(/[\s/]+$/, "").trim();
+      const apiPatterns = ["/chat/completions", "/images/generations", "/videos/generations", "/videos"];
+      for (const pattern of apiPatterns) {
+        const regex = new RegExp(`/v\\d+${pattern.replace(/\//g, "\\/")}$`, "i");
+        base = base.replace(regex, "");
+      }
+      base = base.replace(/\/v\d+$/, "");
       const url = base + "/v1/images/generations";
       const body: any = {
         model: imageModel,
@@ -443,9 +452,13 @@ export async function submitVideoTask(
   // Agnes 查询结果推荐用 GET /agnesapi?video_id=
   if (effectiveProvider !== "cloudflare" && baseUrl && apiKey) {
     try {
-      let base = baseUrl.replace(/\/+$/, "");
-      base = base.replace(/\/v1\/(chat\/completions|images\/generations|videos?\/generations|videos\/?|videos)$/i, "");
-      base = base.replace(/\/v1$/, "");
+      let base = baseUrl.replace(/[\s/]+$/, "").trim();
+      const apiPatterns = ["/chat/completions", "/images/generations", "/videos/generations", "/videos"];
+      for (const pattern of apiPatterns) {
+        const regex = new RegExp(`/v\\d+${pattern.replace(/\//g, "\\/")}$`, "i");
+        base = base.replace(regex, "");
+      }
+      base = base.replace(/\/v\d+$/, "");
       const submitUrl = base + "/v1/videos";
       const resp = await fetch(submitUrl, {
         method: "POST",
