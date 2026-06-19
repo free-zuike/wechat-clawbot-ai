@@ -48,6 +48,8 @@ export class ILinkConnectionDO implements DurableObject {
     lastPollAt: string;
     pollLoopRunning: boolean;
   }> = new Map();
+  // 缓存每个用户最近发送的图片 URL（用于以图生图，有效期 60 秒）
+  private recentImageUrls: Map<string, { url: string; timestamp: number }> = new Map();
   private kv: KVNamespace | null = null;
   private websockets: Set<WebSocket> = new Set();
   private runtimeStats = { polls: 0, handled: 0, aiCalls: 0, aiFails: 0, lastLatencyMs: 0 };
@@ -1384,9 +1386,10 @@ export class ILinkConnectionDO implements DurableObject {
       if (msg.message_type === undefined && !msg.from_user_id) return;
 
       const text = extractMessageText(msg);
-      if (!text) return;
+      const from = msg.from_user_id;
+      const ctxToken = msg.context_token;
 
-      // 提取消息中的图片 URL（用于以图生图）
+      // 提取消息中的图片 URL
       let imageUrl: string | undefined;
       for (const item of (msg.item_list || [])) {
         if (item.type === MessageItemType.IMAGE) {
@@ -1395,8 +1398,20 @@ export class ILinkConnectionDO implements DurableObject {
         }
       }
 
-      const from = msg.from_user_id;
-      const ctxToken = msg.context_token;
+      // 纯图片消息（无文字）：缓存 URL，供后续以图生图使用
+      if (!text && imageUrl && from) {
+        const now = Date.now();
+        this.recentImageUrls.set(from, { url: imageUrl, timestamp: now });
+        // 清理 60 秒前的旧缓存
+        for (const [key, val] of this.recentImageUrls) {
+          if (now - val.timestamp > 60_000) this.recentImageUrls.delete(key);
+        }
+        Logger.info("[DO] Cached image URL for image-to-image", { from: from.slice(0, 10), url: imageUrl.slice(0, 80) });
+        await this.markMessageProcessed(`${useCreds?.accountId || "default"}:${this.generateMessageId(msg, imageUrl)}`);
+        return;
+      }
+
+      if (!text) return;
 
       // 引用功能暂不可用，iLink API 的 sendmessage 不支持扁平格式
       if (!from || !ctxToken) return;
@@ -1437,7 +1452,15 @@ export class ILinkConnectionDO implements DurableObject {
           const isVideo = isVideoGenerationRequest(text);
           const mediaType = isVideo ? "视频" : "图片";
           const mediaPrompt = extractMediaPrompt(text, isVideo ? "video" : "image");
-          Logger.info(`[DO] ${mediaType} generation request detected`, { from, prompt: mediaPrompt.slice(0, 50), provider: cfg.aiProvider, hasAIBinding: !!this.env.AI, hasBaseUrl: !!cfg.aiBaseUrl, hasApiKey: !!cfg.aiApiKey, imageModel: cfg.aiImageModel });
+          // 以图生图：如果当前消息没有图片，尝试从缓存获取用户最近发送的图片
+          if (!imageUrl && from) {
+            const cached = this.recentImageUrls.get(from);
+            if (cached && Date.now() - cached.timestamp < 60_000) {
+              imageUrl = cached.url;
+              Logger.info("[DO] Using cached image for image-to-image", { from: from.slice(0, 10), url: imageUrl.slice(0, 80) });
+            }
+          }
+          Logger.info(`[DO] ${mediaType} generation request detected`, { from, prompt: mediaPrompt.slice(0, 50), provider: cfg.aiProvider, hasAIBinding: !!this.env.AI, hasBaseUrl: !!cfg.aiBaseUrl, hasApiKey: !!cfg.aiApiKey, imageModel: cfg.aiImageModel, hasImageRef: !!imageUrl });
 
           if (!this.env.AI) {
             Logger.error("[DO] AI binding not available for image/video generation");
