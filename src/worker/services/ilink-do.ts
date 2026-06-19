@@ -4,7 +4,7 @@
 
 import { Logger } from "../utils/error";
 import { generateSessionToken } from "../utils";
-import { getUpdates, sendTextMessage, sendTextChunked, sendTypingStatus, extractMessageText, getQRCodeStatus, sendImageMessage, sendVideoMessage, sendImageSimple, uploadAndSendMedia, MessageType, MessageItemType } from "./ilink";
+import { getUpdates, sendTextMessage, sendTextChunked, sendTypingStatus, extractMessageText, getQRCodeStatus, sendImageMessage, sendVideoMessage, sendImageSimple, uploadAndSendMedia, MessageType, MessageItemType, downloadImageFromCdn } from "./ilink";
 import { callAIWithContext, isImageGenerationRequest, isVideoGenerationRequest, extractMediaPrompt, generateImage, generateVideo, submitVideoTask } from "./ai";
 import { sendWebhook } from "./webhook";
 import { clearContextSQLite } from "./context";
@@ -1389,8 +1389,9 @@ export class ILinkConnectionDO implements DurableObject {
       const from = msg.from_user_id;
       const ctxToken = msg.context_token;
 
-      // 提取消息中的图片 URL 和是否有真实文字
+      // 提取消息中的图片信息和是否有真实文字
       let imageUrl: string | undefined;
+      let imageCdnParams: { encryptQueryParam: string; aesKey: string } | undefined;
       let hasRealText = false;
       for (const item of (msg.item_list || [])) {
         Logger.info("[DO] Message item", {
@@ -1398,27 +1399,51 @@ export class ILinkConnectionDO implements DurableObject {
           hasImageItem: !!item.image_item,
           cdnUrl: item.image_item?.cdn_url?.slice(0, 80),
           imgUrl: item.image_item?.url?.slice(0, 80),
+          hasMedia: !!item.image_item?.media,
           hasTextItem: !!item.text_item,
           text: item.text_item?.text?.slice(0, 20),
         });
         if (item.type === MessageItemType.IMAGE) {
+          // 优先使用直接 URL
           imageUrl = item.image_item?.cdn_url || item.image_item?.url;
+          // 如果没有直接 URL，缓存 CDN 加密参数用于后续下载
+          if (!imageUrl && item.image_item?.media?.encrypt_query_param && item.image_item?.media?.aes_key) {
+            imageCdnParams = {
+              encryptQueryParam: item.image_item.media.encrypt_query_param,
+              aesKey: item.image_item.media.aes_key,
+            };
+          }
         }
         if (item.type === MessageItemType.TEXT && item.text_item?.text) {
           hasRealText = true;
         }
       }
 
-      // 纯图片消息（无文字 item）：缓存 URL，供后续以图生图使用
-      if (imageUrl && !hasRealText && from) {
+      // 纯图片消息（无文字 item）：缓存图片信息供后续以图生图使用
+      if ((imageUrl || imageCdnParams) && !hasRealText && from) {
         const now = Date.now();
-        this.recentImageUrls.set(from, { url: imageUrl, timestamp: now });
+        if (imageUrl) {
+          this.recentImageUrls.set(from, { url: imageUrl, timestamp: now });
+        } else if (imageCdnParams) {
+          // CDN 加密图片：尝试下载后缓存为 base64 data URL
+          const downloaded = await downloadImageFromCdn(imageCdnParams.encryptQueryParam, imageCdnParams.aesKey);
+          if (downloaded) {
+            // 转为 base64 data URL 传给 Agnes
+            let binary = "";
+            for (let i = 0; i < downloaded.length; i++) binary += String.fromCharCode(downloaded[i]);
+            const dataUrl = `data:image/png;base64,${btoa(binary)}`;
+            this.recentImageUrls.set(from, { url: dataUrl, timestamp: now });
+            Logger.info("[DO] Cached CDN image as base64 for image-to-image", { from: from.slice(0, 10), size: downloaded.length });
+          }
+        }
         // 清理 60 秒前的旧缓存
         for (const [key, val] of this.recentImageUrls) {
           if (now - val.timestamp > 60_000) this.recentImageUrls.delete(key);
         }
-        Logger.info("[DO] Cached image URL for image-to-image", { from: from.slice(0, 10), url: imageUrl.slice(0, 80) });
-        await this.markMessageProcessed(`${useCreds?.accountId || "default"}:${this.generateMessageId(msg, imageUrl)}`);
+        if (imageUrl) {
+          Logger.info("[DO] Cached image URL for image-to-image", { from: from.slice(0, 10), url: imageUrl.slice(0, 80) });
+        }
+        await this.markMessageProcessed(`${useCreds?.accountId || "default"}:${this.generateMessageId(msg, imageUrl || "cdn-image")}`);
         return;
       }
 

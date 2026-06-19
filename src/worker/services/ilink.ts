@@ -535,6 +535,52 @@ export async function sendImageSimple(
   Logger.info("[iLink] sendImageSimple: success");
 }
 
+// ========== CDN 图片下载（用于以图生图）==========
+/**
+ * 从 iLink CDN 下载图片（使用 encrypt_query_param 和 aes_key）
+ * @returns 图片的 Uint8Array 数据，失败返回 null
+ */
+export async function downloadImageFromCdn(
+  encryptQueryParam: string,
+  aesKeyBase64: string,
+): Promise<Uint8Array | null> {
+  const CDN_DOWNLOAD_BASE = "https://novac2c.cdn.weixin.qq.com/c2c";
+  try {
+    // 构造下载 URL
+    const downloadUrl = `${CDN_DOWNLOAD_BASE}/download?encrypted_query_param=${encodeURIComponent(encryptQueryParam)}`;
+    Logger.info("[iLink] downloadImageFromCdn", { url: downloadUrl.substring(0, 100) });
+    
+    const resp = await fetch(downloadUrl, { signal: AbortSignal.timeout(30000) });
+    if (!resp.ok) {
+      Logger.warn("[iLink] downloadImageFromCdn failed", { status: resp.status });
+      return null;
+    }
+    
+    const encryptedBytes = new Uint8Array(await resp.arrayBuffer());
+    Logger.info("[iLink] downloadImageFromCdn: downloaded", { size: encryptedBytes.length });
+    
+    // AES-CBC 解密（使用 aes_key）
+    const keyBytes = base64ToBytes(aesKeyBase64);
+    const iv = new Uint8Array(16); // CBC 模式使用全零 IV
+    const cryptoKey = await crypto.subtle.importKey("raw", keyBytes, { name: "AES-CBC" }, false, ["decrypt"]);
+    const decrypted = await crypto.subtle.decrypt({ name: "AES-CBC", iv }, cryptoKey, encryptedBytes.buffer);
+    
+    const imageBytes = new Uint8Array(decrypted);
+    Logger.info("[iLink] downloadImageFromCdn: decrypted", { size: imageBytes.length });
+    return imageBytes;
+  } catch (e: any) {
+    Logger.warn("[iLink] downloadImageFromCdn error", { error: e?.message });
+    return null;
+  }
+}
+
+function base64ToBytes(base64: string): Uint8Array {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
 // ========== 高级媒体发送：先上传到 CDN，再发送 CDNMedia 引用消息 ==========
 /**
  * 上传媒体到 iLink CDN 并发送消息
