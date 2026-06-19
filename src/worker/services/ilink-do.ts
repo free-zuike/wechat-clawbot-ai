@@ -559,6 +559,29 @@ export class ILinkConnectionDO implements DurableObject {
 
       const sessionToken = generateSessionToken();
 
+      // 自动发送欢迎消息和命令说明
+      try {
+        const welcomeMsg = `👋 欢迎使用爪爪 AI 助手！
+
+📝 可用命令：
+• /图片 <描述> - 生成图片
+• /image <描述> - 生成图片
+• /视频 <描述> - 生成视频
+• /video <描述> - 生成视频
+• /reset - 重置对话
+
+💡 示例：
+/图片 赛博朋克城市
+/video 10秒 海浪拍岸
+
+🎨 以图生图：
+先发一张图片，60秒内发送 /图片 <描述> 即可基于图片生成`;
+        await sendTextMessage(creds, userId, syncBuf || "", welcomeMsg);
+        Logger.info("[DO] Welcome message sent", { userId });
+      } catch (e: any) {
+        Logger.warn("[DO] Failed to send welcome message", { error: e?.message });
+      }
+
       Logger.info("[DO] Account saved", { accountId, totalAccounts: this.accounts.size });
       return new Response(JSON.stringify({ ok: true, sessionToken, accountId, totalAccounts: this.accounts.size }), {
         headers: { "Content-Type": "application/json" },

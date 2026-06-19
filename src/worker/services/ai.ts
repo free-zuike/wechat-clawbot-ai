@@ -247,7 +247,7 @@ export function getDefaultSystemPrompt(): string {
 
 // ========== 图片/视频生成（使用 /命令 触发）==========
 
-const IMAGE_CMD_PATTERN = /^\/(图片|pic)\s*/i;
+const IMAGE_CMD_PATTERN = /^\/(图片|image)\s*/i;
 const VIDEO_CMD_PATTERN = /^\/(视频|video)\s*/i;
 
 export function isImageGenerationRequest(text: string): boolean {
