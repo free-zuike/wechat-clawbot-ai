@@ -133,7 +133,106 @@ export default {
             body: JSON.stringify({ taskId, videoId, prompt, model, provider, baseUrl, apiKey, source }),
           }));
 
+          // 调度首次检查：30 秒后通过 Queue 检查视频状态
+          await env.CLAWBOT_QUEUE.send({
+            type: "video_check",
+            taskId, videoId, prompt, model, provider, baseUrl, apiKey, source,
+          }, { delaySeconds: 30 });
+
           Logger.info("[queue] Video task submitted and stored", { taskId, videoId });
+
+        } else if (type === "video_check") {
+          // 轮询视频状态
+          const { taskId, videoId } = msg.body;
+          if (!taskId && !videoId) {
+            Logger.error("[queue] video_check missing taskId/videoId");
+            continue;
+          }
+
+          // 查询视频状态
+          let base = (baseUrl || "").replace(/\/+$/, "");
+          base = base.replace(/\/v1\/(chat\/completions|images\/generations|videos?\/generations|videos\/?|videos)$/i, "");
+          base = base.replace(/\/v1$/, "");
+          const checkUrl = videoId
+            ? `${base}/agnesapi?video_id=${encodeURIComponent(videoId)}`
+            : `${base}/v1/videos/${taskId}`;
+          const checkResp = await fetch(checkUrl, {
+            headers: { "Authorization": `Bearer ${apiKey}` },
+          });
+
+          if (!checkResp.ok) {
+            Logger.error("[queue] video_check status query failed", { status: checkResp.status, taskId });
+            continue;
+          }
+
+          const statusData = await checkResp.json() as any;
+          Logger.info("[queue] video_check status", { taskId, status: statusData.status, progress: statusData.progress });
+
+          if (statusData.status === "completed") {
+            // 视频完成，下载并发送
+            const videoUrl = statusData.remixed_from_video_id || statusData.url;
+            if (!videoUrl) {
+              Logger.error("[queue] video_check completed but no URL", { data: JSON.stringify(statusData).slice(0, 200) });
+              continue;
+            }
+
+            // 下载视频并发送到微信
+            const doId = env.ILINK_CONNECTION.idFromName("main");
+            const doStub = env.ILINK_CONNECTION.get(doId);
+            try {
+              await doStub.fetch(new Request("http://localhost/send-video", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ videoUrl, toUserId: msg.body.toUserId, contextToken: msg.body.contextToken, accountId: msg.body.accountId, source }),
+              }));
+              // 标记完成
+              await doStub.fetch(new Request("http://localhost/store-pending-video", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ taskId, status: "completed" }),
+              }));
+              Logger.info("[queue] Video sent to WeChat", { taskId });
+            } catch (e: any) {
+              Logger.error("[queue] Video send failed", { error: e?.message, taskId });
+            }
+          } else if (statusData.status === "failed") {
+            Logger.error("[queue] Video generation failed", { taskId, error: JSON.stringify(statusData.error).slice(0, 200) });
+            const doId = env.ILINK_CONNECTION.idFromName("main");
+            const doStub = env.ILINK_CONNECTION.get(doId);
+            await doStub.fetch(new Request("http://localhost/broadcast-image", {
+              method: "POST",
+              body: JSON.stringify({ error: true, message: `视频生成失败 (${provider} · ${model})`, model, provider, source }),
+            }));
+            // 标记失败
+            await doStub.fetch(new Request("http://localhost/store-pending-video", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ taskId, status: "failed" }),
+            }));
+          } else {
+            // 仍在处理中，30 秒后再检查
+            const retryCount = (msg.body.retryCount || 0) + 1;
+            if (retryCount >= 40) {
+              // 最多重试 40 次（约 20 分钟），超过则放弃
+              Logger.error("[queue] Video check timeout (>20min)", { taskId });
+              const doId = env.ILINK_CONNECTION.idFromName("main");
+              const doStub = env.ILINK_CONNECTION.get(doId);
+              await doStub.fetch(new Request("http://localhost/broadcast-image", {
+                method: "POST",
+                body: JSON.stringify({ error: true, message: `视频生成超时 (${provider} · ${model})`, model, provider, source }),
+              }));
+              await doStub.fetch(new Request("http://localhost/store-pending-video", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ taskId, status: "failed" }),
+              }));
+            } else {
+              await env.CLAWBOT_QUEUE.send({
+                ...msg.body,
+                retryCount,
+              }, { delaySeconds: 30 });
+            }
+          }
         }
       } catch (e: any) {
         Logger.error("[queue] Task error", { error: e?.message });

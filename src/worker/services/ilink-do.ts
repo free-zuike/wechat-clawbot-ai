@@ -1469,6 +1469,25 @@ export class ILinkConnectionDO implements DurableObject {
                   );
                   await sendTextMessage(useCreds!, from, ctxToken, `🎬 ${modelInfo}\n\n视频生成任务已提交，稍后生成完成后会自动发送给您。`);
                   replyContent = `[视频生成] ${mediaPrompt}`;
+                  // 调度 Queue 首次检查：30 秒后
+                  try {
+                    await this.env.CLAWBOT_QUEUE.send({
+                      type: "video_check",
+                      taskId: result.taskId,
+                      videoId: result.videoId,
+                      prompt: result.prompt,
+                      model: result.model,
+                      provider: result.provider,
+                      baseUrl: result.baseUrl,
+                      apiKey: result.apiKey,
+                      toUserId: from,
+                      contextToken: ctxToken,
+                      accountId: useCreds?.accountId || "",
+                      source: "",
+                    }, { delaySeconds: 30 });
+                  } catch (e: any) {
+                    Logger.error("[DO] Queue schedule failed", { error: e?.message });
+                  }
                 }
               } else {
                 await sendTextMessage(useCreds!, from, ctxToken, `❌ 视频生成失败 (${modelInfo})\n请稍后重试或换个描述试试`);
