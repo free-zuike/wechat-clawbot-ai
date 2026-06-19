@@ -1389,17 +1389,20 @@ export class ILinkConnectionDO implements DurableObject {
       const from = msg.from_user_id;
       const ctxToken = msg.context_token;
 
-      // 提取消息中的图片 URL
+      // 提取消息中的图片 URL 和是否有真实文字
       let imageUrl: string | undefined;
+      let hasRealText = false;
       for (const item of (msg.item_list || [])) {
         if (item.type === MessageItemType.IMAGE) {
           imageUrl = item.image_item?.cdn_url || item.image_item?.url;
-          if (imageUrl) break;
+        }
+        if (item.type === MessageItemType.TEXT && item.text_item?.text) {
+          hasRealText = true;
         }
       }
 
-      // 纯图片消息（无文字）：缓存 URL，供后续以图生图使用
-      if (!text && imageUrl && from) {
+      // 纯图片消息（无文字 item）：缓存 URL，供后续以图生图使用
+      if (imageUrl && !hasRealText && from) {
         const now = Date.now();
         this.recentImageUrls.set(from, { url: imageUrl, timestamp: now });
         // 清理 60 秒前的旧缓存
