@@ -574,7 +574,7 @@ export class ILinkConnectionDO implements DurableObject {
 /图片 赛博朋克城市
 /video 10秒 海浪拍岸
 
-🎨 以图生图：
+🎨 以图生图（仅 Agnes Image 2.1 Flash）：
 先发一张图片，60秒内发送 /图片 <描述> 即可基于图片生成`;
         await sendTextMessage(creds, userId, syncBuf || "", welcomeMsg);
         Logger.info("[DO] Welcome message sent", { userId });
