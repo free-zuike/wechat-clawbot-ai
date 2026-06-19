@@ -20,6 +20,25 @@ const DEFAULT_CHANNEL_VERSION = "2.0.0";
 const DEFAULT_LONG_POLL_MS = 35000;
 const DEFAULT_API_MS = 15000;
 
+// base_info 和 SKRouteTag（参考 @weixin-claw/core）
+function buildBaseInfo(): { channel_version: string } {
+  return { channel_version: DEFAULT_CHANNEL_VERSION };
+}
+
+// SKRouteTag 从环境变量或 KV 读取（可选）
+let cachedRouteTag: string | null = null;
+function getRouteTag(): string | null {
+  if (cachedRouteTag !== null) return cachedRouteTag;
+  try {
+    // 尝试从全局变量读取（Cloudflare Workers 环境）
+    if (typeof globalThis !== "undefined" && (globalThis as any).__SK_ROUTE_TAG) {
+      cachedRouteTag = (globalThis as any).__SK_ROUTE_TAG;
+      return cachedRouteTag;
+    }
+  } catch {}
+  return null;
+}
+
 // MessageItemType → UploadMediaType 映射
 // MessageItemType: IMAGE=2, VOICE=3, FILE=4, VIDEO=5
 // UploadMediaType:  IMAGE=1, VOICE=4, FILE=3, VIDEO=2
@@ -47,12 +66,18 @@ function randomWechatUin(): string {
 }
 
 function buildHeaders(token: string): Record<string, string> {
-  return {
+  const headers: Record<string, string> = {
     "Content-Type": "application/json",
     Authorization: `Bearer ${token}`,
     AuthorizationType: "ilink_bot_token",
     "X-WECHAT-UIN": randomWechatUin(),
   };
+  // SKRouteTag（参考 @weixin-claw/core）
+  const routeTag = getRouteTag();
+  if (routeTag) {
+    headers["SKRouteTag"] = routeTag;
+  }
+  return headers;
 }
 
 async function post(

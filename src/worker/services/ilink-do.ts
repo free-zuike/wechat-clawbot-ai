@@ -1007,11 +1007,17 @@ export class ILinkConnectionDO implements DurableObject {
               });
             }
 
-            if (sentSuccessfully) {
+            // 无论发送成功与否，都更新状态避免重复发送
+            // 发送失败时标记为 failed（下次不再尝试），成功时标记为 completed
+            const newStatus = sentSuccessfully ? 'completed' : 'failed';
+            try {
               this.doState.storage.sql.exec(
-                `UPDATE pending_videos SET status = 'completed', video_url = ? WHERE task_id = ?`,
-                videoUrl, taskId
+                `UPDATE pending_videos SET status = ?, video_url = ? WHERE task_id = ?`,
+                newStatus, videoUrl, taskId
               );
+              Logger.info("[DO] Updated pending_video status", { taskId, status: newStatus });
+            } catch (e3: any) {
+              Logger.error("[DO] Failed to update pending_video status", { taskId, error: e3?.message });
             }
             // 广播到 WebSocket（管理后台显示），chat 来源的视频也广播
             this.broadcastToWebSockets({
@@ -1024,7 +1030,6 @@ export class ILinkConnectionDO implements DurableObject {
               source: taskSource || undefined,
             });
             Logger.info("[DO] Video completed", { taskId, url: videoUrl.slice(0, 80), sentToWeChat: sentSuccessfully, source: taskSource });
-            // 如果发送失败（下载 502 等），什么也不做，下次 cron 继续
           } else if (taskFailed) {
             this.doState.storage.sql.exec(
               `UPDATE pending_videos SET status = 'failed' WHERE task_id = ?`,
