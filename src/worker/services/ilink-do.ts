@@ -742,12 +742,26 @@ export class ILinkConnectionDO implements DurableObject {
     try {
       await this.initSQLite();
       await this.ensurePendingVideosColumns();
-      const body = await request.json() as { taskId: string; videoId?: string; prompt: string; model: string; provider: string; baseUrl: string; apiKey: string; toUserId?: string; contextToken?: string; accountId?: string; source?: string };
-      this.doState.storage.sql.exec(
-        `INSERT OR REPLACE INTO pending_videos (task_id, video_id, prompt, model, provider, base_url, api_key, status, to_user_id, context_token, account_id, source, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?)`,
-        body.taskId, body.videoId || null, body.prompt, body.model, body.provider, body.baseUrl, body.apiKey, body.toUserId || null, body.contextToken || null, body.accountId || null, body.source || null, Date.now()
-      );
+      const body = await request.json() as { taskId: string; videoId?: string; prompt?: string; model?: string; provider?: string; baseUrl?: string; apiKey?: string; toUserId?: string; contextToken?: string; accountId?: string; source?: string; status?: string; videoUrl?: string };
+
+      if (body.status && body.taskId && !body.prompt) {
+        // 仅更新 status/videoUrl（Queue consumer 发送后标记 completed）
+        const updates: string[] = ["status = ?"];
+        const params: any[] = [body.status];
+        if (body.videoUrl) { updates.push("video_url = ?"); params.push(body.videoUrl); }
+        params.push(body.taskId);
+        this.doState.storage.sql.exec(
+          `UPDATE pending_videos SET ${updates.join(", ")} WHERE task_id = ?`,
+          ...params
+        );
+      } else {
+        // 完整插入新任务
+        this.doState.storage.sql.exec(
+          `INSERT OR REPLACE INTO pending_videos (task_id, video_id, prompt, model, provider, base_url, api_key, status, to_user_id, context_token, account_id, source, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?)`,
+          body.taskId, body.videoId || null, body.prompt || "", body.model || "", body.provider || "", body.baseUrl || "", body.apiKey || "", body.toUserId || null, body.contextToken || null, body.accountId || null, body.source || null, Date.now()
+        );
+      }
       return new Response(JSON.stringify({ success: true }), {
         headers: { "Content-Type": "application/json" },
       });

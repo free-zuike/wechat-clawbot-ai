@@ -188,6 +188,12 @@ export default {
                   headers: { "Content-Type": "application/json" },
                   body: JSON.stringify({ videoUrl, toUserId: msg.body.toUserId, contextToken: msg.body.contextToken, accountId: msg.body.accountId, model, provider, prompt, source }),
                 }));
+                // 标记 pending_videos 为 completed，防止 cron checkPendingVideos 重复发送
+                await doStub.fetch(new Request("http://localhost/store-pending-video", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ taskId, videoId, status: "completed", videoUrl }),
+                }));
                 Logger.info("[queue] Video sent to WeChat", { taskId });
               } catch (e: any) {
                 Logger.error("[queue] Video send failed", { error: e?.message, taskId });
