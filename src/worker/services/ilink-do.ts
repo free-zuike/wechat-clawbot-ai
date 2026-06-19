@@ -200,6 +200,7 @@ export class ILinkConnectionDO implements DurableObject {
         ["context_token", "TEXT"],
         ["account_id", "TEXT"],
         ["video_id", "TEXT"],
+        ["source", "TEXT"],
       ];
       for (const [col, type] of needAdd) {
         if (!cols.has(col)) {
@@ -741,11 +742,11 @@ export class ILinkConnectionDO implements DurableObject {
     try {
       await this.initSQLite();
       await this.ensurePendingVideosColumns();
-      const body = await request.json() as { taskId: string; videoId?: string; prompt: string; model: string; provider: string; baseUrl: string; apiKey: string; toUserId?: string; contextToken?: string; accountId?: string };
+      const body = await request.json() as { taskId: string; videoId?: string; prompt: string; model: string; provider: string; baseUrl: string; apiKey: string; toUserId?: string; contextToken?: string; accountId?: string; source?: string };
       this.doState.storage.sql.exec(
-        `INSERT OR REPLACE INTO pending_videos (task_id, video_id, prompt, model, provider, base_url, api_key, status, to_user_id, context_token, account_id, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?)`,
-        body.taskId, body.videoId || null, body.prompt, body.model, body.provider, body.baseUrl, body.apiKey, body.toUserId || null, body.contextToken || null, body.accountId || null, Date.now()
+        `INSERT OR REPLACE INTO pending_videos (task_id, video_id, prompt, model, provider, base_url, api_key, status, to_user_id, context_token, account_id, source, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?)`,
+        body.taskId, body.videoId || null, body.prompt, body.model, body.provider, body.baseUrl, body.apiKey, body.toUserId || null, body.contextToken || null, body.accountId || null, body.source || null, Date.now()
       );
       return new Response(JSON.stringify({ success: true }), {
         headers: { "Content-Type": "application/json" },
@@ -765,7 +766,7 @@ export class ILinkConnectionDO implements DurableObject {
       await this.initSQLite();
       await this.ensurePendingVideosColumns();
       const cursor = this.doState.storage.sql.exec(
-        `SELECT task_id, video_id, prompt, model, provider, base_url, api_key, to_user_id, context_token, account_id, created_at FROM pending_videos WHERE status = 'queued'`
+        `SELECT task_id, video_id, prompt, model, provider, base_url, api_key, to_user_id, context_token, account_id, source, created_at FROM pending_videos WHERE status = 'queued'`
       );
       const pending = cursor.toArray();
 
@@ -799,11 +800,12 @@ export class ILinkConnectionDO implements DurableObject {
 
       for (const task of pending) {
         const taskId = task.task_id as string;
+        const taskSource = (task.source as string) || "";
 
-        // 跳过缺少用户信息的任务（旧的孤儿任务会在上面被清理）
+        // 跳过缺少用户信息且非 chat 来源的任务（旧的孤儿任务会在上面被清理）
         const toUserId = task.to_user_id as string | undefined;
         const contextToken = task.context_token as string | undefined;
-        if (!toUserId || !contextToken) {
+        if (!toUserId && !contextToken && taskSource !== "chat") {
           // 已经在 cleanup 中删除；如果还在这里说明 cleanup 失败，安全跳过
           continue;
         }
@@ -991,16 +993,18 @@ export class ILinkConnectionDO implements DurableObject {
                 videoUrl, taskId
               );
             }
-            // 无论是否发送到微信，都广播到 WebSocket（管理后台显示）
-            this.broadcastToWebSockets({
-              type: "media_generated",
-              mediaType: "video",
-              url: videoUrl,
-              model: task.model,
-              provider: task.provider,
-              prompt: task.prompt,
-            });
-            Logger.info("[DO] Video completed", { taskId, url: videoUrl.slice(0, 80), sentToWeChat: sentSuccessfully });
+            // 非 chat 来源才广播到 WebSocket（管理后台显示）
+            if (taskSource !== "chat") {
+              this.broadcastToWebSockets({
+                type: "media_generated",
+                mediaType: "video",
+                url: videoUrl,
+                model: task.model,
+                provider: task.provider,
+                prompt: task.prompt,
+              });
+            }
+            Logger.info("[DO] Video completed", { taskId, url: videoUrl.slice(0, 80), sentToWeChat: sentSuccessfully, source: taskSource });
             // 如果发送失败（下载 502 等），什么也不做，下次 cron 继续
           } else if (taskFailed) {
             this.doState.storage.sql.exec(
@@ -1010,12 +1014,14 @@ export class ILinkConnectionDO implements DurableObject {
             if (creds && toUserId && contextToken) {
               await sendTextMessage(creds, toUserId, contextToken, `❌ 视频生成失败 (${modelInfo})\n请稍后重试或换个描述试试`).catch(() => {});
             }
-            this.broadcastToWebSockets({
-              type: "media_error",
-              message: `视频生成失败 (${task.provider} · ${task.model})`,
-              model: task.model,
-              provider: task.provider,
-            });
+            if (taskSource !== "chat") {
+              this.broadcastToWebSockets({
+                type: "media_error",
+                message: `视频生成失败 (${task.provider} · ${task.model})`,
+                model: task.model,
+                provider: task.provider,
+              });
+            }
             Logger.error("[DO] Video generation failed", { taskId });
           }
           // stillProcessing: 什么也不做，下次 cron 再检查

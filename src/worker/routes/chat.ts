@@ -86,6 +86,7 @@ export async function handleChat(request: Request, env: Env): Promise<Response> 
             provider: aiConfig.provider,
             baseUrl: aiConfig.baseUrl,
             apiKey: aiConfig.apiKey,
+            source: "chat",
           }, { delaySeconds: 0 });
           Logger.info(`[chat][${requestId}] Video task queued`);
         } catch (e: any) {
