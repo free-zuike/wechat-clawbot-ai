@@ -8,6 +8,7 @@
 import { router } from "./utils/router";
 import { metrics } from "./utils/metrics";
 import { errorTracker } from "./utils/metrics";
+import { parseApiUrl } from "./services/ai";
 import { Logger } from "./utils/error";
 import { ILinkConnectionDO } from "./services/ilink-do";
 
@@ -102,13 +103,14 @@ export default {
           }
           // 提交视频生成任务到 Agnes AI（使用 /v1/videos，非标准 /v1/video/generations）
           let base = (baseUrl || "").replace(/[\s/]+$/, "").trim();
-          const apiPatterns = ["/chat/completions", "/images/generations", "/videos/generations", "/videos"];
-          for (const pattern of apiPatterns) {
-            const regex = new RegExp(`/v\\d+${pattern.replace(/\//g, "\\/")}$`, "i");
-            base = base.replace(regex, "");
+          let vidApiPath = "/v1/videos";
+          const vidPatternMatch = base.match(/\/(v\d+)\/(chat\/completions|images\/generations|videos?\/?|videos)$/i);
+          if (vidPatternMatch) {
+            vidApiPath = `/${vidPatternMatch[1]}/${vidPatternMatch[2]}`;
+            base = base.replace(/\/v\d+\/(chat\/completions|images\/generations|videos?\/?|videos)$/i, "");
           }
           base = base.replace(/\/v\d+$/, "");
-          const resp = await fetch(`${base}/v1/videos`, {
+          const resp = await fetch(`${base}${vidApiPath}`, {
             method: "POST",
             headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
             body: JSON.stringify({ model, prompt, num_frames: 121, frame_rate: 24 }),
@@ -156,10 +158,11 @@ export default {
           // 查询视频状态
           await new Promise(r => setTimeout(r, 1000 + Math.random() * 1000)); // 避免短时间大量请求
           let base = (baseUrl || "").replace(/[\s/]+$/, "").trim();
-          const checkApiPatterns = ["/chat/completions", "/images/generations", "/videos/generations", "/videos"];
-          for (const pattern of checkApiPatterns) {
-            const regex = new RegExp(`/v\\d+${pattern.replace(/\//g, "\\/")}$`, "i");
-            base = base.replace(regex, "");
+          let chkApiPath = "/v1/videos";
+          const chkPatternMatch = base.match(/\/(v\d+)\/(chat\/completions|images\/generations|videos?\/?|videos)$/i);
+          if (chkPatternMatch) {
+            chkApiPath = `/${chkPatternMatch[1]}/${chkPatternMatch[2]}`;
+            base = base.replace(/\/v\d+\/(chat\/completions|images\/generations|videos?\/?|videos)$/i, "");
           }
           base = base.replace(/\/v\d+$/, "");
           const checkUrl = videoId

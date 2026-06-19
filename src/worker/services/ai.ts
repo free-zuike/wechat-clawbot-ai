@@ -16,6 +16,22 @@ const DEFAULT_SYSTEM_PROMPT =
   "如果用户问的问题你不知道，就直接说不知道。不要编造信息。" +
   "回复长度控制在 200 字以内，除非用户明确要求更长。";
 
+// 从 API baseUrl 中提取 base 和 version，用于构建其他端点
+// 例: "https://open.bigmodel.cn/api/paas/v4/chat/completions"
+//   → { base: "https://open.bigmodel.cn/api/paas", version: "v4" }
+export function parseApiUrl(baseUrl: string): { base: string; version: string } {
+  const url = baseUrl.trim().replace(/\/+$/, "");
+  const match = url.match(/(.*?)\/(v\d+)\/(chat\/completions|images\/generations|videos?)\/?$/i);
+  if (match) {
+    return { base: match[1], version: match[2] };
+  }
+  const vMatch = url.match(/(.*?)\/(v\d+)\/?$/);
+  if (vMatch) {
+    return { base: vMatch[1], version: vMatch[2] };
+  }
+  return { base: url, version: "v1" };
+}
+
 const QUICK_REPLIES: Record<string, string> = {
   "你好": "你好呀 👋 我是爪爪 AI，有什么能帮你的吗？",
   "你好啊": "你好呀 👋 我是爪爪 AI，有什么能帮你的吗？",
@@ -55,15 +71,7 @@ async function callOpenAICompatible(params: {
   maxTokens: number;
   temperature?: number;
 }): Promise<string> {
-  let base = params.baseUrl.replace(/[\s/]+$/, "").trim();
-  // 移除已有的 API 路径（支持 /v1/, /v2/, /v3/, /v4/ 等）
-  const apiPatterns = ["/chat/completions", "/images/generations", "/videos/generations", "/videos"];
-  for (const pattern of apiPatterns) {
-    const regex = new RegExp(`/v\\d+${pattern.replace(/\//g, "\\/")}$`, "i");
-    base = base.replace(regex, "");
-  }
-  base = base.replace(/\/v\d+$/, "");
-  const url = base + "/v1/chat/completions";
+  const url = params.baseUrl.trim().replace(/\/+$/, "");
 
   const resp = await fetch(url, {
     method: "POST",
@@ -334,14 +342,8 @@ export async function generateImage(
   // 以图生图：传递 image_url 参数
   if (provider && provider !== "cloudflare" && baseUrl && apiKey) {
     try {
-      let base = baseUrl.replace(/[\s/]+$/, "").trim();
-      const apiPatterns = ["/chat/completions", "/images/generations", "/videos/generations", "/videos"];
-      for (const pattern of apiPatterns) {
-        const regex = new RegExp(`/v\\d+${pattern.replace(/\//g, "\\/")}$`, "i");
-        base = base.replace(regex, "");
-      }
-      base = base.replace(/\/v\d+$/, "");
-      const url = base + "/v1/images/generations";
+      const { base, version } = parseApiUrl(baseUrl);
+      const url = `${base}/${version}/images/generations`;
       const body: any = {
         model: imageModel,
         prompt,
@@ -452,14 +454,8 @@ export async function submitVideoTask(
   // Agnes 查询结果推荐用 GET /agnesapi?video_id=
   if (effectiveProvider !== "cloudflare" && baseUrl && apiKey) {
     try {
-      let base = baseUrl.replace(/[\s/]+$/, "").trim();
-      const apiPatterns = ["/chat/completions", "/images/generations", "/videos/generations", "/videos"];
-      for (const pattern of apiPatterns) {
-        const regex = new RegExp(`/v\\d+${pattern.replace(/\//g, "\\/")}$`, "i");
-        base = base.replace(regex, "");
-      }
-      base = base.replace(/\/v\d+$/, "");
-      const submitUrl = base + "/v1/videos";
+      const { base, version } = parseApiUrl(baseUrl);
+      const submitUrl = `${base}/${version}/videos`;
       const resp = await fetch(submitUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
