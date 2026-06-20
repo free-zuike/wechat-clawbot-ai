@@ -970,24 +970,7 @@ export class ILinkConnectionDO implements DurableObject {
       from_user: r.from_user,
       created_at: r.created_at,
     }));
-    console.log("[DO] handleGenerationLogs query result", { count: rows.length, sql: sql.slice(0, 100) });
-
-    // 自检：如果没有记录，尝试插入一条测试记录确认表可用
-    if (rows.length === 0) {
-      try {
-        this.doState.storage.sql.exec(
-          `INSERT INTO generation_logs (type, prompt, result, provider, model, status, error, source, from_user, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          "test", "self-check", "", "system", "system", "success", "", "system", "", Date.now()
-        );
-        console.log("[DO] Self-check: test record inserted");
-        // 再读一次
-        const retryCursor = this.doState.storage.sql.exec(`SELECT COUNT(*) as cnt FROM generation_logs`);
-        const retryRows = retryCursor.toArray ? retryCursor.toArray() : [];
-        console.log("[DO] Self-check: count after insert", retryRows);
-      } catch (e: any) {
-        console.error("[DO] Self-check FAILED", e?.message);
-      }
-    }
+    console.log("[DO] handleGenerationLogs", { count: rows.length });
     return new Response(JSON.stringify({ ok: true, logs: rows, total: rows.length }), { headers: corsHeaders });
   }
 

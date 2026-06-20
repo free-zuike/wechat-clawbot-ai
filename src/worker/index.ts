@@ -111,6 +111,7 @@ export default {
           // 检查必要的配置参数
           if (!baseUrl || !apiKey) {
             Logger.error("[queue] Video task missing config", { provider, hasBaseUrl: !!baseUrl, hasApiKey: !!apiKey, apiKeyPrefix: apiKey ? apiKey.slice(0, 6) : "EMPTY" });
+            logGen("video", prompt, "", provider, model, "failed", `缺少配置参数 (${provider})`);
             const doId = env.ILINK_CONNECTION.idFromName("main");
             const doStub = env.ILINK_CONNECTION.get(doId);
             await doStub.fetch(new Request("http://localhost/broadcast-image", {
@@ -132,6 +133,7 @@ export default {
           if (!resp.ok) {
             const errBody = await resp.text().catch(() => "");
             Logger.error("[queue] Video submit failed", { status: resp.status, body: errBody.slice(0, 200), url: submitUrl, apiKeyPrefix: apiKey.slice(0, 6) });
+            logGen("video", prompt, "", provider, model, "failed", `HTTP ${resp.status}: ${errBody.slice(0, 100)}`);
             continue;
           }
 
