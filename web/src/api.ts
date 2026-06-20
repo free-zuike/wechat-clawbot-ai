@@ -360,3 +360,31 @@ export async function deleteTemplate(id: string): Promise<{ ok: boolean }> {
   return apiFetch(`/api/templates?id=${id}`, { method: "DELETE" });
 }
 
+// ===== Pending Videos =====
+export interface PendingVideo {
+  task_id: string;
+  prompt: string;
+  model: string;
+  provider: string;
+  status: string;
+  video_url: string | null;
+  video_id: string | null;
+  source: string;
+  created_at: number;
+  error_message: string | null;
+  retry_count: number;
+}
+
+export async function fetchPendingVideos(status?: string): Promise<{ ok: boolean; tasks: PendingVideo[]; total: number }> {
+  const qs = status ? `?status=${status}` : "";
+  return apiFetch(`/api/admin/pending-videos${qs}`, { cancelable: "pending-videos" });
+}
+
+export async function deletePendingVideo(taskId: string): Promise<{ ok: boolean }> {
+  return apiFetch(`/api/admin/pending-videos?task_id=${taskId}`, { method: "DELETE" });
+}
+
+export async function deleteAllFailedPendingVideos(): Promise<{ ok: boolean }> {
+  return apiFetch(`/api/admin/pending-videos?failed=true`, { method: "DELETE" });
+}
+

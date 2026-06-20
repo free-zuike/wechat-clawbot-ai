@@ -103,3 +103,30 @@ export async function handleDOFlush(request: Request, env: Env): Promise<Respons
     return json({ error: e.message }, 500);
   }
 }
+
+export async function handleDOPendingVideos(request: Request, env: Env): Promise<Response> {
+  const v = await verifyAdmin(request, env);
+  if (!v.ok) return json({ error: v.error }, 401);
+
+  try {
+    const doId = env.ILINK_CONNECTION.idFromName(getDOId());
+    const doStub = env.ILINK_CONNECTION.get(doId);
+    const url = new URL(request.url);
+
+    const doUrl = new URL("http://localhost/pending-videos");
+    url.searchParams.forEach((val, key) => doUrl.searchParams.set(key, val));
+
+    const doRequest = new Request(doUrl.toString(), {
+      method: request.method,
+      headers: request.headers,
+      body: request.method !== "GET" && request.method !== "HEAD" ? request.body : undefined,
+    });
+
+    const doResponse = await doStub.fetch(doRequest);
+    const data = await doResponse.json();
+    return json(data, doResponse.status);
+  } catch (e: any) {
+    console.error("[DO Proxy] pending-videos error:", e);
+    return json({ error: e.message }, 500);
+  }
+}

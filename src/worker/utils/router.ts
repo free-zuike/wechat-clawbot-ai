@@ -10,7 +10,7 @@ import { handleLogout } from "../routes/logout";
 import { handleConfig } from "../routes/config";
 import { handleDebugLogin } from "../routes/debug";
 import { handleRecentMessages, handleSessions, handleAlerts, handleResolveAlert, handleResolveAllAlerts, handleStats, handleHealth } from "../routes/admin";
-import { handleDOPoll, handleDOSend, handleDOStatus, handleDOFlush } from "../routes/do";
+import { handleDOPoll, handleDOSend, handleDOStatus, handleDOFlush, handleDOPendingVideos } from "../routes/do";
 import { handleWebSocket } from "../routes/websocket";
 import { handleTemplates } from "../routes/templates";
 import { json } from "../utils";
@@ -45,6 +45,7 @@ export class Router {
     { path: "/api/do/send", method: "POST", handler: handleDOSend, rateLimit: true, rateLimitMax: 30 },
     { path: "/api/do/status", method: "GET", handler: handleDOStatus, rateLimit: true, rateLimitMax: 60 },
     { path: "/api/do/flush", method: "POST", handler: handleDOFlush, rateLimit: true, rateLimitMax: 10 },
+    { path: "/api/admin/pending-videos", handler: handleDOPendingVideos, rateLimit: true, rateLimitMax: 30 },
     { path: "/api/ws", handler: handleWebSocket },
     { path: "/api/templates", handler: handleTemplates, rateLimit: true, rateLimitMax: 30 },
   ];

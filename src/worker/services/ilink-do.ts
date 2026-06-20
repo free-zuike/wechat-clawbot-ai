@@ -203,6 +203,8 @@ export class ILinkConnectionDO implements DurableObject {
         ["account_id", "TEXT"],
         ["video_id", "TEXT"],
         ["source", "TEXT"],
+        ["error_message", "TEXT"],
+        ["retry_count", "INTEGER DEFAULT 0"],
       ];
       for (const [col, type] of needAdd) {
         if (!cols.has(col)) {
@@ -275,6 +277,9 @@ export class ILinkConnectionDO implements DurableObject {
     }
     if (url.pathname === "/check-pending-videos") {
       return this.checkPendingVideos().then(() => new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } }));
+    }
+    if (url.pathname === "/pending-videos") {
+      return this.handlePendingVideos(request);
     }
     if (url.pathname === "/get-creds") {
       return this.handleGetCreds();
@@ -798,12 +803,66 @@ export class ILinkConnectionDO implements DurableObject {
     }
   }
 
+  // ========== 管理后台：pending_videos 列表/删除 ==========
+
+  private async handlePendingVideos(request: Request): Promise<Response> {
+    await this.initSQLite();
+    await this.ensurePendingVideosColumns();
+    const url = new URL(request.url);
+    const corsHeaders = { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" };
+
+    if (request.method === "DELETE") {
+      const taskId = url.searchParams.get("task_id");
+      const deleteFailed = url.searchParams.get("failed") === "true";
+      if (taskId) {
+        this.doState.storage.sql.exec(`DELETE FROM pending_videos WHERE task_id = ?`, taskId);
+        Logger.info("[DO] Deleted pending video", { taskId });
+      } else if (deleteFailed) {
+        this.doState.storage.sql.exec(`DELETE FROM pending_videos WHERE status = 'failed'`);
+        Logger.info("[DO] Deleted all failed pending videos");
+      }
+      return new Response(JSON.stringify({ ok: true }), { headers: corsHeaders });
+    }
+
+    const status = url.searchParams.get("status");
+    let sql = `SELECT task_id, prompt, model, provider, status, video_url, video_id, to_user_id, source, created_at, error_message, retry_count FROM pending_videos`;
+    const params: any[] = [];
+    if (status) {
+      sql += ` WHERE status = ?`;
+      params.push(status);
+    }
+    sql += ` ORDER BY created_at DESC LIMIT 100`;
+    const cursor = this.doState.storage.sql.exec(sql, ...params);
+    const rows = (cursor.toArray ? cursor.toArray() : []).map((r: any) => ({
+      task_id: r.task_id,
+      prompt: (r.prompt as string)?.slice(0, 100),
+      model: r.model,
+      provider: r.provider,
+      status: r.status,
+      video_url: r.video_url,
+      video_id: r.video_id,
+      source: r.source,
+      created_at: r.created_at,
+      error_message: r.error_message,
+      retry_count: r.retry_count || 0,
+    }));
+    return new Response(JSON.stringify({ ok: true, tasks: rows, total: rows.length }), { headers: corsHeaders });
+  }
+
   // ========== Cron 检查待处理的视频任务 ==========
 
   async checkPendingVideos(): Promise<void> {
     try {
       await this.initSQLite();
       await this.ensurePendingVideosColumns();
+
+      // 自动清理超过 24 小时的已完成/失败任务
+      const cleanupAge = Date.now() - 24 * 60 * 60 * 1000;
+      this.doState.storage.sql.exec(
+        `DELETE FROM pending_videos WHERE status IN ('completed', 'failed') AND created_at < ?`,
+        cleanupAge
+      );
+
       const cursor = this.doState.storage.sql.exec(
         `SELECT task_id, video_id, prompt, model, provider, base_url, api_key, to_user_id, context_token, account_id, source, created_at FROM pending_videos WHERE status = 'queued'`
       );
@@ -950,6 +1009,15 @@ export class ILinkConnectionDO implements DurableObject {
             if (!statusResp.ok) {
               const errBody = await statusResp.text().catch(() => "");
               Logger.warn("[DO] Video status check failed", { taskId, videoId, status: statusResp.status, body: errBody.slice(0, 200), url: checkUrl });
+              const errMsg = `HTTP ${statusResp.status}: ${errBody.slice(0, 200)}`;
+              this.doState.storage.sql.exec(
+                `UPDATE pending_videos SET retry_count = retry_count + 1, error_message = ? WHERE task_id = ?`,
+                errMsg, taskId
+              );
+              if (statusResp.status === 404) {
+                taskFailed = true;
+                Logger.warn("[DO] Video task 404 — marking as failed (task not found on provider)", { taskId });
+              }
               continue;
             }
             const statusData = await statusResp.json() as any;
@@ -1079,9 +1147,10 @@ export class ILinkConnectionDO implements DurableObject {
             });
             Logger.info("[DO] Video completed", { taskId, url: videoUrl.slice(0, 80), sentToWeChat: sentSuccessfully, source: taskSource });
           } else if (taskFailed) {
+            const errMsg = `任务失败 (provider: ${task.provider}, model: ${task.model})`;
             this.doState.storage.sql.exec(
-              `UPDATE pending_videos SET status = 'failed' WHERE task_id = ?`,
-              taskId
+              `UPDATE pending_videos SET status = 'failed', error_message = ?, retry_count = retry_count + 1 WHERE task_id = ?`,
+              errMsg, taskId
             );
             if (taskSource !== "chat" && creds && toUserId && contextToken) {
               await sendTextMessage(creds, toUserId, contextToken, `❌ 视频生成失败 (${modelInfo})\n请稍后重试或换个描述试试`).catch(() => {});

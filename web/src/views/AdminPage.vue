@@ -149,6 +149,9 @@
       <section v-if="activeSection === 'templates'">
         <TemplatesPanel @send="(content: string) => { activeSection = 'chat'; chatInput = content; }" />
       </section>
+      <section v-if="activeSection === 'videos'">
+        <PendingVideosPanel />
+      </section>
     </main>
   </div>
 </template>
@@ -169,6 +172,7 @@ import AlertsPanel from "../components/admin/AlertsPanel.vue";
 import SessionsPanel from "../components/admin/SessionsPanel.vue";
 import TemplatesPanel from "../components/admin/TemplatesPanel.vue";
 import TaskPanel from "../components/admin/TaskPanel.vue";
+import PendingVideosPanel from "../components/admin/PendingVideosPanel.vue";
 
 const router = useRouter();
 
@@ -187,6 +191,7 @@ const navItems = [
   { key: "alerts", label: "报警中心", icon: "🚨" },
   { key: "sessions", label: "用户会话", icon: "💬" },
   { key: "templates", label: "消息模板", icon: "📋" },
+  { key: "videos", label: "视频任务", icon: "🎬" },
 ];
 const activeSection = ref("status");
 let isFirstRefresh = true;
