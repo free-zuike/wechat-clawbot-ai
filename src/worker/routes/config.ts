@@ -116,6 +116,7 @@ function getConfigResponse(kvConfig: Record<string, unknown>) {
     webhookChannels: (kvConfig.webhookChannels as string[]) || [],
     aiPresets: maskedPresets,
     aiCustomProviders: (kvConfig.aiCustomProviders as any[]) || [],
+    aiMaxRetries: (kvConfig.aiMaxRetries as number) ?? 2,
   };
 }
 
@@ -247,6 +248,7 @@ export async function handleConfig(request: Request, env: Env): Promise<Response
             videoModel: (bp.videoModel as string) || "",
             baseUrl: (bp.baseUrl as string) || "",
             apiKey: unmaskKey(bp.apiKey, oldPreset?.apiKey),
+            apiKeys: Array.isArray(bp.apiKeys) ? bp.apiKeys.map((k: string, i: number) => unmaskKey(k, oldPreset?.apiKeys?.[i])) : (oldPreset?.apiKeys || []),
             maxTokens: Number(bp.maxTokens) || 1024,
           };
         });
