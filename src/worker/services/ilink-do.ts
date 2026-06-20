@@ -891,15 +891,38 @@ export class ILinkConnectionDO implements DurableObject {
   private async handleLogGeneration(request: Request): Promise<Response> {
     try {
       await this.initSQLite();
-      const text = await request.text();
-      const body = JSON.parse(text);
-      const { type, prompt, result, provider, model, status, error, source, fromUser } = body;
-      console.log("[DO] handleLogGeneration called", { type, provider, model, status, source });
+      const url = new URL(request.url);
+      let type: string, prompt: string, result: string, provider: string, model: string, status: string, error: string, source: string, fromUser: string;
+
+      if (request.method === "GET" || url.searchParams.has("t")) {
+        type = url.searchParams.get("t") || "unknown";
+        prompt = url.searchParams.get("p") || "";
+        result = url.searchParams.get("r") || "";
+        provider = url.searchParams.get("pv") || "";
+        model = url.searchParams.get("m") || "";
+        status = url.searchParams.get("s") || "success";
+        error = url.searchParams.get("e") || "";
+        source = url.searchParams.get("src") || "";
+        fromUser = url.searchParams.get("fu") || "";
+      } else {
+        const text = await request.text();
+        const body = JSON.parse(text);
+        type = body.type || "unknown";
+        prompt = body.prompt || "";
+        result = body.result || "";
+        provider = body.provider || "";
+        model = body.model || "";
+        status = body.status || "success";
+        error = body.error || "";
+        source = body.source || "";
+        fromUser = body.fromUser || "";
+      }
+
+      console.log("[DO] handleLogGeneration", { type, provider, model, source });
       this.doState.storage.sql.exec(
         `INSERT INTO generation_logs (type, prompt, result, provider, model, status, error, source, from_user, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        type || "unknown", (prompt || "").slice(0, 500), (result || "").slice(0, 1000), provider || "", model || "", status || "success", error || "", source || "", fromUser || "", Date.now()
+        type, prompt.slice(0, 500), result.slice(0, 1000), provider, model, status, error, source, fromUser, Date.now()
       );
-      console.log("[DO] Generation log inserted OK");
       return new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } });
     } catch (e: any) {
       console.error("[DO] handleLogGeneration FAILED", e?.message);

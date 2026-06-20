@@ -11,11 +11,11 @@ async function logToDO(env: Env, type: string, prompt: string, result: string, p
   try {
     const doId = env.ILINK_CONNECTION.idFromName("main");
     const doStub = env.ILINK_CONNECTION.get(doId);
-    await doStub.fetch(new Request("http://localhost/log-generation", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ type, prompt, result, provider, model, status, error, source: "chat" }),
-    }));
+    const params = new URLSearchParams({
+      t: type, p: prompt.slice(0, 200), r: result.slice(0, 200),
+      pv: provider, m: model, s: status, e: error || "", src: "chat",
+    });
+    await doStub.fetch(new Request(`http://localhost/log-generation?${params}`));
   } catch (e: any) {
     console.error("[chat] logToDO failed:", e?.message);
   }

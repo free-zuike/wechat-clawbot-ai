@@ -68,6 +68,12 @@ export default {
       const isFromChat = source === "chat";
       Logger.info("[queue] Task received", { type, prompt: prompt?.slice(0, 50), model, provider, source });
 
+      function logGen(tp: string, pr: string, rs: string, pv: string, md: string, st: string, er?: string, src?: string) {
+        const p = new URLSearchParams({ t: tp, p: pr.slice(0, 200), r: rs.slice(0, 200), pv, m: md, s: st, e: er || "", src: src || source || "" });
+        const doStub = env.ILINK_CONNECTION.get(env.ILINK_CONNECTION.idFromName("main"));
+        doStub.fetch(new Request(`http://localhost/log-generation?${p}`)).catch((e: any) => console.error("[queue] logGen failed:", e?.message));
+      }
+
       try {
         if (type === "image_generation") {
           const { generateImage } = await import("./services/ai");
@@ -76,15 +82,11 @@ export default {
               const doId = env.ILINK_CONNECTION.idFromName("main");
               const doStub = env.ILINK_CONNECTION.get(doId);
               const imageUrl = typeof imageData === "string" ? imageData : null;
-              await doStub.fetch(new Request("http://localhost/broadcast-image", {
+              await               doStub.fetch(new Request("http://localhost/broadcast-image", {
                 method: "POST",
                 body: JSON.stringify({ imageData: imageUrl, model, provider, source }),
               }));
-              doStub.fetch(new Request("http://localhost/log-generation", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ type: "image", prompt, result: imageUrl || "base64", provider, model, status: "success", source: source || "chat" }),
-              })).catch(() => {});
+              logGen("image", prompt, imageUrl || "base64", provider, model, "success");
               Logger.info("[queue] Image generated" + (isFromChat ? " (chat)" : " and broadcast"));
             } else {
               Logger.error("[queue] Image generation returned null");
@@ -95,11 +97,7 @@ export default {
                 method: "POST",
                 body: JSON.stringify({ error: true, message: errMsg, model, provider, source }),
               }));
-              doStub.fetch(new Request("http://localhost/log-generation", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ type: "image", prompt, result: "", provider, model, status: "failed", error: errMsg, source: source || "chat" }),
-              })).catch(() => {});
+              logGen("image", prompt, "", provider, model, "failed", errMsg);
               // 如果有微信来源信息，也发送错误给用户
               if (isFromChat && msg.body.toUserId) {
                 await doStub.fetch(new Request("http://localhost/send-text", {
@@ -240,11 +238,7 @@ export default {
                 Logger.error("[queue] Video broadcast failed", { error: e?.message, taskId });
               }
             }
-            doStub.fetch(new Request("http://localhost/log-generation", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ type: "video", prompt, result: videoUrl, provider, model, status: "success", source: source || "chat" }),
-            })).catch(() => {});
+            logGen("video", prompt, videoUrl || "", provider, model, "success");
           } else if (isFailed) {
             Logger.error("[queue] Video generation failed", { taskId, error: JSON.stringify(statusData.error).slice(0, 200) });
             const doId = env.ILINK_CONNECTION.idFromName("main");
@@ -259,11 +253,7 @@ export default {
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ taskId, status: "failed" }),
             }));
-            doStub.fetch(new Request("http://localhost/log-generation", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ type: "video", prompt, result: "", provider, model, status: "failed", error: errMsg, source: source || "chat" }),
-            })).catch(() => {});
+            logGen("video", prompt, "", provider, model, "failed", errMsg);
           } else {
             // 仍在处理中，30 秒后再检查
             const retryCount = (msg.body.retryCount || 0) + 1;
