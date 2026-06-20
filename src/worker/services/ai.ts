@@ -283,21 +283,33 @@ const DEFAULT_IMAGE_SIZE = "1024x1024";
 const DEFAULT_NUM_FRAMES = 121;
 const DEFAULT_FRAME_RATE = 24;
 
-/** 从用户文本中解析图片尺寸，如 "/画 512x512 赛博朋克" */
+const VALID_IMAGE_SIZES = [
+  "1024x1024", "768x1344", "864x1152", "1344x768", "1152x864", "1440x720", "720x1440"
+];
+
+function clampToValidSize(w: number, h: number): string {
+  const target = w * h;
+  let best = VALID_IMAGE_SIZES[0];
+  let bestDiff = Infinity;
+  for (const s of VALID_IMAGE_SIZES) {
+    const [sw, sh] = s.split("x").map(Number);
+    const diff = Math.abs(sw * sh - target);
+    if (diff < bestDiff) { bestDiff = diff; best = s; }
+  }
+  return best;
+}
+
+/** 从用户文本中解析图片尺寸，如 "/图片 512x512 赛博朋克" */
 export function extractImageSize(text: string): string | undefined {
-  // 匹配 WxH 或 W*H 格式
   const sizeMatch = text.match(/(\d{2,4})\s*[x×*]\s*(\d{2,4})/i);
   if (sizeMatch) {
-    const w = Math.min(parseInt(sizeMatch[1]), 2048);
-    const h = Math.min(parseInt(sizeMatch[2]), 2048);
-    return `${w}x${h}`;
+    return clampToValidSize(parseInt(sizeMatch[1]), parseInt(sizeMatch[2]));
   }
-  // 中文关键词
   if (/正方形|方形/.test(text)) return "1024x1024";
-  if (/横版|宽屏|宽幅/.test(text)) return "1920x1080";
-  if (/竖版|竖屏|手机/.test(text)) return "1080x1920";
-  if (/高清|大图/.test(text)) return "1920x1920";
-  if (/缩略|小图|小/.test(text)) return "512x512";
+  if (/横版|宽屏|宽幅/.test(text)) return "1440x720";
+  if (/竖版|竖屏|手机/.test(text)) return "720x1440";
+  if (/高清|大图/.test(text)) return "1344x768";
+  if (/缩略|小图|小/.test(text)) return "768x1344";
   return undefined;
 }
 

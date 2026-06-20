@@ -882,10 +882,10 @@ export class ILinkConnectionDO implements DurableObject {
         // Agnes API 限流保护：每个任务查询之间延迟 1-2 秒
         await new Promise(r => setTimeout(r, 1000 + Math.random() * 1000));
 
-        // baseUrl 规范化：去掉末尾斜杠，去掉可能包含的 /v1 和 /v1/video* 路径
+        // baseUrl 规范化：去掉末尾斜杠，去掉任何版本号和端点路径（/v1/...、/v4/...）
         let base = (task.base_url as string).replace(/\/+$/, "");
-        base = base.replace(/\/v1\/(chat\/completions|images\/generations|videos?\/generations|videos\/?|videos)$/i, "");
-        base = base.replace(/\/v1$/, "");
+        base = base.replace(/\/v\d+\/(chat\/completions|images\/generations|videos?\/generations|videos\/?|videos|async-result\/.*)$/i, "");
+        base = base.replace(/\/v\d+$/, "");
         const taskAccountId = task.account_id as string | undefined;
         const modelInfo = `🤖 ${task.provider} · ${task.model}`;
 
@@ -932,12 +932,18 @@ export class ILinkConnectionDO implements DurableObject {
               continue;
             }
           } else {
-            // Agnes AI：优先用 video_id 查询（推荐方式：/agnesapi?video_id=），回退到 /v1/videos/{task_id}
-            // 根据 Agnes 官方文档：status 为 completed 时，remixed_from_video_id 包含视频 URL
             const videoId = task.video_id as string | undefined;
-            const checkUrl = videoId
-              ? `${base}/agnesapi?video_id=${encodeURIComponent(videoId)}`
-              : `${base}/v1/videos/${taskId}`;
+            const taskBaseUrl = (task.base_url as string) || "";
+            const isZhipu = taskBaseUrl.includes("bigmodel.cn");
+            let checkUrl: string;
+            if (isZhipu) {
+              const version = taskBaseUrl.match(/\/(v\d+)\//)?.[1] || "v4";
+              checkUrl = `${base}/${version}/async-result/${taskId}`;
+            } else if (videoId) {
+              checkUrl = `${base}/agnesapi?video_id=${encodeURIComponent(videoId)}`;
+            } else {
+              checkUrl = `${base}/v1/videos/${taskId}`;
+            }
             const statusResp = await fetch(checkUrl, {
               headers: { "Authorization": `Bearer ${task.api_key}` },
             });
@@ -948,7 +954,26 @@ export class ILinkConnectionDO implements DurableObject {
             }
             const statusData = await statusResp.json() as any;
 
-            if (statusData.status === "completed" && statusData.remixed_from_video_id) {
+            // 智谱 async-result 格式：task_status + video_result[0].url
+            if (isZhipu) {
+              const taskStatus = statusData.task_status;
+              if (taskStatus === "SUCCESS") {
+                videoUrl = statusData.video_result?.[0]?.url || null;
+                if (!videoUrl) {
+                  Logger.warn("[DO] Zhipu video SUCCESS but no URL", { taskId, keys: Object.keys(statusData || {}).slice(0, 15) });
+                  for (const v of Object.values(statusData)) {
+                    if (typeof v === "string" && v.startsWith("http")) { videoUrl = v; break; }
+                  }
+                }
+                Logger.info("[DO] Zhipu video completed", { taskId, url: videoUrl?.substring(0, 120) });
+              } else if (taskStatus === "FAIL") {
+                taskFailed = true;
+                Logger.warn("[DO] Zhipu video failed", { taskId, error: statusData.error || statusData.message });
+              } else {
+                stillProcessing = true;
+                Logger.info("[DO] Zhipu video still processing", { taskId, status: taskStatus });
+              }
+            } else if (statusData.status === "completed" && statusData.remixed_from_video_id) {
               // Agnes 文档说 remixed_from_video_id 是视频 URL
               // 注意：这个字段也可能只是视频 ID（而不是完整 URL
               // 如果是 ID，则需要额外 API 调用获取真实 URL
