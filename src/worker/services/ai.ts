@@ -344,63 +344,71 @@ export async function generateImage(
   apiKey?: string,
   imageUrl?: string,
   size?: string,
+  allKeys?: string[],
+  maxRetries?: number,
 ): Promise<Uint8Array | string | null> {
   const imageModel = model || DEFAULT_IMAGE_MODEL;
   const imageSize = size || DEFAULT_IMAGE_SIZE;
-  Logger.info("[ai] Generating image", { prompt: prompt.slice(0, 80), model: imageModel, provider: provider || "cloudflare", hasImageRef: !!imageUrl, size: imageSize });
+  const keys = (allKeys && allKeys.length > 0) ? allKeys : (apiKey ? [apiKey] : []);
+  const retries = maxRetries ?? 2;
+  Logger.info("[ai] Generating image", { prompt: prompt.slice(0, 80), model: imageModel, provider: provider || "cloudflare", hasImageRef: !!imageUrl, size: imageSize, keyCount: keys.length });
 
-  // 非 Cloudflare 提供商（如 Agnes AI）：POST /v1/images/generations
-  // Agnes 要求 response_format 放在 extra_body 中，文生图用 return_base64 或 extra_body.response_format
-  // 以图生图：传递 image_url 参数
-  if (provider && provider !== "cloudflare" && baseUrl && apiKey) {
-    try {
-      const { base, version } = parseApiUrl(baseUrl);
-      const url = `${base}/${version}/images/generations`;
-      const body: any = {
-        model: imageModel,
-        prompt,
-        size: imageSize,
-        watermark_enabled: false,
-        extra_body: { response_format: "url" },
-      };
-      // 以图生图：添加 image_url 参数
-      if (imageUrl) {
-        body.image_url = imageUrl;
+  if (provider && provider !== "cloudflare" && baseUrl && keys.length > 0) {
+    for (let attempt = 0; attempt <= retries && attempt < keys.length; attempt++) {
+      const currentKey = keys[attempt] || keys[0];
+      try {
+        const { base, version } = parseApiUrl(baseUrl);
+        const url = `${base}/${version}/images/generations`;
+        const body: any = {
+          model: imageModel,
+          prompt,
+          size: imageSize,
+          watermark_enabled: false,
+          extra_body: { response_format: "url" },
+        };
+        if (imageUrl) {
+          body.image_url = imageUrl;
+        }
+        const resp = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${currentKey}` },
+          body: JSON.stringify(body),
+        });
+        if (!resp.ok) {
+          const errBody = await resp.text().catch(() => "");
+          Logger.error("[ai] Image API error", { status: resp.status, body: errBody.slice(0, 200), url, attempt });
+          if (attempt < retries && attempt < keys.length - 1) {
+            Logger.info("[ai] Retrying with next key", { attempt: attempt + 1 });
+            continue;
+          }
+          let errMsg = `图片生成失败 (HTTP ${resp.status})`;
+          try {
+            const parsed = JSON.parse(errBody);
+            errMsg = parsed?.error?.message || errMsg;
+          } catch { errMsg = errBody.slice(0, 100) || errMsg; }
+          throw new Error(errMsg);
+        }
+        const data = await resp.json() as any;
+        const item = data?.data?.[0];
+        if (item?.url) {
+          Logger.info("[ai] Image URL received", { url: item.url.slice(0, 80) });
+          return item.url;
+        }
+        if (item?.b64_json) {
+          const binary = atob(item.b64_json);
+          const bytes = new Uint8Array(binary.length);
+          for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+          Logger.info("[ai] Image Base64 decoded", { size: bytes.length });
+          return bytes;
+        }
+        Logger.warn("[ai] Unexpected image response", { keys: Object.keys(data || {}), dataKeys: data?.data ? Object.keys(data.data) : [] });
+        return null;
+      } catch (e: any) {
+        Logger.error("[ai] Image generation failed", { error: e?.message, attempt });
+        if (attempt === Math.min(retries, keys.length - 1)) return null;
       }
-      const resp = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
-        body: JSON.stringify(body),
-      });
-      if (!resp.ok) {
-        const errBody = await resp.text().catch(() => "");
-        Logger.error("[ai] Image API error", { status: resp.status, body: errBody.slice(0, 200), url });
-        let errMsg = `图片生成失败 (HTTP ${resp.status})`;
-        try {
-          const parsed = JSON.parse(errBody);
-          errMsg = parsed?.error?.message || errMsg;
-        } catch { errMsg = errBody.slice(0, 100) || errMsg; }
-        throw new Error(errMsg);
-      }
-      const data = await resp.json() as any;
-      const item = data?.data?.[0];
-      if (item?.url) {
-        Logger.info("[ai] Image URL received", { url: item.url.slice(0, 80) });
-        return item.url;
-      }
-      if (item?.b64_json) {
-        const binary = atob(item.b64_json);
-        const bytes = new Uint8Array(binary.length);
-        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-        Logger.info("[ai] Image Base64 decoded", { size: bytes.length });
-        return bytes;
-      }
-      Logger.warn("[ai] Unexpected image response", { keys: Object.keys(data || {}), dataKeys: data?.data ? Object.keys(data.data) : [] });
-      return null;
-    } catch (e: any) {
-      Logger.error("[ai] Image generation failed", { error: e?.message });
-      return null;
     }
+    return null;
   }
 
   // Cloudflare Workers AI

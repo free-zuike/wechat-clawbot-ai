@@ -11,7 +11,7 @@ import { configCache } from "../utils/cache";
 import type { Env } from "../index";
 
 const KV_CONFIG_KEY = "clawbot:config";
-const CONFIG_FIELDS = ["aiProvider", "aiModel", "aiBaseUrl", "aiApiKey", "aiMaxTokens", "aiSystemPrompt", "webhookUrl", "webhookEnabled", "webhookTitle", "webhookApiKey", "webhookChannels", "aiPresets", "aiCustomProviders"] as const;
+const CONFIG_FIELDS = ["aiProvider", "aiModel", "aiBaseUrl", "aiApiKey", "aiMaxTokens", "aiSystemPrompt", "webhookUrl", "webhookEnabled", "webhookTitle", "webhookApiKey", "webhookChannels", "aiPresets", "aiCustomProviders", "aiMaxRetries"] as const;
 
 // 读取 KV 配置时自动修复所有掩码密钥
 // 旧数据中 apiKey 可能被掩码保存（如 sk-r***yu3C），需要还原为真实值
@@ -38,6 +38,7 @@ type Preset = {
   videoModel?: string;
   baseUrl?: string;
   apiKey?: string;
+  apiKeys?: string[];
   maxTokens?: number;
 };
 
@@ -94,6 +95,7 @@ function getConfigResponse(kvConfig: Record<string, unknown>) {
     videoModel: p.videoModel || "",
     baseUrl: p.baseUrl || "",
     apiKey: p.apiKey ? maskKey(p.apiKey) : "",
+    apiKeys: (p.apiKeys || []).map(k => maskKey(k)),
     maxTokens: p.maxTokens || 1024,
   }));
 
@@ -122,11 +124,11 @@ function getConfigResponse(kvConfig: Record<string, unknown>) {
 export function resolveAIConfig(kvConfig: Record<string, unknown>) {
   const provider = (kvConfig.aiProvider as string) || "cloudflare";
   const topApiKey = (kvConfig.aiApiKey as string) || "";
+  const maxRetries = (kvConfig.aiMaxRetries as number) || 2;
   const presets = (kvConfig.aiPresets as Preset[]) || [];
   const active = findPreset(presets, provider);
 
   if (active && provider !== "cloudflare") {
-    // 自动修复：如果预设中的 apiKey 是掩码值，用顶层 apiKey 替代
     let apiKey = active.apiKey || "";
     if (isMaskedKey(apiKey)) {
       apiKey = topApiKey;
@@ -135,22 +137,26 @@ export function resolveAIConfig(kvConfig: Record<string, unknown>) {
     if (!baseUrl) {
       baseUrl = (kvConfig.aiBaseUrl as string) || "";
     }
+    const backupKeys = (active.apiKeys || []).filter(k => k && !isMaskedKey(k));
     return {
       provider,
       model: active.model || "",
       baseUrl,
       apiKey,
+      allKeys: [apiKey, ...backupKeys].filter(Boolean),
       maxTokens: active.maxTokens || 1024,
+      maxRetries,
     };
   }
 
-  // 回退到顶层字段（兼容旧数据）
   return {
     provider,
     model: (kvConfig.aiModel as string) || "",
     baseUrl: (kvConfig.aiBaseUrl as string) || "",
     apiKey: (kvConfig.aiApiKey as string) || "",
+    allKeys: [(kvConfig.aiApiKey as string) || ""].filter(Boolean),
     maxTokens: (kvConfig.aiMaxTokens as number) || 1024,
+    maxRetries,
   };
 }
 

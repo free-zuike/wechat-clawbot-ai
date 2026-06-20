@@ -40,6 +40,17 @@
           <div class="field"><label>视频生成模型</label><input v-model="config.aiVideoModel" class="input" placeholder="如不支持可留空" /><div class="field-hint">用于"生成视频"等视频生成指令</div></div>
           <div class="field"><label>API 地址</label><input v-model="config.aiBaseUrl" class="input" placeholder="https://api.example.com" /><div class="field-hint">不要加 /v1/chat/completions 后缀</div></div>
           <div class="field"><label>API 密钥</label><input v-model="config.aiApiKey" class="input" type="password" placeholder="sk-..." /></div>
+          <div class="field">
+            <label>备用密钥（生成失败时自动切换）</label>
+            <div class="backup-keys">
+              <div v-for="(key, idx) in backupKeys" :key="idx" class="backup-key-row">
+                <input :value="key" class="input" type="password" placeholder="sk-..." @input="updateBackupKey(idx, $event)" />
+                <button class="btn tiny danger" @click="removeBackupKey(idx)">✕</button>
+              </div>
+              <button class="btn secondary tiny" @click="addBackupKey">+ 添加密钥</button>
+            </div>
+          </div>
+          <div class="field"><label>重试次数</label><input v-model.number="config.aiMaxRetries" class="input" type="number" min="0" max="10" placeholder="2" /><div class="field-hint">使用备用密钥重试的最大次数（0=不重试）</div></div>
         </div>
         <div v-else class="form-empty">← 从左侧选择提供商</div>
         <div v-if="config.aiProvider" class="field" style="margin-top: 12px"><label>最大 Token 数</label><input v-model.number="config.aiMaxTokens" class="input" type="number" min="1" max="32000" placeholder="1024" /></div>
@@ -88,6 +99,7 @@ interface Preset {
   videoModel: string;
   baseUrl: string;
   apiKey: string;
+  apiKeys?: string[];
   maxTokens: number;
 }
 
@@ -114,6 +126,7 @@ const props = defineProps<{
     webhookChannels: string[];
     aiCustomProviders: CustomProvider[];
     aiPresets?: Preset[];
+    aiMaxRetries?: number;
   };
   result: string;
   saving: boolean;
@@ -135,7 +148,7 @@ function upsertPreset(id: string, fields: Partial<Preset>): Preset {
   const presets = ensurePresets();
   let preset = presets.find(p => p.id === id);
   if (!preset) {
-    preset = { id, model: "", imageModel: "", videoModel: "", baseUrl: "", apiKey: "", maxTokens: 1024 };
+    preset = { id, model: "", imageModel: "", videoModel: "", baseUrl: "", apiKey: "", apiKeys: [], maxTokens: 1024 };
     presets.push(preset);
   }
   Object.assign(preset, fields);
@@ -161,6 +174,7 @@ function selectProvider(id: string) {
       videoModel: props.config.aiVideoModel || "",
       baseUrl: props.config.aiBaseUrl,
       apiKey: props.config.aiApiKey,
+      apiKeys: [...backupKeys.value],
       maxTokens: props.config.aiMaxTokens,
     });
   }
@@ -173,6 +187,7 @@ function selectProvider(id: string) {
     props.config.aiVideoModel = preset?.videoModel || "bytedance/seedance-2.0-fast";
     props.config.aiBaseUrl = "";
     props.config.aiApiKey = "";
+    backupKeys.value = [];
     props.config.aiMaxTokens = preset?.maxTokens || 1024;
   } else {
     props.config.aiModel = preset?.model || "";
@@ -180,8 +195,18 @@ function selectProvider(id: string) {
     props.config.aiVideoModel = preset?.videoModel || "";
     props.config.aiBaseUrl = preset?.baseUrl || "";
     props.config.aiApiKey = preset?.apiKey || "";
+    backupKeys.value = [...(preset?.apiKeys || [])];
     props.config.aiMaxTokens = preset?.maxTokens || 1024;
   }
+}
+
+const backupKeys = ref<string[]>([]);
+
+function addBackupKey() { backupKeys.value.push(""); }
+function removeBackupKey(idx: number) { backupKeys.value.splice(idx, 1); }
+function updateBackupKey(idx: number, event: Event) {
+  const val = (event.target as HTMLInputElement).value;
+  backupKeys.value[idx] = val;
 }
 
 function deleteProvider(id: string, event: Event) {
@@ -245,6 +270,7 @@ function syncCurrentToPreset() {
     videoModel: props.config.aiVideoModel || "",
     baseUrl: props.config.aiBaseUrl,
     apiKey: props.config.aiApiKey,
+    apiKeys: [...backupKeys.value],
     maxTokens: props.config.aiMaxTokens,
   });
 }
@@ -298,4 +324,9 @@ watch(
 .icon-option { width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; border: 2px solid var(--border-light); border-radius: 6px; cursor: pointer; font-size: 18px; transition: all 0.15s; }
 .icon-option:hover { border-color: var(--link); }
 .icon-option.active { border-color: var(--link); background: var(--alert-info-bg); }
+.backup-keys { display: flex; flex-direction: column; gap: 6px; }
+.backup-key-row { display: flex; gap: 6px; align-items: center; }
+.backup-key-row .input { flex: 1; }
+.btn.tiny { padding: 4px 10px; font-size: 12px; }
+.btn.danger { color: var(--error); border-color: var(--error); }
 </style>

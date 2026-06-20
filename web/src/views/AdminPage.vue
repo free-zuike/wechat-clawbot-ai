@@ -211,7 +211,7 @@ const statusLoading = ref(false);
 const firstLoadDone = ref(false);
 
 // ===== Config =====
-const config = reactive({ version: 0, aiProvider: "cloudflare", aiModel: "", aiImageModel: "@cf/black-forest-labs/flux-1-schnell", aiVideoModel: "bytedance/seedance-2.0-fast", aiBaseUrl: "", aiApiKey: "", aiMaxTokens: 1024, aiSystemPrompt: "", webhookEnabled: false, webhookUrl: "", webhookTitle: "", webhookApiKey: "", webhookChannels: [] as string[], aiCustomProviders: [] as Array<{ id: string; name: string; icon: string }>, aiPresets: [] as Array<{ id: string; model: string; imageModel: string; videoModel: string; baseUrl: string; apiKey: string; maxTokens: number }> });
+const config = reactive({ version: 0, aiProvider: "cloudflare", aiModel: "", aiImageModel: "@cf/black-forest-labs/flux-1-schnell", aiVideoModel: "bytedance/seedance-2.0-fast", aiBaseUrl: "", aiApiKey: "", aiMaxTokens: 1024, aiSystemPrompt: "", aiMaxRetries: 2, webhookEnabled: false, webhookUrl: "", webhookTitle: "", webhookApiKey: "", webhookChannels: [] as string[], aiCustomProviders: [] as Array<{ id: string; name: string; icon: string }>, aiPresets: [] as Array<{ id: string; model: string; imageModel: string; videoModel: string; baseUrl: string; apiKey: string; apiKeys: string[]; maxTokens: number }> });
 const configResult = ref("");
 const configSaving = ref(false);
 

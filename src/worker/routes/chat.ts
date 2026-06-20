@@ -77,6 +77,8 @@ export async function handleChat(request: Request, env: Env): Promise<Response> 
     const activePreset = presets.find((p: any) => p.id === aiConfig.provider);
     const imageModel = activePreset?.imageModel || "";
     const videoModel = activePreset?.videoModel || "";
+    const allKeys = aiConfig.allKeys || [];
+    const maxRetries = aiConfig.maxRetries || 2;
     const modelInfo = `${aiConfig.provider} · `;
 
     // 检查图片/视频生成请求
@@ -97,6 +99,8 @@ export async function handleChat(request: Request, env: Env): Promise<Response> 
             baseUrl: aiConfig.baseUrl,
             apiKey: aiConfig.apiKey,
             source: "chat",
+            allKeys,
+            maxRetries,
           }, { delaySeconds: 0 });
           Logger.info(`[chat][${requestId}] Video task queued`);
           logToDO(env, "video", prompt, "", aiConfig.provider, videoModel, "queued");
@@ -116,6 +120,8 @@ export async function handleChat(request: Request, env: Env): Promise<Response> 
             baseUrl: aiConfig.baseUrl,
             apiKey: aiConfig.apiKey,
             source: "chat",
+            allKeys,
+            maxRetries,
           }, { delaySeconds: 0 });
           Logger.info(`[chat][${requestId}] Image task queued`);
           logToDO(env, "image", prompt, "", aiConfig.provider, imageModel, "queued");

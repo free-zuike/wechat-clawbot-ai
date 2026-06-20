@@ -64,21 +64,27 @@ export default {
   // 队列消费者：处理图片/视频生成任务
   async queue(batch: MessageBatch<any>, env: Env): Promise<void> {
     for (const msg of batch.messages) {
-      const { type, prompt, model, provider, baseUrl, apiKey, source } = msg.body;
+      const { type, prompt, model, provider, baseUrl, apiKey, source, allKeys, maxRetries } = msg.body;
       const isFromChat = source === "chat";
       Logger.info("[queue] Task received", { type, prompt: prompt?.slice(0, 50), model, provider, source });
 
       try {
         if (type === "image_generation") {
           const { generateImage } = await import("./services/ai");
-          const imageData = await generateImage(env.AI, prompt, model, provider, baseUrl, apiKey);
+          const imageData = await generateImage(env.AI, prompt, model, provider, baseUrl, apiKey, undefined, undefined, allKeys, maxRetries);
             if (imageData) {
               const doId = env.ILINK_CONNECTION.idFromName("main");
               const doStub = env.ILINK_CONNECTION.get(doId);
+              const imageUrl = typeof imageData === "string" ? imageData : null;
               await doStub.fetch(new Request("http://localhost/broadcast-image", {
                 method: "POST",
-                body: JSON.stringify({ imageData: typeof imageData === "string" ? imageData : null, model, provider, source }),
+                body: JSON.stringify({ imageData: imageUrl, model, provider, source }),
               }));
+              doStub.fetch(new Request("http://localhost/log-generation", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ type: "image", prompt, result: imageUrl || "base64", provider, model, status: "success", source: source || "chat" }),
+              })).catch(() => {});
               Logger.info("[queue] Image generated" + (isFromChat ? " (chat)" : " and broadcast"));
             } else {
               Logger.error("[queue] Image generation returned null");
@@ -89,6 +95,11 @@ export default {
                 method: "POST",
                 body: JSON.stringify({ error: true, message: errMsg, model, provider, source }),
               }));
+              doStub.fetch(new Request("http://localhost/log-generation", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ type: "image", prompt, result: "", provider, model, status: "failed", error: errMsg, source: source || "chat" }),
+              })).catch(() => {});
               // 如果有微信来源信息，也发送错误给用户
               if (isFromChat && msg.body.toUserId) {
                 await doStub.fetch(new Request("http://localhost/send-text", {
@@ -208,7 +219,6 @@ export default {
                   headers: { "Content-Type": "application/json" },
                   body: JSON.stringify({ videoUrl, toUserId: msg.body.toUserId, contextToken: msg.body.contextToken, accountId: msg.body.accountId, model, provider, prompt, source }),
                 }));
-                // 标记 pending_videos 为 completed，防止 cron checkPendingVideos 重复发送
                 await doStub.fetch(new Request("http://localhost/store-pending-video", {
                   method: "POST",
                   headers: { "Content-Type": "application/json" },
@@ -230,20 +240,30 @@ export default {
                 Logger.error("[queue] Video broadcast failed", { error: e?.message, taskId });
               }
             }
+            doStub.fetch(new Request("http://localhost/log-generation", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ type: "video", prompt, result: videoUrl, provider, model, status: "success", source: source || "chat" }),
+            })).catch(() => {});
           } else if (isFailed) {
             Logger.error("[queue] Video generation failed", { taskId, error: JSON.stringify(statusData.error).slice(0, 200) });
             const doId = env.ILINK_CONNECTION.idFromName("main");
             const doStub = env.ILINK_CONNECTION.get(doId);
+            const errMsg = `视频生成失败 (${provider} · ${model})`;
             await doStub.fetch(new Request("http://localhost/broadcast-image", {
               method: "POST",
-              body: JSON.stringify({ error: true, message: `视频生成失败 (${provider} · ${model})`, model, provider, source }),
+              body: JSON.stringify({ error: true, message: errMsg, model, provider, source }),
             }));
-            // 标记失败
             await doStub.fetch(new Request("http://localhost/store-pending-video", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ taskId, status: "failed" }),
             }));
+            doStub.fetch(new Request("http://localhost/log-generation", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ type: "video", prompt, result: "", provider, model, status: "failed", error: errMsg, source: source || "chat" }),
+            })).catch(() => {});
           } else {
             // 仍在处理中，30 秒后再检查
             const retryCount = (msg.body.retryCount || 0) + 1;
