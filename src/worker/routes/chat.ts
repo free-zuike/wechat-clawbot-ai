@@ -7,6 +7,16 @@ import { configCache } from "../utils/cache";
 import { resolveAIConfig } from "./config";
 import type { Env } from "../index";
 
+function logToDO(env: Env, type: string, prompt: string, result: string, provider: string, model: string, status: string, error?: string) {
+  const doId = env.ILINK_CONNECTION.idFromName("main");
+  const doStub = env.ILINK_CONNECTION.get(doId);
+  doStub.fetch(new Request("http://localhost/log-generation", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ type, prompt, result, provider, model, status, error, source: "chat" }),
+  })).catch(() => {});
+}
+
 interface ChatResponse {
   reply: string;
   source: "shortcut" | "ai" | "error";
@@ -89,6 +99,7 @@ export async function handleChat(request: Request, env: Env): Promise<Response> 
             source: "chat",
           }, { delaySeconds: 0 });
           Logger.info(`[chat][${requestId}] Video task queued`);
+          logToDO(env, "video", prompt, "", aiConfig.provider, videoModel, "queued");
         } catch (e: any) {
           Logger.error(`[chat][${requestId}] Queue send failed`, { error: e?.message });
           return json({ reply: `❌ 视频任务提交失败: ${e?.message}`, source: "error" } satisfies ChatResponse);
@@ -107,6 +118,7 @@ export async function handleChat(request: Request, env: Env): Promise<Response> 
             source: "chat",
           }, { delaySeconds: 0 });
           Logger.info(`[chat][${requestId}] Image task queued`);
+          logToDO(env, "image", prompt, "", aiConfig.provider, imageModel, "queued");
         } catch (e: any) {
           Logger.error(`[chat][${requestId}] Queue send failed`, { error: e?.message });
           return json({ reply: `❌ 图片任务提交失败: ${e?.message}`, source: "error" } satisfies ChatResponse);
@@ -126,10 +138,12 @@ export async function handleChat(request: Request, env: Env): Promise<Response> 
     });
 
     Logger.info(`[chat][${requestId}] reply`, { length: reply.length });
+    logToDO(env, "text", trimmed, reply.slice(0, 500), aiConfig.provider, aiConfig.model || "default", "success");
     return json({ reply, source: "ai" } satisfies ChatResponse);
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     Logger.error(`[chat][${requestId}] error`, { error: msg });
+    logToDO(env, "text", trimmed, "", aiConfig.provider || "unknown", aiConfig.model || "default", "failed", msg);
     return json({ reply: "错误: " + msg, source: "error" } satisfies ChatResponse);
   }
 }

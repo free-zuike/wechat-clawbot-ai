@@ -46,6 +46,7 @@
         <div class="log-meta">
           <span>🤖 {{ log.provider }} · {{ log.model }}</span>
           <span v-if="log.from_user"> · 👤 {{ log.from_user.slice(0, 15) }}</span>
+          <span class="log-source" :class="log.source">{{ sourceLabel(log.source) }}</span>
         </div>
         <div v-if="log.error" class="log-error">❌ {{ log.error }}</div>
         <div v-if="log.result && log.type === 'image' && log.result.startsWith('http')" class="log-preview">
@@ -106,6 +107,10 @@ function typeName(t: string) {
   return { text: "文字", image: "图片", video: "视频" }[t] || t;
 }
 
+function sourceLabel(s: string | null) {
+  return { chat: "🤖 AI测试", wechat: "💬 微信" }[s || ""] || (s ? `📱 ${s}` : "❓ 未知");
+}
+
 function formatTime(ts: number) {
   if (!ts) return "";
   const diff = Date.now() - ts;
@@ -134,7 +139,10 @@ onMounted(load);
 .log-status { font-size: 14px; }
 .log-time { font-size: 12px; color: var(--text-muted); margin-left: auto; }
 .log-prompt { font-size: 13px; font-weight: 500; word-break: break-all; margin-bottom: 4px; }
-.log-meta { font-size: 12px; color: var(--text-muted); margin-bottom: 4px; }
+.log-meta { font-size: 12px; color: var(--text-muted); margin-bottom: 4px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.log-source { font-size: 11px; font-weight: 600; padding: 1px 6px; border-radius: 3px; }
+.log-source.chat { background: rgba(99,102,241,0.15); color: #6366f1; }
+.log-source.wechat { background: rgba(34,197,94,0.15); color: #22c55e; }
 .log-error { color: var(--error); font-size: 12px; background: rgba(239,68,68,0.08); padding: 4px 8px; border-radius: 4px; margin-top: 4px; }
 .log-result { font-size: 12px; color: var(--text-muted); background: var(--bg-tertiary, rgba(0,0,0,0.05)); padding: 4px 8px; border-radius: 4px; margin-top: 4px; white-space: pre-wrap; word-break: break-all; }
 .log-preview { margin-top: 6px; }

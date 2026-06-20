@@ -301,6 +301,9 @@ export class ILinkConnectionDO implements DurableObject {
     if (url.pathname === "/generation-logs") {
       return this.handleGenerationLogs(request);
     }
+    if (url.pathname === "/log-generation") {
+      return this.handleLogGeneration(request);
+    }
     if (url.pathname === "/get-creds") {
       return this.handleGetCreds();
     }
@@ -880,6 +883,17 @@ export class ILinkConnectionDO implements DurableObject {
       );
     } catch (e: any) {
       Logger.warn("[DO] Failed to log generation", { error: e?.message });
+    }
+  }
+
+  private async handleLogGeneration(request: Request): Promise<Response> {
+    try {
+      const body = await request.json() as any;
+      const { type, prompt, result, provider, model, status, error, source, fromUser } = body;
+      await this.logGeneration(type, prompt, result, provider, model, status, error, source, fromUser);
+      return new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } });
+    } catch (e: any) {
+      return new Response(JSON.stringify({ ok: false, error: e?.message }), { headers: { "Content-Type": "application/json" }, status: 500 });
     }
   }
 
@@ -1753,7 +1767,7 @@ export class ILinkConnectionDO implements DurableObject {
                   );
                   await sendTextMessage(useCreds!, from, ctxToken, `🎬 ${modelInfo}\n\n视频生成任务已提交，稍后生成完成后会自动发送给您。`);
                   replyContent = `[视频生成] ${mediaPrompt}`;
-                  this.logGeneration("video", mediaPrompt, result.taskId, cfg.aiProvider, cfg.aiVideoModel, "queued", undefined, "", from);
+                  this.logGeneration("video", mediaPrompt, result.taskId, cfg.aiProvider, cfg.aiVideoModel, "queued", undefined, "wechat", from);
                   try {
                     await this.env.CLAWBOT_QUEUE.send({
                       type: "video_check",
@@ -1775,7 +1789,7 @@ export class ILinkConnectionDO implements DurableObject {
                 }
               } else {
                 await sendTextMessage(useCreds!, from, ctxToken, `❌ 视频生成失败 (${modelInfo})\n请稍后重试或换个描述试试`);
-                this.logGeneration("video", mediaPrompt, "", cfg.aiProvider, cfg.aiVideoModel, "failed", "视频提交失败", "", from);
+                this.logGeneration("video", mediaPrompt, "", cfg.aiProvider, cfg.aiVideoModel, "failed", "视频提交失败", "wechat", from);
               }
               stopTypingKeepAlive();
             } else {
@@ -1790,7 +1804,7 @@ export class ILinkConnectionDO implements DurableObject {
                   await sendImageSimple(useCreds!, from, ctxToken, imageData);
                   replyContent = `[图片生成] ${mediaPrompt}`;
                   this.broadcastToWebSockets({ type: "media_generated", mediaType: "image", url: imageData, model: cfg.aiImageModel, provider: cfg.aiProvider });
-                  this.logGeneration("image", mediaPrompt, imageData, cfg.aiProvider, cfg.aiImageModel, "success", undefined, "", from);
+                  this.logGeneration("image", mediaPrompt, imageData, cfg.aiProvider, cfg.aiImageModel, "success", undefined, "wechat", from);
                 } else {
                   // Uint8Array：转换为 Blob URL 后发送
                   const blob = new Blob([imageData.buffer as ArrayBuffer], { type: "image/png" });
@@ -1801,7 +1815,7 @@ export class ILinkConnectionDO implements DurableObject {
                 }
               } else {
                 await sendTextMessage(useCreds!, from, ctxToken, `❌ 图片生成失败 (${modelInfo})\n请稍后重试或换个描述试试`);
-                this.logGeneration("image", mediaPrompt, "", cfg.aiProvider, cfg.aiImageModel, "failed", "生成结果为空", "", from);
+                this.logGeneration("image", mediaPrompt, "", cfg.aiProvider, cfg.aiImageModel, "failed", "生成结果为空", "wechat", from);
               }
               stopTypingKeepAlive();
             }
@@ -1836,7 +1850,7 @@ export class ILinkConnectionDO implements DurableObject {
         const fullReply = `${reply}\n\n— ${aiInfo}`;
         await sendTextChunked(useCreds!, from, ctxToken, fullReply);
         replyContent = reply;
-        this.logGeneration("text", text, (reply || "").slice(0, 500), cfg.aiProvider, aiModel, "success", undefined, "", from);
+        this.logGeneration("text", text, (reply || "").slice(0, 500), cfg.aiProvider, aiModel, "success", undefined, "wechat", from);
         replyAt = new Date().toISOString();
         aiSuccessCount++;
         await this.markMessageProcessed(messageId);
