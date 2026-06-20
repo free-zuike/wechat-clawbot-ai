@@ -68,10 +68,14 @@ export default {
       const isFromChat = source === "chat";
       Logger.info("[queue] Task received", { type, prompt: prompt?.slice(0, 50), model, provider, source });
 
-      function logGen(tp: string, pr: string, rs: string, pv: string, md: string, st: string, er?: string, src?: string) {
-        const p = new URLSearchParams({ t: tp, p: pr.slice(0, 200), r: rs.slice(0, 200), pv, m: md, s: st, e: er || "", src: src || source || "" });
-        const doStub = env.ILINK_CONNECTION.get(env.ILINK_CONNECTION.idFromName("main"));
-        doStub.fetch(new Request(`http://localhost/log-generation?${p}`)).catch((e: any) => console.error("[queue] logGen failed:", e?.message));
+      async function logGen(tp: string, pr: string, rs: string, pv: string, md: string, st: string, er?: string, src?: string) {
+        try {
+          const p = new URLSearchParams({ t: tp, p: pr.slice(0, 200), r: rs.slice(0, 200), pv, m: md, s: st, e: er || "", src: src || source || "" });
+          const doStub = env.ILINK_CONNECTION.get(env.ILINK_CONNECTION.idFromName("main"));
+          await doStub.fetch(new Request(`http://localhost/log-generation?${p}`));
+        } catch (e: any) {
+          console.error("[queue] logGen failed:", e?.message);
+        }
       }
 
       try {
