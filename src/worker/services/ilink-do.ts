@@ -882,19 +882,27 @@ export class ILinkConnectionDO implements DurableObject {
         `INSERT INTO generation_logs (type, prompt, result, provider, model, status, error, source, from_user, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         type, (prompt || "").slice(0, 500), (result || "").slice(0, 1000), provider, model, status, error || "", source || "", fromUser || "", Date.now()
       );
-      Logger.info("[DO] Generation logged", { type, provider, model, status, source });
+      console.log("[DO] logGeneration OK", { type, provider, model, source });
     } catch (e: any) {
-      Logger.error("[DO] Failed to log generation", { error: e?.message, type, provider });
+      console.error("[DO] logGeneration FAILED", e?.message, { type, provider });
     }
   }
 
   private async handleLogGeneration(request: Request): Promise<Response> {
     try {
-      const body = await request.json() as any;
+      await this.initSQLite();
+      const text = await request.text();
+      const body = JSON.parse(text);
       const { type, prompt, result, provider, model, status, error, source, fromUser } = body;
-      await this.logGeneration(type, prompt, result, provider, model, status, error, source, fromUser);
+      console.log("[DO] handleLogGeneration called", { type, provider, model, status, source });
+      this.doState.storage.sql.exec(
+        `INSERT INTO generation_logs (type, prompt, result, provider, model, status, error, source, from_user, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        type || "unknown", (prompt || "").slice(0, 500), (result || "").slice(0, 1000), provider || "", model || "", status || "success", error || "", source || "", fromUser || "", Date.now()
+      );
+      console.log("[DO] Generation log inserted OK");
       return new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } });
     } catch (e: any) {
+      console.error("[DO] handleLogGeneration FAILED", e?.message);
       return new Response(JSON.stringify({ ok: false, error: e?.message }), { headers: { "Content-Type": "application/json" }, status: 500 });
     }
   }
@@ -939,6 +947,24 @@ export class ILinkConnectionDO implements DurableObject {
       from_user: r.from_user,
       created_at: r.created_at,
     }));
+    console.log("[DO] handleGenerationLogs query result", { count: rows.length, sql: sql.slice(0, 100) });
+
+    // 自检：如果没有记录，尝试插入一条测试记录确认表可用
+    if (rows.length === 0) {
+      try {
+        this.doState.storage.sql.exec(
+          `INSERT INTO generation_logs (type, prompt, result, provider, model, status, error, source, from_user, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          "test", "self-check", "", "system", "system", "success", "", "system", "", Date.now()
+        );
+        console.log("[DO] Self-check: test record inserted");
+        // 再读一次
+        const retryCursor = this.doState.storage.sql.exec(`SELECT COUNT(*) as cnt FROM generation_logs`);
+        const retryRows = retryCursor.toArray ? retryCursor.toArray() : [];
+        console.log("[DO] Self-check: count after insert", retryRows);
+      } catch (e: any) {
+        console.error("[DO] Self-check FAILED", e?.message);
+      }
+    }
     return new Response(JSON.stringify({ ok: true, logs: rows, total: rows.length }), { headers: corsHeaders });
   }
 

@@ -7,14 +7,18 @@ import { configCache } from "../utils/cache";
 import { resolveAIConfig } from "./config";
 import type { Env } from "../index";
 
-function logToDO(env: Env, type: string, prompt: string, result: string, provider: string, model: string, status: string, error?: string) {
-  const doId = env.ILINK_CONNECTION.idFromName("main");
-  const doStub = env.ILINK_CONNECTION.get(doId);
-  doStub.fetch(new Request("http://localhost/log-generation", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ type, prompt, result, provider, model, status, error, source: "chat" }),
-  })).catch(() => {});
+async function logToDO(env: Env, type: string, prompt: string, result: string, provider: string, model: string, status: string, error?: string) {
+  try {
+    const doId = env.ILINK_CONNECTION.idFromName("main");
+    const doStub = env.ILINK_CONNECTION.get(doId);
+    await doStub.fetch(new Request("http://localhost/log-generation", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type, prompt, result, provider, model, status, error, source: "chat" }),
+    }));
+  } catch (e: any) {
+    console.error("[chat] logToDO failed:", e?.message);
+  }
 }
 
 interface ChatResponse {
