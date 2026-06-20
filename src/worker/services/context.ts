@@ -118,7 +118,7 @@ export async function clearContextSQLite(sql: SqlStorage, userId: string): Promi
 
 // ========== 通用工具函数 ==========
 
-// 构建带上下文的 AI 消息数组
+// 构建带上下文的 AI 消息数组（带 token 截断）
 export function buildMessagesWithContext(
   systemPrompt: string,
   userMessage: string,
@@ -128,15 +128,21 @@ export function buildMessagesWithContext(
     { role: "system", content: systemPrompt }
   ];
 
-  // 添加历史消息
-  for (const msg of context.messages) {
-    messages.push({
-      role: msg.role,
-      content: msg.content
-    });
-  }
+  const MAX_CHARS = 12000;
+  let totalChars = 0;
 
-  // 添加当前用户消息
+  // 从最新消息往前加，超过上限截断
+  const recentMessages = [...context.messages].reverse();
+  const kept: Array<{ role: string; content: string }> = [];
+  for (const msg of recentMessages) {
+    const msgLen = msg.content.length;
+    if (totalChars + msgLen > MAX_CHARS) break;
+    totalChars += msgLen;
+    kept.push({ role: msg.role, content: msg.content });
+  }
+  kept.reverse();
+  messages.push(...kept);
+
   messages.push({ role: "user", content: userMessage });
 
   return messages;

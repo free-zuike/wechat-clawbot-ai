@@ -44,12 +44,10 @@ export async function verifyAdmin(request: Request, env: any): Promise<{ ok: boo
     } catch (_e) {}
   }
 
-  // 2. 管理员密码
+  // 2. 管理员密码（仅支持 Basic Auth header，不支持 URL 参数传密码）
   if (!env.ADMIN_PASSWORD || env.ADMIN_PASSWORD.length < 3) {
     return { ok: false, error: "请先配置 ADMIN_PASSWORD" };
   }
-  const url = new URL(request.url);
-  const queryPwd = url.searchParams.get("pwd") || "";
   const authHeader = request.headers.get("Authorization") || "";
   let headerOk = false;
   const m = authHeader.match(/^Basic\s+(.+)$/i);
@@ -60,10 +58,6 @@ export async function verifyAdmin(request: Request, env: any): Promise<{ ok: boo
       headerOk = (colon >= 0 ? decoded.slice(colon + 1) : decoded) === env.ADMIN_PASSWORD;
     } catch (_e) {}
   }
-  if (queryPwd === env.ADMIN_PASSWORD || headerOk) return { ok: true };
+  if (headerOk) return { ok: true };
   return { ok: false, error: "管理员密码不正确" };
-}
-
-export function extractPassword(request: Request): string {
-  return new URL(request.url).searchParams.get("pwd") || "";
 }

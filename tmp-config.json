@@ -1,1 +1,0 @@
-{"aiProvider":"cloudflare","aiModel":"","aiBaseUrl":"","aiApiKey":"","aiMaxTokens":1024,"aiSystemPrompt":"","webhookUrl":"https://beeswarm.zuike.qzz.io/api/admin/webhook/push","webhookEnabled":true,"webhookTitle":"","webhookApiKey":"1b1e3fa9d45e44e491d82b369eca75c7","webhookChannels":["wework"],"aiCustomProviders":[]}
