@@ -281,6 +281,19 @@ watch(
   () => { if (props.config.aiProvider) syncCurrentToPreset(); },
   { deep: true }
 );
+
+// 页面加载时，从当前提供商的 preset 中恢复 backupKeys
+watch(
+  () => props.config.aiPresets,
+  (presets) => {
+    if (!presets || !props.config.aiProvider) return;
+    const preset = presets.find(p => p.id === props.config.aiProvider);
+    if (preset && backupKeys.value.length === 0) {
+      backupKeys.value = [...(preset.apiKeys || [])];
+    }
+  },
+  { immediate: true }
+);
 </script>
 
 <style scoped>
