@@ -183,6 +183,23 @@ export class ILinkConnectionDO implements DurableObject {
       )
     `);
 
+    // generation_logs 表：保存所有生成记录（文字/图片/视频）
+    await sql.exec(`
+      CREATE TABLE IF NOT EXISTS generation_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        type TEXT NOT NULL,
+        prompt TEXT,
+        result TEXT,
+        provider TEXT,
+        model TEXT,
+        status TEXT DEFAULT 'success',
+        error TEXT,
+        source TEXT,
+        from_user TEXT,
+        created_at INTEGER NOT NULL
+      )
+    `);
+
     this.sqliteInitialized = true;
     Logger.info("[DO] SQLite tables initialized");
   }
@@ -280,6 +297,9 @@ export class ILinkConnectionDO implements DurableObject {
     }
     if (url.pathname === "/pending-videos") {
       return this.handlePendingVideos(request);
+    }
+    if (url.pathname === "/generation-logs") {
+      return this.handleGenerationLogs(request);
     }
     if (url.pathname === "/get-creds") {
       return this.handleGetCreds();
@@ -847,6 +867,63 @@ export class ILinkConnectionDO implements DurableObject {
       retry_count: r.retry_count || 0,
     }));
     return new Response(JSON.stringify({ ok: true, tasks: rows, total: rows.length }), { headers: corsHeaders });
+  }
+
+  // ========== 生成记录日志 ==========
+
+  private async logGeneration(type: string, prompt: string, result: string, provider: string, model: string, status: string, error?: string, source?: string, fromUser?: string): Promise<void> {
+    try {
+      await this.initSQLite();
+      this.doState.storage.sql.exec(
+        `INSERT INTO generation_logs (type, prompt, result, provider, model, status, error, source, from_user, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        type, (prompt || "").slice(0, 500), (result || "").slice(0, 1000), provider, model, status, error || null, source || null, fromUser || null, Date.now()
+      );
+    } catch (e: any) {
+      Logger.warn("[DO] Failed to log generation", { error: e?.message });
+    }
+  }
+
+  private async handleGenerationLogs(request: Request): Promise<Response> {
+    await this.initSQLite();
+    const url = new URL(request.url);
+    const corsHeaders = { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" };
+
+    if (request.method === "DELETE") {
+      const id = url.searchParams.get("id");
+      const deleteAll = url.searchParams.get("all") === "true";
+      if (id) {
+        this.doState.storage.sql.exec(`DELETE FROM generation_logs WHERE id = ?`, parseInt(id));
+      } else if (deleteAll) {
+        this.doState.storage.sql.exec(`DELETE FROM generation_logs`);
+      }
+      return new Response(JSON.stringify({ ok: true }), { headers: corsHeaders });
+    }
+
+    const typeFilter = url.searchParams.get("type");
+    const limit = parseInt(url.searchParams.get("limit") || "50");
+    let sql = `SELECT id, type, prompt, result, provider, model, status, error, source, from_user, created_at FROM generation_logs`;
+    const params: any[] = [];
+    if (typeFilter) {
+      sql += ` WHERE type = ?`;
+      params.push(typeFilter);
+    }
+    sql += ` ORDER BY created_at DESC LIMIT ?`;
+    params.push(limit);
+    const cursor = this.doState.storage.sql.exec(sql, ...params);
+    const rows = (cursor.toArray ? cursor.toArray() : []).map((r: any) => ({
+      id: r.id,
+      type: r.type,
+      prompt: r.prompt,
+      result: r.result,
+      provider: r.provider,
+      model: r.model,
+      status: r.status,
+      error: r.error,
+      source: r.source,
+      from_user: r.from_user,
+      created_at: r.created_at,
+    }));
+    return new Response(JSON.stringify({ ok: true, logs: rows, total: rows.length }), { headers: corsHeaders });
   }
 
   // ========== Cron 检查待处理的视频任务 ==========
@@ -1676,7 +1753,7 @@ export class ILinkConnectionDO implements DurableObject {
                   );
                   await sendTextMessage(useCreds!, from, ctxToken, `🎬 ${modelInfo}\n\n视频生成任务已提交，稍后生成完成后会自动发送给您。`);
                   replyContent = `[视频生成] ${mediaPrompt}`;
-                  // 调度 Queue 首次检查：30 秒后
+                  this.logGeneration("video", mediaPrompt, result.taskId, cfg.aiProvider, cfg.aiVideoModel, "queued", undefined, "", from);
                   try {
                     await this.env.CLAWBOT_QUEUE.send({
                       type: "video_check",
@@ -1698,6 +1775,7 @@ export class ILinkConnectionDO implements DurableObject {
                 }
               } else {
                 await sendTextMessage(useCreds!, from, ctxToken, `❌ 视频生成失败 (${modelInfo})\n请稍后重试或换个描述试试`);
+                this.logGeneration("video", mediaPrompt, "", cfg.aiProvider, cfg.aiVideoModel, "failed", "视频提交失败", "", from);
               }
               stopTypingKeepAlive();
             } else {
@@ -1711,8 +1789,8 @@ export class ILinkConnectionDO implements DurableObject {
                   // URL：使用简单方式发送
                   await sendImageSimple(useCreds!, from, ctxToken, imageData);
                   replyContent = `[图片生成] ${mediaPrompt}`;
-                  // 广播图片到 WebSocket（管理后台显示）
                   this.broadcastToWebSockets({ type: "media_generated", mediaType: "image", url: imageData, model: cfg.aiImageModel, provider: cfg.aiProvider });
+                  this.logGeneration("image", mediaPrompt, imageData, cfg.aiProvider, cfg.aiImageModel, "success", undefined, "", from);
                 } else {
                   // Uint8Array：转换为 Blob URL 后发送
                   const blob = new Blob([imageData.buffer as ArrayBuffer], { type: "image/png" });
@@ -1723,6 +1801,7 @@ export class ILinkConnectionDO implements DurableObject {
                 }
               } else {
                 await sendTextMessage(useCreds!, from, ctxToken, `❌ 图片生成失败 (${modelInfo})\n请稍后重试或换个描述试试`);
+                this.logGeneration("image", mediaPrompt, "", cfg.aiProvider, cfg.aiImageModel, "failed", "生成结果为空", "", from);
               }
               stopTypingKeepAlive();
             }
@@ -1757,6 +1836,7 @@ export class ILinkConnectionDO implements DurableObject {
         const fullReply = `${reply}\n\n— ${aiInfo}`;
         await sendTextChunked(useCreds!, from, ctxToken, fullReply);
         replyContent = reply;
+        this.logGeneration("text", text, (reply || "").slice(0, 500), cfg.aiProvider, aiModel, "success", undefined, "", from);
         replyAt = new Date().toISOString();
         aiSuccessCount++;
         await this.markMessageProcessed(messageId);

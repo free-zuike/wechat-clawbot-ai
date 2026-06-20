@@ -388,3 +388,34 @@ export async function deleteAllFailedPendingVideos(): Promise<{ ok: boolean }> {
   return apiFetch(`/api/admin/pending-videos?failed=true`, { method: "DELETE" });
 }
 
+// ===== Generation Logs =====
+export interface GenerationLog {
+  id: number;
+  type: string;
+  prompt: string;
+  result: string;
+  provider: string;
+  model: string;
+  status: string;
+  error: string | null;
+  source: string | null;
+  from_user: string | null;
+  created_at: number;
+}
+
+export async function fetchGenerationLogs(type?: string, limit?: number): Promise<{ ok: boolean; logs: GenerationLog[]; total: number }> {
+  const params = new URLSearchParams();
+  if (type) params.set("type", type);
+  if (limit) params.set("limit", String(limit));
+  const qs = params.toString() ? `?${params}` : "";
+  return apiFetch(`/api/admin/generation-logs${qs}`, { cancelable: "generation-logs" });
+}
+
+export async function deleteGenerationLog(id: number): Promise<{ ok: boolean }> {
+  return apiFetch(`/api/admin/generation-logs?id=${id}`, { method: "DELETE" });
+}
+
+export async function clearAllGenerationLogs(): Promise<{ ok: boolean }> {
+  return apiFetch(`/api/admin/generation-logs?all=true`, { method: "DELETE" });
+}
+

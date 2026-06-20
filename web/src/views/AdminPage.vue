@@ -152,6 +152,9 @@
       <section v-if="activeSection === 'videos'">
         <PendingVideosPanel />
       </section>
+      <section v-if="activeSection === 'logs'">
+        <GenerationLogsPanel />
+      </section>
     </main>
   </div>
 </template>
@@ -173,6 +176,7 @@ import SessionsPanel from "../components/admin/SessionsPanel.vue";
 import TemplatesPanel from "../components/admin/TemplatesPanel.vue";
 import TaskPanel from "../components/admin/TaskPanel.vue";
 import PendingVideosPanel from "../components/admin/PendingVideosPanel.vue";
+import GenerationLogsPanel from "../components/admin/GenerationLogsPanel.vue";
 
 const router = useRouter();
 
@@ -192,6 +196,7 @@ const navItems = [
   { key: "sessions", label: "用户会话", icon: "💬" },
   { key: "templates", label: "消息模板", icon: "📋" },
   { key: "videos", label: "视频任务", icon: "🎬" },
+  { key: "logs", label: "生成记录", icon: "📝" },
 ];
 const activeSection = ref("status");
 let isFirstRefresh = true;
