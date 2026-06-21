@@ -83,7 +83,10 @@ export async function handleChat(request: Request, env: Env): Promise<Response> 
     const videoModel = activePreset?.videoModel || "";
     const allKeys = aiConfig.allKeys || [];
     const maxRetries = aiConfig.maxRetries || 2;
-    const modelInfo = `${aiConfig.provider} · `;
+    const customProviders = (kv.aiCustomProviders as any[]) || [];
+    const foundProvider = customProviders.find((p: any) => p.id === aiConfig.provider);
+    const providerDisplayName = foundProvider?.name || aiConfig.provider;
+    const modelInfo = `${providerDisplayName} · `;
 
     // 检查图片/视频生成请求
     if (isImageGenerationRequest(trimmed) || isVideoGenerationRequest(trimmed)) {
