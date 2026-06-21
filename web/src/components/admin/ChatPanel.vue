@@ -28,7 +28,7 @@
           </template>
           <!-- 普通显示 -->
           <template v-else>
-            <template v-if="renderMessage(msg.text).isImage">
+            <template v-if="msg.role === 'b'">
               <div v-html="renderMessage(msg.text).html"></div>
             </template>
             <template v-else>
@@ -214,4 +214,13 @@ function renderMessage(text: string): { isImage: boolean; html: string; text: st
 .quote-close:hover { color: var(--error); }
 .input-row { display: flex; gap: 8px; align-items: center; }
 .input-row .input { flex: 1; }
+.bubble :deep(blockquote) {
+  margin: 0 0 8px 0;
+  padding: 6px 10px;
+  border-left: 3px solid var(--link, #6366f1);
+  background: var(--bg-secondary, rgba(255,255,255,0.06));
+  border-radius: 0 6px 6px 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
 </style>

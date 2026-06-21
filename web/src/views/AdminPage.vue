@@ -412,7 +412,7 @@ async function handleSendChat() {
   try {
     const d = await chat(fullMessage);
     if (d === null) { chatLoading.value = false; return; }
-    chatMessages.value.push({ role: "b", text: `> ${q}\n\n${d.reply}${d.source === "shortcut" ? " [快捷回复]" : ""}` });
+    chatMessages.value.push({ role: "b", text: `<blockquote>${q}</blockquote>\n${d.reply}${d.source === "shortcut" ? " [快捷回复]" : ""}` });
   } catch (e: any) {
     if (e instanceof ApiError && e.isCancelled) { chatLoading.value = false; return; }
     chatMessages.value.push({ role: "b", text: "错误: " + handleApiError(e, "AI 回复失败") });
@@ -429,7 +429,7 @@ function handleEditChat(idx: number, newText: string) {
   chatInput.value = "";
   chatLoading.value = true;
   chat(newText).then(d => {
-    if (d) chatMessages.value.push({ role: "b", text: `> ${newText}\n\n${d.reply}${d.source === "shortcut" ? " [快捷回复]" : ""}` });
+    if (d) chatMessages.value.push({ role: "b", text: `<blockquote>${newText}</blockquote>\n${d.reply}${d.source === "shortcut" ? " [快捷回复]" : ""}` });
   }).catch(e => {
     chatMessages.value.push({ role: "b", text: "错误: " + handleApiError(e, "AI 回复失败") });
   }).finally(() => { chatLoading.value = false; });
@@ -490,7 +490,7 @@ function connectWebSocket() {
         if (msg.source === "chat") {
           const icon = msg.mediaType === "video" ? "🎬" : "🎨";
           const modelInfo = `${msg.provider || "unknown"} · ${msg.model || "unknown"}`;
-          const quoteText = msg.prompt ? `> ${msg.prompt}\n\n` : "";
+          const quoteText = msg.prompt ? `<blockquote>${msg.prompt}</blockquote>\n` : "";
           chatMessages.value.push({
             role: "b",
             text: `${quoteText}${icon} ${modelInfo}\n\n${msg.mediaType === "video" ? "视频已生成！" : "图片已生成！"}\n\n${msg.mediaType === "video" ? `<video src="${msg.url}" controls style="max-width:100%;border-radius:8px"></video>` : `![生成的图片](${msg.url})`}`,
