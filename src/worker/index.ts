@@ -240,6 +240,12 @@ export default {
               } catch (e: any) {
                 Logger.error("[queue] Video broadcast failed", { error: e?.message, taskId });
               }
+              // 更新状态防止 checkPendingVideos 重复处理
+              await doStub.fetch(new Request("http://localhost/store-pending-video", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ taskId, videoId, status: "completed", videoUrl }),
+              }));
             }
           } else if (isFailed) {
             Logger.error("[queue] Video generation failed", { taskId, error: JSON.stringify(statusData.error).slice(0, 200) });
