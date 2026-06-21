@@ -105,11 +105,13 @@
           :messages="chatMessages"
           :input="chatInput"
           :loading="chatLoading"
+          :quote-text="chatQuoteText"
           @send="handleSendChat"
           @update:input="(v: string) => chatInput = v"
           @resend="(text: string) => { chatInput = text; handleSendChat(); }"
           @edit="(idx: number, newText: string) => handleEditChat(idx, newText)"
-          @quote="(text: string) => chatInput = '> ' + text.replace(/\n/g, '\\n') + '\\n\\n' + chatInput"
+          @quote="(text: string) => chatQuoteText = text"
+          @clear-quote="chatQuoteText = ''"
         />
       </section>
 
@@ -219,6 +221,7 @@ const configSaving = ref(false);
 // ===== Chat =====
 const chatMessages = ref<Array<{ role: string; text: string }>>([]);
 const chatInput = ref("");
+const chatQuoteText = ref("");
 const chatLoading = ref(false);
 
 // ===== QR =====
@@ -404,9 +407,10 @@ async function handleSaveConfig() {
 // ===== Chat =====
 async function handleSendChat() {
   const q = chatInput.value.trim(); if (!q || chatLoading.value) return;
-  chatMessages.value.push({ role: "u", text: q }); chatInput.value = ""; chatLoading.value = true;
+  const fullMessage = chatQuoteText.value ? `[引用] ${chatQuoteText.value}\n\n${q}` : q;
+  chatMessages.value.push({ role: "u", text: q }); chatInput.value = ""; chatQuoteText.value = ""; chatLoading.value = true;
   try {
-    const d = await chat(q);
+    const d = await chat(fullMessage);
     if (d === null) { chatLoading.value = false; return; }
     chatMessages.value.push({ role: "b", text: `> ${q}\n\n${d.reply}${d.source === "shortcut" ? " [快捷回复]" : ""}` });
   } catch (e: any) {

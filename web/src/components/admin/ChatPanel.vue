@@ -46,17 +46,24 @@
     </div>
 
     <div class="chat-input">
-      <input
-        :value="input"
-        @input="$emit('update:input', ($event.target as HTMLInputElement).value)"
-        class="input"
-        placeholder="输入消息..."
-        :disabled="loading"
-        @keyup.enter="$emit('send')"
-      />
-      <button class="btn" :disabled="loading || !input.trim()" @click="$emit('send')">
-        {{ loading ? "发送中..." : "发送" }}
-      </button>
+      <div v-if="quoteText" class="quote-bar">
+        <span class="quote-icon">💬</span>
+        <span class="quote-content">{{ quoteText.slice(0, 80) }}{{ quoteText.length > 80 ? '...' : '' }}</span>
+        <button class="quote-close" @click="$emit('clear-quote')">✕</button>
+      </div>
+      <div class="input-row">
+        <input
+          :value="input"
+          @input="$emit('update:input', ($event.target as HTMLInputElement).value)"
+          class="input"
+          placeholder="输入消息..."
+          :disabled="loading"
+          @keyup.enter="$emit('send')"
+        />
+        <button class="btn" :disabled="loading || !input.trim()" @click="$emit('send')">
+          {{ loading ? "发送中..." : "发送" }}
+        </button>
+      </div>
     </div>
 
     <div class="notice" style="margin-top: 16px">
@@ -72,9 +79,10 @@ defineProps<{
   messages: Array<{ role: string; text: string }>;
   input: string;
   loading: boolean;
+  quoteText?: string;
 }>();
 
-const emit = defineEmits(["send", "update:input", "edit", "resend", "quote"]);
+const emit = defineEmits(["send", "update:input", "edit", "resend", "quote", "clear-quote"]);
 
 const hoverIdx = ref(-1);
 const editingIdx = ref(-1);
@@ -188,4 +196,22 @@ function renderMessage(text: string): { isImage: boolean; html: string; text: st
   color: var(--text-primary);
   border: 1px solid var(--border-light);
 }
+.quote-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  margin-bottom: 6px;
+  background: var(--bg-secondary, rgba(255,255,255,0.06));
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+  border-left: 3px solid var(--link);
+}
+.quote-icon { flex-shrink: 0; }
+.quote-content { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.quote-close { background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 14px; padding: 0 4px; }
+.quote-close:hover { color: var(--error); }
+.input-row { display: flex; gap: 8px; align-items: center; }
+.input-row .input { flex: 1; }
 </style>
