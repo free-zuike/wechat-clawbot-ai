@@ -66,6 +66,10 @@
       </div>
     </div>
 
+    <div class="chat-toolbar">
+      <button class="btn secondary tiny" @click="$emit('clear-chat')">🗑️ 清空聊天</button>
+    </div>
+
     <div class="notice" style="margin-top: 16px">
       💬 <strong>提示：</strong>常见问候语使用本地快捷回复（零 Token 消耗），其他消息走 AI 模型。
     </div>
@@ -82,7 +86,7 @@ defineProps<{
   quoteText?: string;
 }>();
 
-const emit = defineEmits(["send", "update:input", "edit", "resend", "quote", "clear-quote"]);
+const emit = defineEmits(["send", "update:input", "edit", "resend", "quote", "clear-quote", "clear-chat"]);
 
 const hoverIdx = ref(-1);
 const editingIdx = ref(-1);
@@ -218,6 +222,8 @@ function renderMessage(text: string): { isImage: boolean; html: string; text: st
 .quote-close:hover { color: var(--error); }
 .input-row { display: flex; gap: 8px; align-items: center; }
 .input-row .input { flex: 1; }
+.chat-toolbar { display: flex; justify-content: flex-end; margin-top: 8px; }
+.chat-toolbar .btn { font-size: 12px; padding: 4px 10px; }
 .bubble :deep(blockquote) {
   margin: 0 0 8px 0;
   padding: 6px 10px;
