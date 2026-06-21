@@ -946,10 +946,19 @@ export class ILinkConnectionDO implements DurableObject {
         fromUser = body.fromUser || "";
       }
 
-      console.log("[DO] handleLogGeneration", { type, provider, model, source });
+      // 查找提供商名称
+      let providerName = "";
+      try {
+        const cfg = await this.getConfigCached();
+        const customProviders = (cfg as any).aiCustomProviders || [];
+        const found = customProviders.find((p: any) => p.id === provider);
+        if (found) providerName = found.name || "";
+      } catch {}
+
+      console.log("[DO] handleLogGeneration", { type, provider, model, source, providerName });
       this.doState.storage.sql.exec(
-        `INSERT INTO generation_logs (type, prompt, result, provider, model, status, error, source, from_user, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        type, prompt.slice(0, 500), result.slice(0, 1000), provider, model, status, error, source, fromUser, Date.now()
+        `INSERT INTO generation_logs (type, prompt, result, provider, model, status, error, source, from_user, created_at, key_index, provider_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        type, prompt.slice(0, 500), result.slice(0, 1000), provider, model, status, error, source, fromUser, Date.now(), 0, providerName
       );
       return new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } });
     } catch (e: any) {
