@@ -113,6 +113,7 @@
           @quote="(text: string) => chatQuoteText = text"
           @clear-quote="chatQuoteText = ''"
           @clear-chat="chatMessages = []"
+          @delete-msg="(idx: number) => chatMessages.splice(idx, 1)"
         />
       </section>
 

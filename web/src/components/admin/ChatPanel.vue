@@ -41,6 +41,7 @@
           <button v-if="msg.role === 'u'" class="action-btn" title="编辑并重新发送" @click="startEdit(i, msg.text)">✏️</button>
           <button v-if="msg.role === 'u'" class="action-btn" title="重新发送" @click="$emit('resend', msg.text)">🔄</button>
           <button class="action-btn" title="引用此消息" @click="$emit('quote', msg.text)">💬</button>
+          <button class="action-btn" title="删除此消息" @click="$emit('delete-msg', i)">🗑️</button>
         </div>
       </div>
     </div>
@@ -86,7 +87,7 @@ defineProps<{
   quoteText?: string;
 }>();
 
-const emit = defineEmits(["send", "update:input", "edit", "resend", "quote", "clear-quote", "clear-chat"]);
+const emit = defineEmits(["send", "update:input", "edit", "resend", "quote", "clear-quote", "clear-chat", "delete-msg"]);
 
 const hoverIdx = ref(-1);
 const editingIdx = ref(-1);
