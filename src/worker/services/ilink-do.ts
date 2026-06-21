@@ -1667,7 +1667,7 @@ export class ILinkConnectionDO implements DurableObject {
     const allKeys = [aiApiKey, ...backupKeys].filter(Boolean);
     const aiMaxRetries = (kvConfig.aiMaxRetries as number) || 2;
 
-    const cfg = { aiSystemPrompt, aiModel, aiProvider, aiBaseUrl, aiApiKey, aiMaxTokens, aiImageModel, aiVideoModel, allKeys, aiMaxRetries, webhook: { enabled: webhookEnabled, url: webhookUrl, title: webhookTitle, apiKey: webhookApiKey, channels: webhookChannels } };
+    const cfg = { aiSystemPrompt, aiModel, aiProvider, aiBaseUrl, aiApiKey, aiMaxTokens, aiImageModel, aiVideoModel, allKeys, aiMaxRetries, aiCustomProviders: (kvConfig.aiCustomProviders as any[]) || [], webhook: { enabled: webhookEnabled, url: webhookUrl, title: webhookTitle, apiKey: webhookApiKey, channels: webhookChannels } };
     this.cache.config = cfg;
     this.cache.configLoadedAt = now;
     Logger.info("[DO] Config loaded", { webhookEnabled, hasWebhookUrl: !!webhookUrl, provider: aiProvider });
