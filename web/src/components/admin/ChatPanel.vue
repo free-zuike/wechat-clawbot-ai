@@ -132,7 +132,11 @@ function renderMessage(text: string): { isImage: boolean; html: string; text: st
       text,
     };
   }
-  return { isImage: false, html: "", text };
+  // 包含 HTML 标签（blockquote/video/img）时直接渲染
+  if (/<[a-z][\s\S]*>/i.test(text)) {
+    return { isImage: false, html: text, text };
+  }
+  return { isImage: false, html: text, text };
 }
 </script>
 
