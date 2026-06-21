@@ -61,6 +61,7 @@ export class ILinkConnectionDO implements DurableObject {
   };
   private sqliteInitialized = false;
   private pendingVideosColumnsEnsured = false;
+  private generationLogsColumnsEnsured = false;
 
   constructor(state: DurableObjectState, env: any) {
     this.doState = state;
@@ -234,6 +235,30 @@ export class ILinkConnectionDO implements DurableObject {
       this.pendingVideosColumnsEnsured = true;
     } catch (e: any) {
       Logger.warn("[DO] pending_videos column check failed", { error: e?.message });
+    }
+  }
+
+  private async ensureGenerationLogsColumns(): Promise<void> {
+    if (this.generationLogsColumnsEnsured) return;
+    try {
+      const sql = this.doState.storage.sql;
+      const info = await sql.exec("PRAGMA table_info(generation_logs)");
+      if (!info) return;
+      const rows = info.toArray ? info.toArray() : [];
+      const cols = new Set(rows.map((r: any) => r.name as string));
+      const needAdd: [string, string][] = [
+        ["key_index", "INTEGER DEFAULT 0"],
+        ["provider_name", "TEXT"],
+      ];
+      for (const [col, type] of needAdd) {
+        if (!cols.has(col)) {
+          await sql.exec(`ALTER TABLE generation_logs ADD COLUMN ${col} ${type}`);
+          Logger.info("[DO] generation_logs column added", { column: col });
+        }
+      }
+      this.generationLogsColumnsEnsured = true;
+    } catch (e: any) {
+      Logger.warn("[DO] generation_logs column check failed", { error: e?.message });
     }
   }
 
@@ -879,6 +904,7 @@ export class ILinkConnectionDO implements DurableObject {
   private async logGeneration(type: string, prompt: string, result: string, provider: string, model: string, status: string, error?: string, source?: string, fromUser?: string, keyIndex?: number, providerName?: string): Promise<void> {
     try {
       if (!this.sqliteInitialized) await this.initSQLite();
+      await this.ensureGenerationLogsColumns();
       const sql = this.doState.storage.sql;
       sql.exec(
         `INSERT INTO generation_logs (type, prompt, result, provider, model, status, error, source, from_user, created_at, key_index, provider_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -934,6 +960,7 @@ export class ILinkConnectionDO implements DurableObject {
 
   private async handleGenerationLogs(request: Request): Promise<Response> {
     await this.initSQLite();
+    await this.ensureGenerationLogsColumns();
     const url = new URL(request.url);
     const corsHeaders = { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" };
 
