@@ -51,7 +51,9 @@
           </div>
           <div v-if="task.error_message" class="task-error">❌ {{ task.error_message }}</div>
           <div v-if="task.retry_count > 0" class="task-retry">🔄 已重试 {{ task.retry_count }} 次</div>
-          <div v-if="task.video_url" class="task-url">🔗 <a :href="task.video_url" target="_blank">查看视频</a></div>
+          <div v-if="task.video_url" class="task-url">
+            <video :src="task.video_url" controls style="max-width:300px;max-height:180px;border-radius:6px"></video>
+          </div>
         </div>
         <button class="btn tiny danger" @click="del(task.task_id)">删除</button>
       </div>
