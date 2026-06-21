@@ -203,6 +203,52 @@ export class ILinkConnectionDO implements DurableObject {
 
     this.sqliteInitialized = true;
     Logger.info("[DO] SQLite tables initialized");
+
+    // D1: 确保持久化表存在
+    if (this.env.DB) {
+      try {
+        await this.env.DB.exec(`
+          CREATE TABLE IF NOT EXISTS generation_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            type TEXT NOT NULL,
+            prompt TEXT,
+            result TEXT,
+            provider TEXT,
+            model TEXT,
+            status TEXT DEFAULT 'success',
+            error TEXT,
+            source TEXT,
+            from_user TEXT,
+            key_index INTEGER DEFAULT 0,
+            provider_name TEXT,
+            created_at INTEGER NOT NULL
+          )
+        `);
+        await this.env.DB.exec(`
+          CREATE TABLE IF NOT EXISTS pending_videos (
+            task_id TEXT PRIMARY KEY,
+            video_id TEXT,
+            prompt TEXT NOT NULL,
+            model TEXT NOT NULL,
+            provider TEXT NOT NULL,
+            base_url TEXT NOT NULL,
+            api_key TEXT NOT NULL,
+            status TEXT DEFAULT 'queued',
+            video_url TEXT,
+            to_user_id TEXT,
+            context_token TEXT,
+            account_id TEXT,
+            source TEXT,
+            error_message TEXT,
+            retry_count INTEGER DEFAULT 0,
+            created_at INTEGER NOT NULL
+          )
+        `);
+        Logger.info("[DO] D1 tables initialized");
+      } catch (e: any) {
+        Logger.error("[DO] D1 init failed", { error: e?.message });
+      }
+    }
   }
 
   // 确保 pending_videos 表包含 to_user_id / context_token / account_id / video_id 列
@@ -821,26 +867,23 @@ export class ILinkConnectionDO implements DurableObject {
   private async handleStorePendingVideo(request: Request): Promise<Response> {
     try {
       await this.initSQLite();
-      await this.ensurePendingVideosColumns();
+      if (!this.env.DB) {
+        return new Response(JSON.stringify({ error: "D1 not configured" }), { status: 500, headers: { "Content-Type": "application/json" } });
+      }
       const body = await request.json() as { taskId: string; videoId?: string; prompt?: string; model?: string; provider?: string; baseUrl?: string; apiKey?: string; toUserId?: string; contextToken?: string; accountId?: string; source?: string; status?: string; videoUrl?: string };
 
       if (body.status && body.taskId && !body.prompt) {
-        // 仅更新 status/videoUrl（Queue consumer 发送后标记 completed）
-        const updates: string[] = ["status = ?"];
-        const params: any[] = [body.status];
-        if (body.videoUrl) { updates.push("video_url = ?"); params.push(body.videoUrl); }
-        params.push(body.taskId);
-        this.doState.storage.sql.exec(
-          `UPDATE pending_videos SET ${updates.join(", ")} WHERE task_id = ?`,
-          ...params
-        );
+        // 仅更新 status/videoUrl
+        if (body.videoUrl) {
+          await this.env.DB.prepare(`UPDATE pending_videos SET status = ?, video_url = ? WHERE task_id = ?`).bind(body.status, body.videoUrl, body.taskId).run();
+        } else {
+          await this.env.DB.prepare(`UPDATE pending_videos SET status = ? WHERE task_id = ?`).bind(body.status, body.taskId).run();
+        }
       } else {
         // 完整插入新任务
-        this.doState.storage.sql.exec(
-          `INSERT OR REPLACE INTO pending_videos (task_id, video_id, prompt, model, provider, base_url, api_key, status, to_user_id, context_token, account_id, source, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?)`,
-          body.taskId, body.videoId || null, body.prompt || "", body.model || "", body.provider || "", body.baseUrl || "", body.apiKey || "", body.toUserId || null, body.contextToken || null, body.accountId || null, body.source || null, Date.now()
-        );
+        await this.env.DB.prepare(
+          `INSERT OR REPLACE INTO pending_videos (task_id, video_id, prompt, model, provider, base_url, api_key, status, to_user_id, context_token, account_id, source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?)`
+        ).bind(body.taskId, body.videoId || null, body.prompt || "", body.model || "", body.provider || "", body.baseUrl || "", body.apiKey || "", body.toUserId || null, body.contextToken || null, body.accountId || null, body.source || null, Date.now()).run();
       }
       return new Response(JSON.stringify({ success: true }), {
         headers: { "Content-Type": "application/json" },
@@ -857,33 +900,36 @@ export class ILinkConnectionDO implements DurableObject {
 
   private async handlePendingVideos(request: Request): Promise<Response> {
     await this.initSQLite();
-    await this.ensurePendingVideosColumns();
     const url = new URL(request.url);
     const corsHeaders = { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" };
+
+    if (!this.env.DB) {
+      return new Response(JSON.stringify({ ok: false, error: "D1 not configured" }), { headers: corsHeaders, status: 500 });
+    }
 
     if (request.method === "DELETE") {
       const taskId = url.searchParams.get("task_id");
       const deleteFailed = url.searchParams.get("failed") === "true";
       if (taskId) {
-        this.doState.storage.sql.exec(`DELETE FROM pending_videos WHERE task_id = ?`, taskId);
+        await this.env.DB.prepare(`DELETE FROM pending_videos WHERE task_id = ?`).bind(taskId).run();
         Logger.info("[DO] Deleted pending video", { taskId });
       } else if (deleteFailed) {
-        this.doState.storage.sql.exec(`DELETE FROM pending_videos WHERE status = 'failed'`);
+        await this.env.DB.exec(`DELETE FROM pending_videos WHERE status = 'failed'`);
         Logger.info("[DO] Deleted all failed pending videos");
       }
       return new Response(JSON.stringify({ ok: true }), { headers: corsHeaders });
     }
 
-    const status = url.searchParams.get("status");
-    let sql = `SELECT task_id, prompt, model, provider, status, video_url, video_id, to_user_id, source, created_at, error_message, retry_count FROM pending_videos`;
-    const params: any[] = [];
-    if (status) {
-      sql += ` WHERE status = ?`;
-      params.push(status);
+    const statusFilter = url.searchParams.get("status");
+    let stmt;
+    if (statusFilter) {
+      stmt = this.env.DB.prepare(`SELECT task_id, prompt, model, provider, status, video_url, video_id, to_user_id, source, created_at, error_message, retry_count FROM pending_videos WHERE status = ? ORDER BY created_at DESC LIMIT 100`).bind(statusFilter);
+    } else {
+      stmt = this.env.DB.prepare(`SELECT task_id, prompt, model, provider, status, video_url, video_id, to_user_id, source, created_at, error_message, retry_count FROM pending_videos ORDER BY created_at DESC LIMIT 100`);
     }
-    sql += ` ORDER BY created_at DESC LIMIT 100`;
-    const cursor = this.doState.storage.sql.exec(sql, ...params);
-    const rows = (cursor.toArray ? cursor.toArray() : []).map((r: any) => ({
+
+    const { results } = await stmt.all();
+    const rows = results.map((r: any) => ({
       task_id: r.task_id,
       prompt: (r.prompt as string)?.slice(0, 100),
       model: r.model,
@@ -904,12 +950,11 @@ export class ILinkConnectionDO implements DurableObject {
   private async logGeneration(type: string, prompt: string, result: string, provider: string, model: string, status: string, error?: string, source?: string, fromUser?: string, keyIndex?: number, providerName?: string): Promise<void> {
     try {
       if (!this.sqliteInitialized) await this.initSQLite();
-      await this.ensureGenerationLogsColumns();
-      const sql = this.doState.storage.sql;
-      sql.exec(
-        `INSERT INTO generation_logs (type, prompt, result, provider, model, status, error, source, from_user, created_at, key_index, provider_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        type, (prompt || "").slice(0, 500), (result || "").slice(0, 1000), provider, model, status, error || "", source || "", fromUser || "", Date.now(), keyIndex || 0, providerName || ""
-      );
+      if (this.env.DB) {
+        await this.env.DB.prepare(
+          `INSERT INTO generation_logs (type, prompt, result, provider, model, status, error, source, from_user, created_at, key_index, provider_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        ).bind(type, (prompt || "").slice(0, 500), (result || "").slice(0, 1000), provider, model, status, error || "", source || "", fromUser || "", Date.now(), keyIndex || 0, providerName || "").run();
+      }
       console.log("[DO] logGeneration OK", { type, provider, model, source, keyIndex });
     } catch (e: any) {
       console.error("[DO] logGeneration FAILED", e?.message, { type, provider });
@@ -956,10 +1001,11 @@ export class ILinkConnectionDO implements DurableObject {
       } catch {}
 
       console.log("[DO] handleLogGeneration", { type, provider, model, source, providerName });
-      this.doState.storage.sql.exec(
-        `INSERT INTO generation_logs (type, prompt, result, provider, model, status, error, source, from_user, created_at, key_index, provider_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        type, prompt.slice(0, 500), result.slice(0, 1000), provider, model, status, error, source, fromUser, Date.now(), 0, providerName
-      );
+      if (this.env.DB) {
+        await this.env.DB.prepare(
+          `INSERT INTO generation_logs (type, prompt, result, provider, model, status, error, source, from_user, created_at, key_index, provider_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        ).bind(type, prompt.slice(0, 500), result.slice(0, 1000), provider, model, status, error, source, fromUser, Date.now(), 0, providerName).run();
+      }
       return new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } });
     } catch (e: any) {
       console.error("[DO] handleLogGeneration FAILED", e?.message);
@@ -969,49 +1015,37 @@ export class ILinkConnectionDO implements DurableObject {
 
   private async handleGenerationLogs(request: Request): Promise<Response> {
     await this.initSQLite();
-    await this.ensureGenerationLogsColumns();
     const url = new URL(request.url);
     const corsHeaders = { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" };
+
+    if (!this.env.DB) {
+      return new Response(JSON.stringify({ ok: false, error: "D1 not configured" }), { headers: corsHeaders, status: 500 });
+    }
 
     if (request.method === "DELETE") {
       const id = url.searchParams.get("id");
       const deleteAll = url.searchParams.get("all") === "true";
       if (id) {
-        this.doState.storage.sql.exec(`DELETE FROM generation_logs WHERE id = ?`, parseInt(id));
+        await this.env.DB.prepare(`DELETE FROM generation_logs WHERE id = ?`).bind(parseInt(id)).run();
       } else if (deleteAll) {
-        this.doState.storage.sql.exec(`DELETE FROM generation_logs`);
+        await this.env.DB.exec(`DELETE FROM generation_logs`);
       }
       return new Response(JSON.stringify({ ok: true }), { headers: corsHeaders });
     }
 
     const typeFilter = url.searchParams.get("type");
     const limit = parseInt(url.searchParams.get("limit") || "50");
-    let sql = `SELECT id, type, prompt, result, provider, model, status, error, source, from_user, created_at, key_index, provider_name FROM generation_logs`;
-    const params: any[] = [];
+
+    let stmt;
     if (typeFilter) {
-      sql += ` WHERE type = ?`;
-      params.push(typeFilter);
+      stmt = this.env.DB.prepare(`SELECT id, type, prompt, result, provider, model, status, error, source, from_user, created_at, key_index, provider_name FROM generation_logs WHERE type = ? ORDER BY created_at DESC LIMIT ?`).bind(typeFilter, limit);
+    } else {
+      stmt = this.env.DB.prepare(`SELECT id, type, prompt, result, provider, model, status, error, source, from_user, created_at, key_index, provider_name FROM generation_logs ORDER BY created_at DESC LIMIT ?`).bind(limit);
     }
-    sql += ` ORDER BY created_at DESC LIMIT ?`;
-    params.push(limit);
-    const cursor = this.doState.storage.sql.exec(sql, ...params);
-    const rows = (cursor.toArray ? cursor.toArray() : []).map((r: any) => ({
-      id: r.id,
-      type: r.type,
-      prompt: r.prompt,
-      result: r.result,
-      provider: r.provider,
-      model: r.model,
-      status: r.status,
-      error: r.error,
-      source: r.source,
-      from_user: r.from_user,
-      created_at: r.created_at,
-      key_index: r.key_index || 0,
-      provider_name: r.provider_name || "",
-    }));
-    console.log("[DO] handleGenerationLogs", { count: rows.length });
-    return new Response(JSON.stringify({ ok: true, logs: rows, total: rows.length }), { headers: corsHeaders });
+
+    const { results } = await stmt.all();
+    console.log("[DO] handleGenerationLogs", { count: results.length });
+    return new Response(JSON.stringify({ ok: true, logs: results, total: results.length }), { headers: corsHeaders });
   }
 
   // ========== Cron 检查待处理的视频任务 ==========
@@ -1023,15 +1057,14 @@ export class ILinkConnectionDO implements DurableObject {
 
       // 自动清理超过 24 小时的已完成/失败任务
       const cleanupAge = Date.now() - 24 * 60 * 60 * 1000;
-      this.doState.storage.sql.exec(
-        `DELETE FROM pending_videos WHERE status IN ('completed', 'failed') AND created_at < ?`,
-        cleanupAge
-      );
+      await this.env.DB.prepare(
+        `DELETE FROM pending_videos WHERE status IN ('completed', 'failed') AND created_at < ?`
+      ).bind(cleanupAge).run();
 
-      const cursor = this.doState.storage.sql.exec(
+      // D1: 查询待处理的视频任务
+      const { results: pending } = await this.env.DB.prepare(
         `SELECT task_id, video_id, prompt, model, provider, base_url, api_key, to_user_id, context_token, account_id, source, created_at FROM pending_videos WHERE status = 'queued'`
-      );
-      const pending = cursor.toArray();
+      ).all();
 
       if (pending.length === 0) return;
       Logger.info("[DO] Checking pending videos", { count: pending.length });
@@ -1054,11 +1087,9 @@ export class ILinkConnectionDO implements DurableObject {
       }
       if (orphanIds.length > 0) {
         try {
-          const placeholders = orphanIds.map(() => "?").join(",");
-          this.doState.storage.sql.exec(
-            `DELETE FROM pending_videos WHERE task_id IN (${placeholders})`,
-            ...orphanIds
-          );
+          for (const tid of orphanIds) {
+            await this.env.DB.prepare(`DELETE FROM pending_videos WHERE task_id = ?`).bind(tid).run();
+          }
           Logger.info("[DO] Cleaned orphan pending videos", { count: orphanIds.length, ids: orphanIds.slice(0, 5) });
         } catch (e: any) {
           Logger.warn("[DO] Failed to clean orphan tasks", { error: e?.message });
@@ -1082,10 +1113,7 @@ export class ILinkConnectionDO implements DurableObject {
         const ageMs = now - createdAt;
         if (ageMs > MAX_AGE_MS) {
           Logger.warn("[DO] Video task timed out (> 24h) — marking as failed", { taskId, ageHours: Math.round(ageMs / 3600000) });
-          this.doState.storage.sql.exec(
-            `UPDATE pending_videos SET status = 'failed' WHERE task_id = ?`,
-            taskId
-          );
+          await this.env.DB.prepare(`UPDATE pending_videos SET status = 'failed' WHERE task_id = ?`).bind(taskId).run();
           const modelInfo = `🤖 ${task.provider} · ${task.model}`;
           // 凭证解析：先按 accountId 找，找不到时用第一个账号或 ilinkCreds
           const accountId = task.account_id as string | undefined;
@@ -1175,10 +1203,9 @@ export class ILinkConnectionDO implements DurableObject {
               const errBody = await statusResp.text().catch(() => "");
               Logger.warn("[DO] Video status check failed", { taskId, videoId, status: statusResp.status, body: errBody.slice(0, 200), url: checkUrl });
               const errMsg = `HTTP ${statusResp.status}: ${errBody.slice(0, 200)}`;
-              this.doState.storage.sql.exec(
-                `UPDATE pending_videos SET retry_count = retry_count + 1, error_message = ? WHERE task_id = ?`,
-                errMsg, taskId
-              );
+              await this.env.DB.prepare(
+                `UPDATE pending_videos SET retry_count = retry_count + 1, error_message = ? WHERE task_id = ?`
+              ).bind(errMsg, taskId).run();
               if (statusResp.status === 404) {
                 taskFailed = true;
                 Logger.warn("[DO] Video task 404 — marking as failed (task not found on provider)", { taskId });
@@ -1292,10 +1319,9 @@ export class ILinkConnectionDO implements DurableObject {
             // 发送失败时标记为 failed（下次不再尝试），成功时标记为 completed
             const newStatus = sentSuccessfully ? 'completed' : 'failed';
             try {
-              this.doState.storage.sql.exec(
-                `UPDATE pending_videos SET status = ?, video_url = ? WHERE task_id = ?`,
-                newStatus, videoUrl, taskId
-              );
+              await this.env.DB.prepare(
+                `UPDATE pending_videos SET status = ?, video_url = ? WHERE task_id = ?`
+              ).bind(newStatus, videoUrl, taskId).run();
               Logger.info("[DO] Updated pending_video status", { taskId, status: newStatus });
             } catch (e3: any) {
               Logger.error("[DO] Failed to update pending_video status", { taskId, error: e3?.message });
@@ -1314,10 +1340,9 @@ export class ILinkConnectionDO implements DurableObject {
             await this.logGeneration("video", (task.prompt as string || "").slice(0, 500), videoUrl, (task.provider as string) || "", (task.model as string) || "", sentSuccessfully ? "success" : "failed", sentSuccessfully ? undefined : "视频发送失败", taskSource || "", "");
           } else if (taskFailed) {
             const errMsg = `任务失败 (provider: ${task.provider}, model: ${task.model})`;
-            this.doState.storage.sql.exec(
-              `UPDATE pending_videos SET status = 'failed', error_message = ?, retry_count = retry_count + 1 WHERE task_id = ?`,
-              errMsg, taskId
-            );
+            await this.env.DB.prepare(
+              `UPDATE pending_videos SET status = 'failed', error_message = ?, retry_count = retry_count + 1 WHERE task_id = ?`
+            ).bind(errMsg, taskId).run();
             await this.logGeneration("video", (task.prompt as string || "").slice(0, 500), "", (task.provider as string) || "", (task.model as string) || "", "failed", errMsg, taskSource || "", "");
             if (taskSource !== "chat" && creds && toUserId && contextToken) {
               await sendTextMessage(creds, toUserId, contextToken, `❌ 视频生成失败 (${modelInfo})\n请稍后重试或换个描述试试`).catch(() => {});
@@ -1854,11 +1879,10 @@ export class ILinkConnectionDO implements DurableObject {
                     ctxToken: ctxToken?.slice(0, 15),
                     accountId: useCreds?.accountId?.slice(0, 10)
                   });
-                  this.doState.storage.sql.exec(
+                  await this.env.DB.prepare(
                     `INSERT OR REPLACE INTO pending_videos (task_id, video_id, prompt, model, provider, base_url, api_key, status, to_user_id, context_token, account_id, created_at)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?)`,
-                    result.taskId, result.videoId || null, result.prompt, result.model, result.provider, result.baseUrl, result.apiKey, from, ctxToken, useCreds?.accountId || null, Date.now()
-                  );
+                     VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?)`
+                  ).bind(result.taskId, result.videoId || null, result.prompt, result.model, result.provider, result.baseUrl, result.apiKey, from, ctxToken, useCreds?.accountId || null, Date.now()).run();
                   await sendTextMessage(useCreds!, from, ctxToken, `🎬 ${modelInfo}\n\n视频生成任务已提交，稍后生成完成后会自动发送给您。`);
                   replyContent = `[视频生成] ${mediaPrompt}`;
                   await this.logGeneration("video", mediaPrompt, result.taskId, cfg.aiProvider, cfg.aiVideoModel, "queued", undefined, "wechat", from);

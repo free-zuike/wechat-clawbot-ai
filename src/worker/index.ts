@@ -20,6 +20,7 @@ export interface Env {
   ASSETS: { fetch: (request: Request) => Promise<Response> };
   CLAWBOT_KV: KVNamespace;
   CLAWBOT_QUEUE: Queue;
+  DB: D1Database;
   ADMIN_PASSWORD?: string;
   AI_SYSTEM_PROMPT?: string;
   AI_MODEL?: string;
