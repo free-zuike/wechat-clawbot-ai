@@ -1368,7 +1368,7 @@ export class ILinkConnectionDO implements DurableObject {
           prompt: prompt || "",
         });
         Logger.info("[DO] Error broadcasted to WebSocket", { errorMsg });
-        await this.logGeneration(logType, errorMsg || "", "", provider || "", model || "", "failed", errorMsg || "生成失败", source || "", "", undefined, providerName);
+        await this.logGeneration(logType, prompt || "", errorMsg || "", provider || "", model || "", "failed", errorMsg || "生成失败", source || "", "", undefined, providerName);
         return new Response(JSON.stringify({ success: true }), {
           headers: { "Content-Type": "application/json" },
         });
@@ -1392,7 +1392,7 @@ export class ILinkConnectionDO implements DurableObject {
       });
 
       Logger.info("[DO] Media broadcasted to WebSocket", { mediaType: logType });
-      await this.logGeneration(logType, "", imageData, provider || "", model || "", "success", undefined, source || "", "", keyIndex, providerName);
+      await this.logGeneration(logType, prompt || "", imageData, provider || "", model || "", "success", undefined, source || "", "", keyIndex, providerName);
       return new Response(JSON.stringify({ success: true }), {
         headers: { "Content-Type": "application/json" },
       });

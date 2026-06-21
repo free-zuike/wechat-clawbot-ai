@@ -408,7 +408,7 @@ async function handleSendChat() {
   try {
     const d = await chat(q);
     if (d === null) { chatLoading.value = false; return; }
-    chatMessages.value.push({ role: "b", text: d.reply + (d.source === "shortcut" ? " [快捷回复]" : "") });
+    chatMessages.value.push({ role: "b", text: `> ${q}\n\n${d.reply}${d.source === "shortcut" ? " [快捷回复]" : ""}` });
   } catch (e: any) {
     if (e instanceof ApiError && e.isCancelled) { chatLoading.value = false; return; }
     chatMessages.value.push({ role: "b", text: "错误: " + handleApiError(e, "AI 回复失败") });
@@ -425,7 +425,7 @@ function handleEditChat(idx: number, newText: string) {
   chatInput.value = "";
   chatLoading.value = true;
   chat(newText).then(d => {
-    if (d) chatMessages.value.push({ role: "b", text: d.reply + (d.source === "shortcut" ? " [快捷回复]" : "") });
+    if (d) chatMessages.value.push({ role: "b", text: `> ${newText}\n\n${d.reply}${d.source === "shortcut" ? " [快捷回复]" : ""}` });
   }).catch(e => {
     chatMessages.value.push({ role: "b", text: "错误: " + handleApiError(e, "AI 回复失败") });
   }).finally(() => { chatLoading.value = false; });

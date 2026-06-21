@@ -118,7 +118,7 @@ export default {
             const doStub = env.ILINK_CONNECTION.get(doId);
             await doStub.fetch(new Request("http://localhost/broadcast-image", {
               method: "POST",
-              body: JSON.stringify({ error: true, message: `视频任务提交失败: 缺少配置参数 (${provider})`, model, provider, mediaType: "video" }),
+              body: JSON.stringify({ error: true, message: `视频任务提交失败: 缺少配置参数 (${provider})`, model, provider, mediaType: "video", prompt }),
             }));
             continue;
           }
@@ -234,7 +234,7 @@ export default {
               try {
                 await doStub.fetch(new Request("http://localhost/broadcast-image", {
                   method: "POST",
-                  body: JSON.stringify({ imageData: videoUrl, model, provider, source, mediaType: "video" }),
+                  body: JSON.stringify({ imageData: videoUrl, model, provider, source, mediaType: "video", prompt }),
                 }));
                 Logger.info("[queue] Video broadcasted to WebSocket", { taskId });
               } catch (e: any) {
@@ -254,7 +254,7 @@ export default {
             const errMsg = `视频生成失败 (${provider} · ${model})`;
             await doStub.fetch(new Request("http://localhost/broadcast-image", {
               method: "POST",
-              body: JSON.stringify({ error: true, message: errMsg, model, provider, source, mediaType: "video" }),
+              body: JSON.stringify({ error: true, message: errMsg, model, provider, source, mediaType: "video", prompt }),
             }));
             await doStub.fetch(new Request("http://localhost/store-pending-video", {
               method: "POST",
@@ -271,7 +271,7 @@ export default {
               const doStub = env.ILINK_CONNECTION.get(doId);
               await doStub.fetch(new Request("http://localhost/broadcast-image", {
                 method: "POST",
-                body: JSON.stringify({ error: true, message: `视频生成超时 (${provider} · ${model})`, model, provider, source, mediaType: "video" }),
+                body: JSON.stringify({ error: true, message: `视频生成超时 (${provider} · ${model})`, model, provider, source, mediaType: "video", prompt }),
               }));
               await doStub.fetch(new Request("http://localhost/store-pending-video", {
                 method: "POST",
