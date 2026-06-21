@@ -81,14 +81,15 @@ export default {
       try {
         if (type === "image_generation") {
           const { generateImage } = await import("./services/ai");
-          const imageData = await generateImage(env.AI, prompt, model, provider, baseUrl, apiKey, undefined, undefined, allKeys, maxRetries);
+          const imageDataResult = await generateImage(env.AI, prompt, model, provider, baseUrl, apiKey, undefined, undefined, allKeys, maxRetries);
+          const imageData = imageDataResult.data;
             if (imageData) {
               const doId = env.ILINK_CONNECTION.idFromName("main");
               const doStub = env.ILINK_CONNECTION.get(doId);
               const imageUrl = typeof imageData === "string" ? imageData : null;
               await               doStub.fetch(new Request("http://localhost/broadcast-image", {
                 method: "POST",
-                body: JSON.stringify({ imageData: imageUrl, model, provider, source }),
+                body: JSON.stringify({ imageData: imageUrl, model, provider, source, keyIndex: imageDataResult.keyIndex }),
               }));
               Logger.info("[queue] Image generated" + (isFromChat ? " (chat)" : " and broadcast"));
             } else {

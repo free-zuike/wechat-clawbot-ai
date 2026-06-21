@@ -36,10 +36,11 @@
             </template>
           </template>
         </div>
-        <!-- 用户消息的操作按钮 -->
-        <div v-if="msg.role === 'u' && hoverIdx === i && editingIdx !== i" class="msg-actions">
-          <button class="action-btn" title="编辑并重新发送" @click="startEdit(i, msg.text)">✏️</button>
-          <button class="action-btn" title="重新发送" @click="$emit('resend', msg.text)">🔄</button>
+        <!-- 消息操作按钮 -->
+        <div v-if="hoverIdx === i && editingIdx !== i" class="msg-actions">
+          <button v-if="msg.role === 'u'" class="action-btn" title="编辑并重新发送" @click="startEdit(i, msg.text)">✏️</button>
+          <button v-if="msg.role === 'u'" class="action-btn" title="重新发送" @click="$emit('resend', msg.text)">🔄</button>
+          <button class="action-btn" title="引用此消息" @click="$emit('quote', msg.text)">💬</button>
         </div>
       </div>
     </div>
@@ -73,7 +74,7 @@ defineProps<{
   loading: boolean;
 }>();
 
-const emit = defineEmits(["send", "update:input", "edit"]);
+const emit = defineEmits(["send", "update:input", "edit", "resend", "quote"]);
 
 const hoverIdx = ref(-1);
 const editingIdx = ref(-1);

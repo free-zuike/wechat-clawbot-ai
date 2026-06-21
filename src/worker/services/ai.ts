@@ -346,7 +346,7 @@ export async function generateImage(
   size?: string,
   allKeys?: string[],
   maxRetries?: number,
-): Promise<Uint8Array | string | null> {
+): Promise<{ data: Uint8Array | string | null; keyIndex: number }> {
   const imageModel = model || DEFAULT_IMAGE_MODEL;
   const imageSize = size || DEFAULT_IMAGE_SIZE;
   const keys = (allKeys && allKeys.length > 0) ? allKeys : (apiKey ? [apiKey] : []);
@@ -391,30 +391,30 @@ export async function generateImage(
         const data = await resp.json() as any;
         const item = data?.data?.[0];
         if (item?.url) {
-          Logger.info("[ai] Image URL received", { url: item.url.slice(0, 80) });
-          return item.url;
+          Logger.info("[ai] Image URL received", { url: item.url.slice(0, 80), keyIndex: attempt });
+          return { data: item.url, keyIndex: attempt };
         }
         if (item?.b64_json) {
           const binary = atob(item.b64_json);
           const bytes = new Uint8Array(binary.length);
           for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-          Logger.info("[ai] Image Base64 decoded", { size: bytes.length });
-          return bytes;
+          Logger.info("[ai] Image Base64 decoded", { size: bytes.length, keyIndex: attempt });
+          return { data: bytes, keyIndex: attempt };
         }
         Logger.warn("[ai] Unexpected image response", { keys: Object.keys(data || {}), dataKeys: data?.data ? Object.keys(data.data) : [] });
-        return null;
+        return { data: null, keyIndex: attempt };
       } catch (e: any) {
         Logger.error("[ai] Image generation failed", { error: e?.message, attempt });
-        if (attempt === Math.min(retries, keys.length - 1)) return null;
+        if (attempt === Math.min(retries, keys.length - 1)) return { data: null, keyIndex: attempt };
       }
     }
-    return null;
+    return { data: null, keyIndex: 0 };
   }
 
   // Cloudflare Workers AI
   if (!aiBinding) {
     Logger.warn("[ai] AI binding not available, provider check failed", { provider, hasBaseUrl: !!baseUrl, hasApiKey: !!apiKey });
-    return null;
+    return { data: null, keyIndex: 0 };
   }
 
   try {
@@ -423,11 +423,11 @@ export async function generateImage(
 
     if (response instanceof Uint8Array) {
       Logger.info("[ai] Image generated (Uint8Array)", { size: response.length });
-      return response;
+      return { data: response, keyIndex: 0 };
     }
     if (response instanceof ArrayBuffer) {
       Logger.info("[ai] Image generated (ArrayBuffer)", { size: response.byteLength });
-      return new Uint8Array(response);
+      return { data: new Uint8Array(response), keyIndex: 0 };
     }
     if (response?.images?.[0]) {
       const img = response.images[0];
@@ -436,25 +436,24 @@ export async function generateImage(
         const bytes = new Uint8Array(binary.length);
         for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
         Logger.info("[ai] Image generated (base64)", { size: bytes.length });
-        return bytes;
+        return { data: bytes, keyIndex: 0 };
       }
-      return img;
+      return { data: img, keyIndex: 0 };
     }
     if (response?.result?.image) {
       const imgUrl = response.result.image;
       Logger.info("[ai] Image generated (URL)", { url: imgUrl });
-      // 下载图片
       const resp = await fetch(imgUrl);
       if (resp.ok) {
         const buf = await resp.arrayBuffer();
-        return new Uint8Array(buf);
+        return { data: new Uint8Array(buf), keyIndex: 0 };
       }
     }
     Logger.warn("[ai] Unexpected image response format", { response: JSON.stringify(response).slice(0, 200) });
-    return null;
+    return { data: null, keyIndex: 0 };
   } catch (e: any) {
     Logger.error("[ai] Image generation failed", { error: e?.message, model: imageModel, prompt: prompt.slice(0, 50) });
-    return null;
+    return { data: null, keyIndex: 0 };
   }
 }
 

@@ -41,9 +41,10 @@
           <div class="field"><label>API 地址</label><input v-model="config.aiBaseUrl" class="input" placeholder="https://api.example.com" /><div class="field-hint">不要加 /v1/chat/completions 后缀</div></div>
           <div class="field"><label>API 密钥</label><input v-model="config.aiApiKey" class="input" type="password" placeholder="sk-..." /></div>
           <div class="field">
-            <label>备用密钥（生成失败时自动切换）</label>
+            <label>备用密钥（密钥序号：主密钥=1，备用依次=2, 3...）</label>
             <div class="backup-keys">
               <div v-for="(key, idx) in backupKeys" :key="idx" class="backup-key-row">
+                <span class="key-num">密钥{{ idx + 2 }}</span>
                 <input :value="key" class="input" type="password" placeholder="sk-..." @input="updateBackupKey(idx, $event)" />
                 <button class="btn tiny danger" @click="removeBackupKey(idx)">✕</button>
               </div>
@@ -339,6 +340,7 @@ watch(
 .icon-option.active { border-color: var(--link); background: var(--alert-info-bg); }
 .backup-keys { display: flex; flex-direction: column; gap: 6px; }
 .backup-key-row { display: flex; gap: 6px; align-items: center; }
+.key-num { font-size: 12px; font-weight: 600; color: var(--text-muted); min-width: 40px; }
 .backup-key-row .input { flex: 1; }
 .btn.tiny { padding: 4px 10px; font-size: 12px; }
 .btn.danger { color: var(--error); border-color: var(--error); }

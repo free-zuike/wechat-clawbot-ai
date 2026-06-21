@@ -44,7 +44,8 @@
         </div>
         <div class="log-prompt">{{ log.prompt }}</div>
         <div class="log-meta">
-          <span>🤖 {{ log.provider }} · {{ log.model }}</span>
+          <span>🤖 {{ log.provider_name || log.provider }} · {{ log.model }}</span>
+          <span v-if="log.key_index > 0" class="log-key">🔑 密钥{{ log.key_index + 1 }}</span>
           <span v-if="log.from_user"> · 👤 {{ log.from_user.slice(0, 15) }}</span>
           <span class="log-source" :class="log.source">{{ sourceLabel(log.source) }}</span>
         </div>
@@ -140,6 +141,7 @@ onMounted(load);
 .log-time { font-size: 12px; color: var(--text-muted); margin-left: auto; }
 .log-prompt { font-size: 13px; font-weight: 500; word-break: break-all; margin-bottom: 4px; }
 .log-meta { font-size: 12px; color: var(--text-muted); margin-bottom: 4px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.log-key { font-size: 11px; font-weight: 600; padding: 1px 6px; border-radius: 3px; background: rgba(251,191,36,0.15); color: #f59e0b; }
 .log-source { font-size: 11px; font-weight: 600; padding: 1px 6px; border-radius: 3px; }
 .log-source.chat { background: rgba(99,102,241,0.15); color: #6366f1; }
 .log-source.wechat { background: rgba(34,197,94,0.15); color: #22c55e; }

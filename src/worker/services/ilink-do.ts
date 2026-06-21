@@ -222,6 +222,8 @@ export class ILinkConnectionDO implements DurableObject {
         ["source", "TEXT"],
         ["error_message", "TEXT"],
         ["retry_count", "INTEGER DEFAULT 0"],
+        ["key_index", "INTEGER DEFAULT 0"],
+        ["provider_name", "TEXT"],
       ];
       for (const [col, type] of needAdd) {
         if (!cols.has(col)) {
@@ -874,15 +876,15 @@ export class ILinkConnectionDO implements DurableObject {
 
   // ========== 生成记录日志 ==========
 
-  private async logGeneration(type: string, prompt: string, result: string, provider: string, model: string, status: string, error?: string, source?: string, fromUser?: string): Promise<void> {
+  private async logGeneration(type: string, prompt: string, result: string, provider: string, model: string, status: string, error?: string, source?: string, fromUser?: string, keyIndex?: number, providerName?: string): Promise<void> {
     try {
       if (!this.sqliteInitialized) await this.initSQLite();
       const sql = this.doState.storage.sql;
       sql.exec(
-        `INSERT INTO generation_logs (type, prompt, result, provider, model, status, error, source, from_user, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        type, (prompt || "").slice(0, 500), (result || "").slice(0, 1000), provider, model, status, error || "", source || "", fromUser || "", Date.now()
+        `INSERT INTO generation_logs (type, prompt, result, provider, model, status, error, source, from_user, created_at, key_index, provider_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        type, (prompt || "").slice(0, 500), (result || "").slice(0, 1000), provider, model, status, error || "", source || "", fromUser || "", Date.now(), keyIndex || 0, providerName || ""
       );
-      console.log("[DO] logGeneration OK", { type, provider, model, source });
+      console.log("[DO] logGeneration OK", { type, provider, model, source, keyIndex });
     } catch (e: any) {
       console.error("[DO] logGeneration FAILED", e?.message, { type, provider });
     }
@@ -948,7 +950,7 @@ export class ILinkConnectionDO implements DurableObject {
 
     const typeFilter = url.searchParams.get("type");
     const limit = parseInt(url.searchParams.get("limit") || "50");
-    let sql = `SELECT id, type, prompt, result, provider, model, status, error, source, from_user, created_at FROM generation_logs`;
+    let sql = `SELECT id, type, prompt, result, provider, model, status, error, source, from_user, created_at, key_index, provider_name FROM generation_logs`;
     const params: any[] = [];
     if (typeFilter) {
       sql += ` WHERE type = ?`;
@@ -969,6 +971,8 @@ export class ILinkConnectionDO implements DurableObject {
       source: r.source,
       from_user: r.from_user,
       created_at: r.created_at,
+      key_index: r.key_index || 0,
+      provider_name: r.provider_name || "",
     }));
     console.log("[DO] handleGenerationLogs", { count: rows.length });
     return new Response(JSON.stringify({ ok: true, logs: rows, total: rows.length }), { headers: corsHeaders });
@@ -1304,9 +1308,18 @@ export class ILinkConnectionDO implements DurableObject {
   // ========== 广播图片到 WebSocket（由 Queue 消费者调用）==========
   private async handleBroadcastImage(request: Request): Promise<Response> {
     try {
-      const body = await request.json() as { imageData: string | null; model?: string; provider?: string; error?: boolean; message?: string; source?: string; mediaType?: string };
-      const { imageData, model, provider, error: isError, message: errorMsg, source, mediaType } = body;
+      const body = await request.json() as { imageData: string | null; model?: string; provider?: string; error?: boolean; message?: string; source?: string; mediaType?: string; keyIndex?: number };
+      const { imageData, model, provider, error: isError, message: errorMsg, source, mediaType, keyIndex } = body;
       const logType = mediaType || "image";
+
+      // 查找提供商名称
+      let providerName = "";
+      try {
+        const cfg = await this.getConfig();
+        const customProviders = (cfg as any).aiCustomProviders || [];
+        const found = customProviders.find((p: any) => p.id === provider);
+        if (found) providerName = found.name || "";
+      } catch {}
 
       // 错误通知（图片/视频生成失败）
       if (isError) {
@@ -1318,7 +1331,7 @@ export class ILinkConnectionDO implements DurableObject {
           source,
         });
         Logger.info("[DO] Error broadcasted to WebSocket", { errorMsg });
-        await this.logGeneration(logType, errorMsg || "", "", provider || "", model || "", "failed", errorMsg || "生成失败", source || "", "");
+        await this.logGeneration(logType, errorMsg || "", "", provider || "", model || "", "failed", errorMsg || "生成失败", source || "", "", undefined, providerName);
         return new Response(JSON.stringify({ success: true }), {
           headers: { "Content-Type": "application/json" },
         });
@@ -1341,7 +1354,7 @@ export class ILinkConnectionDO implements DurableObject {
       });
 
       Logger.info("[DO] Media broadcasted to WebSocket", { mediaType: logType });
-      await this.logGeneration(logType, "", imageData, provider || "", model || "", "success", undefined, source || "", "");
+      await this.logGeneration(logType, "", imageData, provider || "", model || "", "success", undefined, source || "", "", keyIndex, providerName);
       return new Response(JSON.stringify({ success: true }), {
         headers: { "Content-Type": "application/json" },
       });
@@ -1838,7 +1851,8 @@ export class ILinkConnectionDO implements DurableObject {
             } else {
               startTypingKeepAlive();
               const imageSize = extractImageSize(text);
-              const imageData = await generateImage(this.env.AI, mediaPrompt, cfg.aiImageModel, cfg.aiProvider, cfg.aiBaseUrl, cfg.aiApiKey, imageUrl, imageSize, cfg.allKeys, cfg.aiMaxRetries);
+              const imageDataResult = await generateImage(this.env.AI, mediaPrompt, cfg.aiImageModel, cfg.aiProvider, cfg.aiBaseUrl, cfg.aiApiKey, imageUrl, imageSize, cfg.allKeys, cfg.aiMaxRetries);
+              const imageData = imageDataResult.data;
               const modelInfo = `🤖 ${cfg.aiProvider} · ${cfg.aiImageModel}`;
               Logger.info("[DO] Image generation result", { success: !!imageData, type: typeof imageData });
               if (imageData) {

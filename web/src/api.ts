@@ -401,6 +401,8 @@ export interface GenerationLog {
   source: string | null;
   from_user: string | null;
   created_at: number;
+  key_index: number;
+  provider_name: string;
 }
 
 export async function fetchGenerationLogs(type?: string, limit?: number): Promise<{ ok: boolean; logs: GenerationLog[]; total: number }> {

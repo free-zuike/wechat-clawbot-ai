@@ -109,6 +109,7 @@
           @update:input="(v: string) => chatInput = v"
           @resend="(text: string) => { chatInput = text; handleSendChat(); }"
           @edit="(idx: number, newText: string) => handleEditChat(idx, newText)"
+          @quote="(text: string) => chatInput = '> ' + text.replace(/\n/g, '\\n') + '\\n\\n' + chatInput"
         />
       </section>
 
