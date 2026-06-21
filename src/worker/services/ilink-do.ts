@@ -1304,8 +1304,9 @@ export class ILinkConnectionDO implements DurableObject {
   // ========== 广播图片到 WebSocket（由 Queue 消费者调用）==========
   private async handleBroadcastImage(request: Request): Promise<Response> {
     try {
-      const body = await request.json() as { imageData: string | null; model?: string; provider?: string; error?: boolean; message?: string; source?: string };
-      const { imageData, model, provider, error: isError, message: errorMsg, source } = body;
+      const body = await request.json() as { imageData: string | null; model?: string; provider?: string; error?: boolean; message?: string; source?: string; mediaType?: string };
+      const { imageData, model, provider, error: isError, message: errorMsg, source, mediaType } = body;
+      const logType = mediaType || "image";
 
       // 错误通知（图片/视频生成失败）
       if (isError) {
@@ -1317,7 +1318,7 @@ export class ILinkConnectionDO implements DurableObject {
           source,
         });
         Logger.info("[DO] Error broadcasted to WebSocket", { errorMsg });
-        await this.logGeneration(source === "chat" ? "image" : "image", errorMsg || "", "", provider || "", model || "", "failed", errorMsg || "生成失败", source || "", "");
+        await this.logGeneration(logType, errorMsg || "", "", provider || "", model || "", "failed", errorMsg || "生成失败", source || "", "");
         return new Response(JSON.stringify({ success: true }), {
           headers: { "Content-Type": "application/json" },
         });
@@ -1332,15 +1333,15 @@ export class ILinkConnectionDO implements DurableObject {
       // 广播到 WebSocket
       this.broadcastToWebSockets({
         type: "media_generated",
-        mediaType: "image",
+        mediaType: logType,
         url: imageData,
         model: model,
         provider: provider,
         source,
       });
 
-      Logger.info("[DO] Image broadcasted to WebSocket");
-      await this.logGeneration("image", "", imageData, provider || "", model || "", "success", undefined, source || "", "");
+      Logger.info("[DO] Media broadcasted to WebSocket", { mediaType: logType });
+      await this.logGeneration(logType, "", imageData, provider || "", model || "", "success", undefined, source || "", "");
       return new Response(JSON.stringify({ success: true }), {
         headers: { "Content-Type": "application/json" },
       });

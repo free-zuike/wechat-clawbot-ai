@@ -90,7 +90,6 @@ export default {
                 method: "POST",
                 body: JSON.stringify({ imageData: imageUrl, model, provider, source }),
               }));
-              logGen("image", prompt, imageUrl || "base64", provider, model, "success");
               Logger.info("[queue] Image generated" + (isFromChat ? " (chat)" : " and broadcast"));
             } else {
               Logger.error("[queue] Image generation returned null");
@@ -101,7 +100,6 @@ export default {
                 method: "POST",
                 body: JSON.stringify({ error: true, message: errMsg, model, provider, source }),
               }));
-              logGen("image", prompt, "", provider, model, "failed", errMsg);
               // 如果有微信来源信息，也发送错误给用户
               if (isFromChat && msg.body.toUserId) {
                 await doStub.fetch(new Request("http://localhost/send-text", {
@@ -115,12 +113,11 @@ export default {
           // 检查必要的配置参数
           if (!baseUrl || !apiKey) {
             Logger.error("[queue] Video task missing config", { provider, hasBaseUrl: !!baseUrl, hasApiKey: !!apiKey, apiKeyPrefix: apiKey ? apiKey.slice(0, 6) : "EMPTY" });
-            logGen("video", prompt, "", provider, model, "failed", `缺少配置参数 (${provider})`);
             const doId = env.ILINK_CONNECTION.idFromName("main");
             const doStub = env.ILINK_CONNECTION.get(doId);
             await doStub.fetch(new Request("http://localhost/broadcast-image", {
               method: "POST",
-              body: JSON.stringify({ error: true, message: `视频任务提交失败: 缺少配置参数 (${provider})`, model, provider }),
+              body: JSON.stringify({ error: true, message: `视频任务提交失败: 缺少配置参数 (${provider})`, model, provider, mediaType: "video" }),
             }));
             continue;
           }
@@ -137,7 +134,6 @@ export default {
           if (!resp.ok) {
             const errBody = await resp.text().catch(() => "");
             Logger.error("[queue] Video submit failed", { status: resp.status, body: errBody.slice(0, 200), url: submitUrl, apiKeyPrefix: apiKey.slice(0, 6) });
-            logGen("video", prompt, "", provider, model, "failed", `HTTP ${resp.status}: ${errBody.slice(0, 100)}`);
             continue;
           }
 
@@ -237,14 +233,13 @@ export default {
               try {
                 await doStub.fetch(new Request("http://localhost/broadcast-image", {
                   method: "POST",
-                  body: JSON.stringify({ imageData: videoUrl, model, provider, source }),
+                  body: JSON.stringify({ imageData: videoUrl, model, provider, source, mediaType: "video" }),
                 }));
                 Logger.info("[queue] Video broadcasted to WebSocket", { taskId });
               } catch (e: any) {
                 Logger.error("[queue] Video broadcast failed", { error: e?.message, taskId });
               }
             }
-            logGen("video", prompt, videoUrl || "", provider, model, "success");
           } else if (isFailed) {
             Logger.error("[queue] Video generation failed", { taskId, error: JSON.stringify(statusData.error).slice(0, 200) });
             const doId = env.ILINK_CONNECTION.idFromName("main");
@@ -252,14 +247,13 @@ export default {
             const errMsg = `视频生成失败 (${provider} · ${model})`;
             await doStub.fetch(new Request("http://localhost/broadcast-image", {
               method: "POST",
-              body: JSON.stringify({ error: true, message: errMsg, model, provider, source }),
+              body: JSON.stringify({ error: true, message: errMsg, model, provider, source, mediaType: "video" }),
             }));
             await doStub.fetch(new Request("http://localhost/store-pending-video", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ taskId, status: "failed" }),
             }));
-            logGen("video", prompt, "", provider, model, "failed", errMsg);
           } else {
             // 仍在处理中，30 秒后再检查
             const retryCount = (msg.body.retryCount || 0) + 1;
@@ -270,7 +264,7 @@ export default {
               const doStub = env.ILINK_CONNECTION.get(doId);
               await doStub.fetch(new Request("http://localhost/broadcast-image", {
                 method: "POST",
-                body: JSON.stringify({ error: true, message: `视频生成超时 (${provider} · ${model})`, model, provider, source }),
+                body: JSON.stringify({ error: true, message: `视频生成超时 (${provider} · ${model})`, model, provider, source, mediaType: "video" }),
               }));
               await doStub.fetch(new Request("http://localhost/store-pending-video", {
                 method: "POST",
