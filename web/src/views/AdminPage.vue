@@ -163,7 +163,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, onUnmounted } from "vue";
+import { ref, reactive, computed, onMounted, onUnmounted, watch } from "vue";
 import { useRouter } from "vue-router";
 import {
   fetchStatus, fetchConfig, saveConfig, triggerPoll, logout, chat,
@@ -219,10 +219,15 @@ const configResult = ref("");
 const configSaving = ref(false);
 
 // ===== Chat =====
-const chatMessages = ref<Array<{ role: string; text: string }>>([]);
+const chatMessages = ref<Array<{ role: string; text: string }>>(JSON.parse(localStorage.getItem("chatMessages") || "[]"));
 const chatInput = ref("");
 const chatQuoteText = ref("");
 const chatLoading = ref(false);
+
+// 聊天面板 UI 状态持久化（最多保留最近 50 条）
+watch(chatMessages, (val) => {
+  localStorage.setItem("chatMessages", JSON.stringify(val.slice(-50)));
+}, { deep: true });
 
 // ===== QR =====
 const qrCode = ref(""); const qrImage = ref(""); const qrStatus = ref("");
