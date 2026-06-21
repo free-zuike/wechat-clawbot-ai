@@ -53,6 +53,9 @@
         <div v-if="log.result && log.type === 'image' && log.result.startsWith('http')" class="log-preview">
           <a :href="log.result" target="_blank"><img :src="log.result" loading="lazy" /></a>
         </div>
+        <div v-else-if="log.result && log.type === 'video' && log.result.startsWith('http')" class="log-preview">
+          <video :src="log.result" controls style="max-width:400px;max-height:250px;border-radius:8px"></video>
+        </div>
         <div v-else-if="log.result" class="log-result">{{ log.result.slice(0, 200) }}{{ log.result.length > 200 ? '...' : '' }}</div>
         <button class="btn tiny danger" @click="del(log.id)">删除</button>
       </div>
