@@ -486,9 +486,10 @@ function connectWebSocket() {
         if (msg.source === "chat") {
           const icon = msg.mediaType === "video" ? "🎬" : "🎨";
           const modelInfo = `${msg.provider || "unknown"} · ${msg.model || "unknown"}`;
+          const quoteText = msg.prompt ? `> ${msg.prompt}\n\n` : "";
           chatMessages.value.push({
             role: "b",
-            text: `${icon} ${modelInfo}\n\n${msg.mediaType === "video" ? "视频已生成！" : "图片已生成！"}\n\n${msg.mediaType === "video" ? `<video src="${msg.url}" controls style="max-width:100%;border-radius:8px"></video>` : `![生成的图片](${msg.url})`}`,
+            text: `${quoteText}${icon} ${modelInfo}\n\n${msg.mediaType === "video" ? "视频已生成！" : "图片已生成！"}\n\n${msg.mediaType === "video" ? `<video src="${msg.url}" controls style="max-width:100%;border-radius:8px"></video>` : `![生成的图片](${msg.url})`}`,
           });
         }
         // 微信来源的已在 mergedMessages 实时消息区显示

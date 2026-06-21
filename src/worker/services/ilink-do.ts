@@ -1344,8 +1344,8 @@ export class ILinkConnectionDO implements DurableObject {
   // ========== 广播图片到 WebSocket（由 Queue 消费者调用）==========
   private async handleBroadcastImage(request: Request): Promise<Response> {
     try {
-      const body = await request.json() as { imageData: string | null; model?: string; provider?: string; error?: boolean; message?: string; source?: string; mediaType?: string; keyIndex?: number };
-      const { imageData, model, provider, error: isError, message: errorMsg, source, mediaType, keyIndex } = body;
+      const body = await request.json() as { imageData: string | null; model?: string; provider?: string; error?: boolean; message?: string; source?: string; mediaType?: string; keyIndex?: number; prompt?: string };
+      const { imageData, model, provider, error: isError, message: errorMsg, source, mediaType, keyIndex, prompt } = body;
       const logType = mediaType || "image";
 
       // 查找提供商名称
@@ -1363,8 +1363,9 @@ export class ILinkConnectionDO implements DurableObject {
           type: "media_error",
           message: errorMsg || "生成失败",
           model,
-          provider,
+          provider: providerName || provider,
           source,
+          prompt: prompt || "",
         });
         Logger.info("[DO] Error broadcasted to WebSocket", { errorMsg });
         await this.logGeneration(logType, errorMsg || "", "", provider || "", model || "", "failed", errorMsg || "生成失败", source || "", "", undefined, providerName);
@@ -1385,8 +1386,9 @@ export class ILinkConnectionDO implements DurableObject {
         mediaType: logType,
         url: imageData,
         model: model,
-        provider: provider,
+        provider: providerName || provider,
         source,
+        prompt: prompt || "",
       });
 
       Logger.info("[DO] Media broadcasted to WebSocket", { mediaType: logType });

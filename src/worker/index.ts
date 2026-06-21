@@ -89,7 +89,7 @@ export default {
               const imageUrl = typeof imageData === "string" ? imageData : null;
               await               doStub.fetch(new Request("http://localhost/broadcast-image", {
                 method: "POST",
-                body: JSON.stringify({ imageData: imageUrl, model, provider, source, keyIndex: imageDataResult.keyIndex }),
+                body: JSON.stringify({ imageData: imageUrl, model, provider, source, keyIndex: imageDataResult.keyIndex, prompt }),
               }));
               Logger.info("[queue] Image generated" + (isFromChat ? " (chat)" : " and broadcast"));
             } else {
@@ -99,7 +99,7 @@ export default {
               const errMsg = `图片生成失败 (${provider} · ${model})`;
               await doStub.fetch(new Request("http://localhost/broadcast-image", {
                 method: "POST",
-                body: JSON.stringify({ error: true, message: errMsg, model, provider, source }),
+                body: JSON.stringify({ error: true, message: errMsg, model, provider, source, prompt }),
               }));
               // 如果有微信来源信息，也发送错误给用户
               if (isFromChat && msg.body.toUserId) {
