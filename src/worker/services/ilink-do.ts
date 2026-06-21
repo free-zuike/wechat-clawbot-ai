@@ -1342,7 +1342,7 @@ export class ILinkConnectionDO implements DurableObject {
       // 查找提供商名称
       let providerName = "";
       try {
-        const cfg = await this.getConfig();
+        const cfg = await this.getConfigCached();
         const customProviders = (cfg as any).aiCustomProviders || [];
         const found = customProviders.find((p: any) => p.id === provider);
         if (found) providerName = found.name || "";
