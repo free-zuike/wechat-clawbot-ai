@@ -107,7 +107,6 @@ export async function handleChat(request: Request, env: Env): Promise<Response> 
             maxRetries,
           }, { delaySeconds: 0 });
           Logger.info(`[chat][${requestId}] Video task queued`);
-          await logToDO(env, "video", prompt, "", aiConfig.provider, videoModel, "queued");
         } catch (e: any) {
           Logger.error(`[chat][${requestId}] Queue send failed`, { error: e?.message });
           return json({ reply: `❌ 视频任务提交失败: ${e?.message}`, source: "error" } satisfies ChatResponse);
@@ -128,7 +127,6 @@ export async function handleChat(request: Request, env: Env): Promise<Response> 
             maxRetries,
           }, { delaySeconds: 0 });
           Logger.info(`[chat][${requestId}] Image task queued`);
-          await logToDO(env, "image", prompt, "", aiConfig.provider, imageModel, "queued");
         } catch (e: any) {
           Logger.error(`[chat][${requestId}] Queue send failed`, { error: e?.message });
           return json({ reply: `❌ 图片任务提交失败: ${e?.message}`, source: "error" } satisfies ChatResponse);
