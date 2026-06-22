@@ -133,17 +133,55 @@ export default {
               }
             }
         } else if (type === "video_generation") {
-          // 检查必要的配置参数
-          if (!baseUrl || !apiKey) {
-            Logger.error("[queue] Video task missing config", { provider, hasBaseUrl: !!baseUrl, hasApiKey: !!apiKey, apiKeyPrefix: apiKey ? apiKey.slice(0, 6) : "EMPTY" });
-            const doId = env.ILINK_CONNECTION.idFromName("main");
-            const doStub = env.ILINK_CONNECTION.get(doId);
-            await doStub.fetch(new Request("http://localhost/broadcast-image", {
-              method: "POST",
-              body: JSON.stringify({ error: true, message: `视频任务提交失败: 缺少配置参数 (${provider})`, model, provider, mediaType: "video", prompt }),
-            }));
-            continue;
-          }
+          const isCloudflare = !provider || provider === "cloudflare";
+          // Cloudflare AI：直接使用 aiBinding
+          if (isCloudflare && env.AI) {
+            try {
+              const { submitVideoTask } = await import("./services/ai");
+              const result = await submitVideoTask(env.AI, prompt, model, provider, baseUrl, apiKey);
+              if (result) {
+                const doId = env.ILINK_CONNECTION.idFromName("main");
+                const doStub = env.ILINK_CONNECTION.get(doId);
+                await doStub.fetch(new Request("http://localhost/store-pending-video", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ taskId: result.taskId, videoId: result.videoId, prompt: result.prompt, model: result.model, provider: result.provider, baseUrl: result.baseUrl, apiKey: result.apiKey, source }),
+                }));
+                if (result.url) {
+                  // 同步返回了视频 URL
+                  const broadcastResp = await doStub.fetch(new Request("http://localhost/broadcast-image", {
+                    method: "POST",
+                    body: JSON.stringify({ imageData: result.url, model: result.model, provider: result.provider, source, mediaType: "video", prompt: result.prompt }),
+                  }));
+                  Logger.info("[queue] Cloudflare video sync completed");
+                } else {
+                  // 异步任务，调度检查
+                  await env.CLAWBOT_QUEUE.send({
+                    type: "video_check",
+                    taskId: result.taskId, videoId: result.videoId, prompt: result.prompt, model: result.model, provider: result.provider, baseUrl: result.baseUrl, apiKey: result.apiKey, source,
+                  }, { delaySeconds: 30 });
+                  Logger.info("[queue] Cloudflare video task submitted", { taskId: result.taskId });
+                }
+              } else {
+                Logger.error("[queue] Cloudflare video submit returned null");
+                const doId = env.ILINK_CONNECTION.idFromName("main");
+                const doStub = env.ILINK_CONNECTION.get(doId);
+                await doStub.fetch(new Request("http://localhost/broadcast-image", {
+                  method: "POST",
+                  body: JSON.stringify({ error: true, message: `视频生成失败 (${provider} · ${model})`, model, provider, mediaType: "video", prompt }),
+                }));
+              }
+            } catch (e: any) {
+              Logger.error("[queue] Cloudflare video error", { error: e?.message });
+              const doId = env.ILINK_CONNECTION.idFromName("main");
+              const doStub = env.ILINK_CONNECTION.get(doId);
+              await doStub.fetch(new Request("http://localhost/broadcast-image", {
+                method: "POST",
+                body: JSON.stringify({ error: true, message: `视频生成失败: ${e?.message}`, model, provider, mediaType: "video", prompt }),
+              }));
+            }
+          } else {
+          // 非 Cloudflare 提供商：REST API
           // 提交视频生成任务
           const { base: vBase, version: vVer } = parseApiUrl(baseUrl || "");
           const isZhipu = (baseUrl || "").includes("bigmodel.cn");
@@ -184,6 +222,7 @@ export default {
           }, { delaySeconds: 30 });
 
           Logger.info("[queue] Video task submitted and stored", { taskId, videoId });
+          }
 
         } else if (type === "video_check") {
           // 轮询视频状态
