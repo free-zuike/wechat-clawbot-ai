@@ -1344,13 +1344,11 @@ export class ILinkConnectionDO implements DurableObject {
               source: taskSource || undefined,
             });
             Logger.info("[DO] Video completed", { taskId, url: videoUrl.slice(0, 80), sentToWeChat: sentSuccessfully, source: taskSource });
-            await this.logGeneration("video", (task.prompt as string || "").slice(0, 500), videoUrl, (task.provider as string) || "", (task.model as string) || "", sentSuccessfully ? "success" : "failed", sentSuccessfully ? undefined : "视频发送失败", taskSource || "", "");
           } else if (taskFailed) {
             const errMsg = `任务失败 (provider: ${task.provider}, model: ${task.model})`;
             await this.env.DB.prepare(
               `UPDATE pending_videos SET status = 'failed', error_message = ?, retry_count = retry_count + 1 WHERE task_id = ?`
             ).bind(errMsg, taskId).run();
-            await this.logGeneration("video", (task.prompt as string || "").slice(0, 500), "", (task.provider as string) || "", (task.model as string) || "", "failed", errMsg, taskSource || "", "");
             if (taskSource !== "chat" && creds && toUserId && contextToken) {
               await sendTextMessage(creds, toUserId, contextToken, `❌ 视频生成失败 (${modelInfo})\n请稍后重试或换个描述试试`).catch(() => {});
             }
