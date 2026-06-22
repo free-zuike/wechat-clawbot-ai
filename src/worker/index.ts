@@ -91,28 +91,29 @@ export default {
               if (dataLen === 0) {
                 Logger.error("[queue] Image data is empty", { type: typeof imageData, constructor: imageData?.constructor?.name });
               } else {
-              const doId = env.ILINK_CONNECTION.idFromName("main");
-              const doStub = env.ILINK_CONNECTION.get(doId);
-              let imageUrl: string;
-              if (typeof imageData === "string") {
-                imageUrl = imageData;
-              } else {
-                const arr = imageData instanceof Uint8Array ? imageData : new Uint8Array(imageData);
-                let binary = "";
-                for (let i = 0; i < arr.length; i++) binary += String.fromCharCode(arr[i]);
-                const mime = detectImageMime(arr);
-                imageUrl = `data:${mime};base64,${btoa(binary)}`;
+                const doId = env.ILINK_CONNECTION.idFromName("main");
+                const doStub = env.ILINK_CONNECTION.get(doId);
+                let imageUrl: string;
+                if (typeof imageData === "string") {
+                  imageUrl = imageData;
+                } else {
+                  const arr = imageData instanceof Uint8Array ? imageData : new Uint8Array(imageData);
+                  let binary = "";
+                  for (let i = 0; i < arr.length; i++) binary += String.fromCharCode(arr[i]);
+                  const mime = detectImageMime(arr);
+                  imageUrl = `data:${mime};base64,${btoa(binary)}`;
+                }
+                Logger.info("[queue] Broadcasting image", { imageUrlLength: imageUrl.length, isDataUrl: imageUrl.startsWith("data:") });
+                const broadcastResp = await doStub.fetch(new Request("http://localhost/broadcast-image", {
+                  method: "POST",
+                  body: JSON.stringify({ imageData: imageUrl, model, provider, source, keyIndex: imageDataResult.keyIndex, prompt }),
+                }));
+                if (!broadcastResp.ok) {
+                  const errText = await broadcastResp.text().catch(() => "unknown");
+                  Logger.error("[queue] Broadcast image failed", { status: broadcastResp.status, body: errText });
+                }
+                Logger.info("[queue] Image generated" + (isFromChat ? " (chat)" : " and broadcast"));
               }
-              Logger.info("[queue] Broadcasting image", { imageUrlLength: imageUrl.length, isDataUrl: imageUrl.startsWith("data:") });
-              const broadcastResp = await doStub.fetch(new Request("http://localhost/broadcast-image", {
-                method: "POST",
-                body: JSON.stringify({ imageData: imageUrl, model, provider, source, keyIndex: imageDataResult.keyIndex, prompt }),
-              }));
-              if (!broadcastResp.ok) {
-                const errText = await broadcastResp.text().catch(() => "unknown");
-                Logger.error("[queue] Broadcast image failed", { status: broadcastResp.status, body: errText });
-              }
-              Logger.info("[queue] Image generated" + (isFromChat ? " (chat)" : " and broadcast"));
             } else {
               Logger.error("[queue] Image generation returned null");
               const doId = env.ILINK_CONNECTION.idFromName("main");
