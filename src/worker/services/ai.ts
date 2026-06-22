@@ -510,7 +510,6 @@ export async function generateImage(
           prompt,
           size: imageSize,
           watermark_enabled: false,
-          response_format: "url",
         };
         if (imageUrl) {
           body.image_url = imageUrl;
