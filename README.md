@@ -1,315 +1,187 @@
-# 🦞 爪爪 ClawBot AI —— 微信个人号机器人
+# 🦞 ClawBot AI — 微信个人号 AI 机器人
 
-基于 **Cloudflare Worker** + **Worker AI**，通过微信官方 **ClawBot / iLink** 协议接入你的微信个人号。
-
----
-
-## ✨ 核心功能
-
-| 功能 | 说明 | 依赖组件 |
-| --- | --- | --- |
-| 💬 AI 对话 | 微信发文字 → AI 自动回复（支持多轮上下文） | Worker AI |
-| 🔐 扫码登录 | 官方 iLink 协议，凭证安全存储 | KV |
-| 📊 管理面板 | 实时状态监控、AI 测试、手动拉取 | HTML |
-| ⏰ 自动拉取 | Cron 定时触发，默认每 2 分钟 | Triggers |
-| 📝 内置指令 | `帮助 / 重置 / 关于`，零 Token 消耗 | 本地逻辑 |
-| 🧠 上下文 | 每用户独立，3 小时自动过期 | Cache API |
-| 📜 长期历史 | 对话记录永久保留（可选） | R2 |
-| 📈 统计分析 | 小时级聚合统计（可选） | D1 |
-| 🚀 异步处理 | 消息入队，防止 cron 超时（可选） | Queues |
+基于 **Cloudflare Workers + Durable Objects + D1 + Worker AI**，通过微信官方 **iLink** 协议接入微信个人号，支持文字对话、图片生成、视频生成。
 
 ---
 
-## 🚀 快速部署
+## ✨ 功能一览
 
-### 基础部署（必需）
+| 功能 | 说明 |
+|------|------|
+| 💬 AI 对话 | 微信发文字 → AI 自动回复（支持多轮上下文） |
+| 🖼️ 图片生成 | `/图片 <描述>` 或 `/image <prompt>` → AI 生图 |
+| 🎬 视频生成 | `/视频 <描述>` 或 `/video <prompt>` → AI 生视频 |
+| 🔐 扫码登录 | iLink 协议，凭证安全存储 |
+| 📊 管理面板 | AI 测试、生成记录、视频任务、配置管理 |
+| 📝 生成记录 | 文字/图片/视频生成历史，含提供商、密钥、来源 |
+| 🔑 多密钥重试 | API 密钥失败自动切换备用密钥 |
+| ⏰ 自动拉取 | Cron 每 2 分钟轮询微信消息 |
+
+---
+
+## 🚀 快速开始（Fork 后部署）
 
 ```bash
-# 1. 安装依赖
+# 1. Fork 仓库到你的 GitHub
+
+# 2. 克隆到本地
+git clone https://github.com/<你的用户名>/wechat-clawbot-ai.git
+cd wechat-clawbot-ai
+
+# 3. 安装依赖
 npm install
 
-# 2. 登录 Cloudflare
+# 4. 登录 Cloudflare
 npx wrangler login
 
-# 3. 创建 KV namespace（存储凭证）
-npx wrangler kv:namespace create CLAWBOT_KV
-# 把输出的 id 填入 wrangler.toml 的 [[kv_namespaces]]
+# 5. 创建必需资源
+npx wrangler kv:namespace create CLAWBOT_KV    # 记录 id
+npx wrangler d1 create clawbot-logs              # 记录 database_id
+npx wrangler queues create clawbot-tasks         # 创建消息队列
 
-# 4. ⚠️ 设置管理员密码（必需）
+# 6. 更新 wrangler.toml 中的 ID
+#    - KV namespace id
+#    - D1 database_id
+
+# 7. 设置管理员密码
 npx wrangler secret put ADMIN_PASSWORD
 
-# 5. 部署
-npm run deploy
+# 8. 部署
+npm run build && npx wrangler deploy
 ```
 
-### 可选增强（推荐）
+### 首次登录
 
-```bash
-# 统计数据库（D1）
-npx wrangler d1 create clawbot-db
-npx wrangler d1 execute clawbot-db --file=./schema.sql
+1. 打开 `https://<你的 Worker 域名>/`
+2. 输入管理员密码
+3. 点击「微信绑定」→ 扫描二维码
+4. 微信端确认 → 绑定完成
 
-# 异步消息队列（Queues）—— 防止 cron 超时
-npx wrangler queues create clawbot-messages
+---
 
-# 长期对话历史（R2）—— 永久存储
-npx wrangler r2 bucket create clawbot-history
+## 📦 项目结构
 
-# AI 模型自定义
-npx wrangler secret put AI_MODEL
-# 可用：@cf/meta/llama-3-8b-instruct, @cf/mistral/mistral-7b-instruct-v0.1 等
-
-# 自定义人设
-npx wrangler secret put AI_SYSTEM_PROMPT
 ```
-
-### 配置文件
-
-修改 `wrangler.toml` 填入你的资源 ID：
-
-```toml
-[[kv_namespaces]]
-binding = "CLAWBOT_KV"
-id = "你的 KV ID"
-
-[[d1_databases]]
-binding = "CLAWBOT_DB"
-database_name = "clawbot-db"
-database_id = "你的 D1 ID"
-
-[[r2_buckets]]
-binding = "CLAWBOT_R2"
-bucket_name = "clawbot-history"
-
-[[queues.producers]]
-binding = "CLAWBOT_QUEUE"
-queue = "clawbot-messages"
-
-[[queues.consumers]]
-queue = "clawbot-messages"
-max_batch_size = 10
+├── wrangler.toml              # Cloudflare Worker 配置
+├── package.json               # 依赖和构建脚本
+├── migrations/
+│   └── 0001_init.sql          # D1 数据库建表
+├── src/worker/
+│   ├── index.ts               # 主入口：路由、Cron、Queue 消费者
+│   ├── utils.ts               # 工具函数：认证、JSON 辅助
+│   ├── services/
+│   │   ├── ilink-do.ts        # Durable Object：iLink 连接、消息处理、生成记录、视频任务
+│   │   ├── ilink.ts           # iLink 协议：扫码、拉消息、发消息
+│   │   ├── ai.ts              # AI 服务：图片/视频/文字生成、多密钥重试
+│   │   ├── context.ts         # 对话上下文管理
+│   │   ├── cdn-upload.ts      # CDN 媒体上传
+│   │   └── webhook.ts         # Webhook 通知
+│   ├── routes/
+│   │   ├── admin.ts           # 管理后台 API
+│   │   ├── chat.ts            # AI 测试聊天
+│   │   ├── config.ts          # 配置管理
+│   │   ├── do.ts              # DO 代理路由
+│   │   └── ...                # 其他路由
+│   └── types/                 # TypeScript 类型定义
+└── web/src/
+    ├── views/
+    │   ├── AdminPage.vue      # 管理后台主页
+    │   └── LoginPage.vue      # 登录页
+    └── components/admin/
+        ├── ChatPanel.vue      # AI 测试聊天（含引用、删除、持久化）
+        ├── ConfigPanel.vue    # 系统配置（多密钥、提供商管理）
+        ├── GenerationLogsPanel.vue  # 生成记录（含视频预览）
+        ├── PendingVideosPanel.vue   # 视频任务管理（含视频预览）
+        └── ...                # 其他面板
 ```
 
 ---
 
-## 📱 扫码绑定微信
+## ⚙️ 存储架构
 
-1. 打开 `https://<你的 Worker 域名>/login`（需输入管理员密码）
-2. 在微信里：`我 → 设置 → 插件 → ClawBot`
-3. 用微信扫描页面上的二维码
-4. 手机上点确认 → 页面提示"登录成功" → 自动跳回首页
-5. 完成 ✅
+| 表/存储 | 存储位置 | 内容 | 持久性 |
+|---------|---------|------|--------|
+| `generation_logs` | **D1** | 生成记录（文字/图片/视频） | ✅ 永久 |
+| `pending_videos` | **D1** | 视频任务队列 | ✅ 永久 |
+| `contexts` | DO SQLite | 对话上下文 | ❌ 部署后重置 |
+| `processed_messages` | DO SQLite | 消息去重 | ❌ 部署后重置 |
+| `credentials` | DO SQLite | iLink 凭证 | ❌ 部署后重置 |
+| 配置/密钥 | **KV** | AI 配置、Admin 密码 | ✅ 永久 |
+
+---
+
+## 🛠️ 构建与部署
+
+```bash
+# 开发模式（前端热重载）
+npm run dev
+
+# 构建前端到 dist/
+npm run build
+
+# 构建并部署
+npm run deploy
+
+# 仅部署（已构建）
+npx wrangler deploy
+
+# 查看实时日志
+npx wrangler tail
+```
+
+### Cloudflare Dashboard 部署
+
+如果通过 Cloudflare Dashboard 的 Git 集成部署：
+- **构建命令**：`npm run build`
+- **输出目录**：`dist`
+- **Node.js 版本**：18+
 
 ---
 
 ## 💬 微信指令
 
-| 指令 | 效果 | 说明 |
-| --- | --- | --- |
-| `帮助` / `help` | 显示使用指南 | 不调用 AI |
-| `重置` / `clear` | 清空对话上下文 | 不调用 AI |
-| `关于` / `about` | 版本信息 | 不调用 AI |
-| `你好` / `时间` / `谢谢` | 快捷回复 | 零 Token 消耗 |
-| 其他文字 | AI 自动回答 | 走 Worker AI |
+| 指令 | 说明 |
+|------|------|
+| `/图片 <描述>` 或 `/image <prompt>` | 生成图片 |
+| `/视频 <描述>` 或 `/video <prompt>` | 生成视频 |
+| `重置` / `reset` | 清空对话上下文 |
+| `帮助` / `about` | 使用帮助 |
+| 其他文字 | AI 自动回复 |
 
 ---
 
-## 🌐 路由一览
+## 🌐 管理面板
 
-| 方法 | 路径 | 用途 | 权限 |
-| --- | --- | --- | --- |
-| GET | `/` | 管理面板（状态 + 聊天测试） | 公开 |
-| GET | `/login` | 扫码登录页 | ✅ 需密码 |
-| GET | `/api/qrcode` | 申请新二维码 | ✅ 需密码 |
-| GET | `/api/qrcode-status` | 轮询扫码状态 | ✅ 需密码 |
-| POST | `/api/trigger-poll` | 手动触发消息拉取 | ✅ 需密码 |
-| GET | `/api/status` | 实时状态 JSON | 公开 |
-| GET | `/api/history` | D1 小时统计 | 公开 |
-| GET | `/api/r2-history` | R2 对话历史 | ✅ 需密码 |
-| POST | `/api/logout` | 退出登录 | ✅ 需密码 |
-| POST | `/api/chat` | `{ message, userId }` → AI | 公开 |
-| GET | `/healthz` | 健康检查 | 公开 |
+访问 `https://<你的域名>/`：
 
-### 密码访问方式
-
-- **URL 参数**：`https://xxx.workers.dev/login?pwd=你的密码`
-- **Basic Auth**：`Authorization: Basic base64(admin:你的密码)`
-- **登录页**：页面内自带密码输入框
+| 页面 | 功能 |
+|------|------|
+| 📊 状态监控 | 轮询状态、账号信息 |
+| 🎯 操作面板 | 手动拉取、微信绑定、WebSocket |
+| ⚙️ 系统配置 | AI 提供商、密钥、模型、人设提示词 |
+| 🤖 AI 测试 | 直接对话测试（支持引用、删除） |
+| 📝 生成记录 | 文字/图片/视频历史，含提供商、密钥序号、来源 |
+| 🎬 视频任务 | 视频生成队列状态，含视频预览 |
+| 🚨 报警中心 | 系统错误监控 |
 
 ---
 
-## ⚙️ 配置方式
+## 📜 更新日志
 
-### 推荐：管理面板配置（运行时动态修改）
+### v2.0（当前）
 
-所有可选配置均可在管理面板中设置，无需重新部署：
-
-1. 打开 `https://<你的域名>/`
-2. 找到「⚙️ 系统设置」卡片
-3. 输入管理员密码后即可修改：
-   - **AI 模型**：选择 Worker AI 模型
-   - **AI 人设提示词**：自定义机器人性格
-   - **Turnstile Site Key**：配置人机验证（可选）
-
-> **优点**：即时生效，无需重新部署，操作简单直观。
-
-### 必需配置（必须通过环境变量设置）
-
-| 配置项 | 说明 | 设置命令 |
-| --- | --- | --- |
-| **ADMIN_PASSWORD** | 管理接口密码（保护登录、设置等敏感功能） | `wrangler secret put ADMIN_PASSWORD` |
-
-### 可选：通过环境变量配置（CI/CD 场景）
-
-若需要通过 CI/CD 部署或版本控制管理配置，可使用以下命令：
-
-| 配置项 | 说明 | 设置命令 |
-| --- | --- | --- |
-| `AI_MODEL` | Worker AI 模型名称 | `wrangler secret put AI_MODEL` |
-| `AI_SYSTEM_PROMPT` | AI 人设提示词 | `wrangler secret put AI_SYSTEM_PROMPT` |
-| `TURNSTILE_SECRET_KEY` | Turnstile 人机验证私钥 | `wrangler secret put TURNSTILE_SECRET_KEY` |
-| `TURNSTILE_SITE_KEY` | Turnstile 人机验证公钥 | `wrangler.toml` 的 `[vars]` |
-
-> **注意**：环境变量优先级高于管理面板设置。若同时设置，环境变量的值会覆盖管理面板的配置。
-
-### 常用 AI 模型参考
-
-| 模型名称 | 说明 |
-| --- | --- |
-| `@cf/meta/llama-3-8b-instruct` | Llama 3 8B（推荐，平衡性能与效果） |
-| `@cf/mistral/mistral-7b-instruct-v0.1` | Mistral 7B（轻量级，响应快） |
-| `@cf/baichuan-inc/Baichuan2-7B-Chat` | 百川 7B（中文优化） |
-
----
-
-## 📊 管理面板
-
-访问 `https://<你的域名>/` 查看：
-
-- **实时状态**：轮询次数、AI 调用、错误统计
-- **历史统计**：过去 24 小时 / 7 天数据
-- **AI 测试**：直接对话测试（公开）
-- **R2 历史**：查询用户对话记录（需密码）
-- **系统设置**：配置 AI 模型、人设提示词、Turnstile（需密码）
-
----
-
-## 🏗️ 架构
-
-```
-微信用户 → 微信服务器 (ilinkai.weixin.qq.com)
-                          ↑
-                          │ HTTP POST getupdates / sendmessage
-                          │
-                 ┌─────────────────────────────────────────────────┐
-                 │           Cloudflare Worker (本项目)            │
-                 └─────────────────────────────────────────────────┘
-                          │
-        ┌─────────────────┼─────────────────┬─────────────────┐
-        ▼                 ▼                 ▼                 ▼
-   Worker AI           KV (凭证)       Cache API       D1 + R2
-  (Llama 3 8B)        (bot_token)    (上下文/去重)  (统计/历史)
-        │                                        │
-        └────────────────────────────────────────┘
-                          │
-                          ▼
-                    Queues (异步)
-```
-
-### 存储方案对比
-
-| 数据类型 | 存储方式 | TTL | 成本 |
-| --- | --- | --- | --- |
-| 凭证 | KV | 永久 | 低（生命周期写 1 次） |
-| 对话上下文 | Cache API | 3 小时 | 免费 |
-| AI 回复缓存 | Cache API | 12 小时 | 免费 |
-| 消息去重 | Cache API | 2 小时 | 免费 |
-| 统计数据 | D1 | 永久 | 低（每小时 1 条） |
-| 长期历史 | R2 | 永久 | 低（按需） |
-
----
-
-## 📁 文件结构
-
-```
-.
-├── wrangler.toml          # Cloudflare 配置（KV/D1/R2/Queues）
-├── schema.sql             # D1 数据库 schema
-├── package.json
-├── tsconfig.json
-└── src/
-    ├── index.ts           # 主入口：路由、Cron、Queue 消费者、管理面板
-    ├── ilink.ts           # iLink 协议：扫码、拉消息、发消息、文本格式化
-    └── ai-service.ts      # AI 服务：上下文管理、敏感词过滤、缓存、R2 写入
-```
-
----
-
-## 📊 管理面板
-
-访问 `https://<你的域名>/` 查看：
-
-- **实时状态**：轮询次数、AI 调用、错误统计
-- **历史统计**：过去 24 小时 / 7 天数据
-- **AI 测试**：直接对话测试（公开）
-- **R2 历史**：查询用户对话记录（需密码）
-
----
-
-## ❓ 常见问题
-
-**Q: 消息延迟多久？**
-
-A: Cron 默认每 2 分钟跑一次，最多约 2 分钟延迟。配置 Queues 后更可靠。
-
-**Q: 微信 ClawBot 需要手机端一直在后台吗？**
-
-A: 不需要。iLink 协议走微信服务器，和手机是否在线无关。
-
-**Q: 支持群聊吗？**
-
-A: iLink 协议主要面向私聊，群聊支持视微信策略而定。
-
-**Q: 可以换成别的 AI 模型吗？**
-
-A: 可以。通过 `AI_MODEL` 环境变量设置，支持 Worker AI 的所有模型。
-
-**Q: 免费额度够用吗？**
-
-A: 完全够用。Cache API 代替 KV 后，写入几乎为零；D1 每小时只写 1 条。
-
----
-
-## 📝 更新日志
-
-### v1.5 Cloudflare Suite（最新）
-
-- ✅ 管理员密码 **必需**（保护敏感接口）
-- ✅ 集成 Cloudflare Queues — 异步消息处理
-- ✅ 集成 R2 — 长期对话历史存储
-- ✅ 集成 Turnstile — 防机器人（可选）
-- ✅ AI 模型可配置（通过 `AI_MODEL` 环境变量）
-- ✅ 管理面板全面升级
-
-### v1.4 D1 统计
-
-- ✅ D1 数据库集成
-- ✅ 小时级聚合统计
-- ✅ 错误环形日志
-
-### v1.3 Cache API 优化
-
-- ✅ Cache API 替代 KV（上下文/去重/缓存）
-- ✅ 零 KV 高频写
-- ✅ AI 回复 12h 缓存
-
-### v1.2 基础功能
-
-- ✅ 微信 iLink 协议接入
-- ✅ Worker AI 对话
-- ✅ 扫码登录
-- ✅ 管理面板
-- ✅ Cron 自动拉取
+- 🔄 **架构重构**：Durable Object + D1 持久化
+- 🖼️ **图片生成**：支持 Agnes AI、智谱 CogView 等多家提供商
+- 🎬 **视频生成**：支持 Agnes AI、智谱 CogVideoX
+- 🔑 **多密钥重试**：API 密钥失败自动切换备用密钥
+- 📝 **生成记录**：D1 永久存储，含提供商名称、密钥序号、来源
+- 🎬 **视频预览**：生成记录和视频任务支持内嵌视频播放
+- 💬 **引用功能**：AI 测试聊天支持消息引用（微信兼容格式）
+- 🗑️ **消息管理**：支持单条删除、清空聊天
+- 📱 **微信指令**：`/图片`、`/image`、`/视频`、`/video`
+- 🏷️ **提供商名称**：所有界面显示提供商名称而非 ID
+- 🔐 **安全加固**：移除 URL 参数传密码
+- 🧠 **上下文截断**：防止长对话超出模型限制
 
 ---
 
