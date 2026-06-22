@@ -261,6 +261,11 @@ const mergedMessages = computed(() => {
   return result;
 });
 
+// ===== Sessions =====
+const sessions = ref<any[]>([]); const sessionsLoading = ref(false);
+const sessionsSearch = ref(""); const sessionsPage = ref(1);
+const sessionsTotalPages = ref(1); const sessionsTotal = ref(0);
+
 // ===== Debug =====
 const debugInfo = ref(""); const debugLoading = ref(false);
 
