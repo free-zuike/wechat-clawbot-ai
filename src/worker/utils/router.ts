@@ -9,7 +9,7 @@ import { handleTriggerPoll } from "../routes/trigger";
 import { handleLogout } from "../routes/logout";
 import { handleConfig } from "../routes/config";
 import { handleDebugLogin } from "../routes/debug";
-import { handleRecentMessages, handleSessions, handleAlerts, handleResolveAlert, handleResolveAllAlerts, handleStats, handleHealth } from "../routes/admin";
+import { handleRecentMessages, handleSessions, handleStats, handleHealth } from "../routes/admin";
 import { handleDOPoll, handleDOSend, handleDOStatus, handleDOFlush, handleDOPendingVideos, handleDOGenerationLogs } from "../routes/do";
 import { handleWebSocket } from "../routes/websocket";
 import { handleTemplates } from "../routes/templates";
@@ -36,9 +36,6 @@ export class Router {
     { path: "/api/unbind-wechat", method: "POST", handler: handleUnbindWechat },
     { path: "/api/admin/messages", method: "GET", handler: handleRecentMessages, rateLimit: true, rateLimitMax: 30 },
     { path: "/api/admin/sessions", method: "GET", handler: handleSessions, rateLimit: true, rateLimitMax: 30 },
-    { path: "/api/admin/alerts", method: "GET", handler: handleAlerts, rateLimit: true, rateLimitMax: 30 },
-    { path: "/api/admin/alerts/resolve", method: "POST", handler: handleResolveAlert, rateLimit: true, rateLimitMax: 20 },
-    { path: "/api/admin/alerts/resolve-all", method: "POST", handler: handleResolveAllAlerts, rateLimit: true, rateLimitMax: 5 },
     { path: "/api/admin/stats", method: "GET", handler: handleStats, rateLimit: true, rateLimitMax: 30 },
     { path: "/api/admin/health", method: "GET", handler: handleHealth, rateLimit: true, rateLimitMax: 60 },
     { path: "/api/do/poll", method: "GET", handler: handleDOPoll, rateLimit: true, rateLimitMax: 60 },

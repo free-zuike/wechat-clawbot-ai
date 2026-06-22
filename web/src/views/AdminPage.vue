@@ -117,25 +117,6 @@
         />
       </section>
 
-      <section v-if="activeSection === 'alerts'">
-        <AlertsPanel
-          v-model:search-text="alertsSearch"
-          v-model:level-filter="alertsLevelFilter"
-          v-model:only-active="alertsOnlyActive"
-          :items="alerts"
-          :loading="alertsLoading"
-          :summary="alertSummary"
-          :page="alertsPage"
-          :total-pages="alertsTotalPages"
-          :total="alertsTotal"
-          @refresh="handleRefreshAlerts"
-          @resolve="handleResolveAlert"
-          @resolve-all="handleResolveAllAlerts"
-          @prev-page="alertsPage--; handleRefreshAlerts()"
-          @next-page="alertsPage++; handleRefreshAlerts()"
-        />
-      </section>
-
       <section v-if="activeSection === 'sessions'">
         <SessionsPanel
           :items="sessions"
@@ -169,14 +150,13 @@ import { ref, reactive, computed, onMounted, onUnmounted, watch } from "vue";
 import { useRouter } from "vue-router";
 import {
   fetchStatus, fetchConfig, saveConfig, triggerPoll, logout, chat,
-  checkLogin, debugLogin, fetchAlerts, resolveAlert, resolveAllAlerts,
+  checkLogin, debugLogin,
   fetchSessions, fetchHealth, getQRCode, getQRCodeStatus, ApiError,
 } from "../api";
 import QRCode from "qrcode";
 import StatusPanel from "../components/admin/StatusPanel.vue";
 import ConfigPanel from "../components/admin/ConfigPanel.vue";
 import ChatPanel from "../components/admin/ChatPanel.vue";
-import AlertsPanel from "../components/admin/AlertsPanel.vue";
 import SessionsPanel from "../components/admin/SessionsPanel.vue";
 import TemplatesPanel from "../components/admin/TemplatesPanel.vue";
 import TaskPanel from "../components/admin/TaskPanel.vue";
@@ -197,7 +177,6 @@ const navItems = [
   { key: "control", label: "操作面板", icon: "🎯" },
   { key: "config", label: "系统配置", icon: "⚙️" },
   { key: "chat", label: "AI 测试", icon: "🤖" },
-  { key: "alerts", label: "报警中心", icon: "🚨" },
   { key: "sessions", label: "用户会话", icon: "💬" },
   { key: "templates", label: "消息模板", icon: "📋" },
   { key: "videos", label: "视频任务", icon: "🎬" },
@@ -286,131 +265,6 @@ const mergedMessages = computed(() => {
 const debugInfo = ref(""); const debugLoading = ref(false);
 
 // ===== Alerts =====
-const alerts = ref<any[]>([]); const alertsLoading = ref(false);
-const alertsOnlyActive = ref(false); const alertsLevelFilter = ref("");
-const alertsSearch = ref(""); const alertsPage = ref(1);
-const alertsTotalPages = ref(1); const alertsTotal = ref(0);
-const alertSummary = reactive({ total: 0, byLevel: { info: 0, warning: 0, error: 0, critical: 0 }, unresolved: 0 });
-
-// ===== Sessions =====
-const sessions = ref<any[]>([]); const sessionsLoading = ref(false);
-const sessionsSearch = ref(""); const sessionsPage = ref(1);
-const sessionsTotalPages = ref(1); const sessionsTotal = ref(0);
-
-// ===== Accounts =====
-const accountsList = ref<Array<{ accountId: string; baseUrl: string; lastPollAt: string; pollLoopRunning: boolean }>>([]);
-
-// ===== Health =====
-const healthData = reactive({
-  kv: "—", loggedIn: false, totalPolls: 0, totalHandled: 0, totalAICalls: 0, totalAIFails: 0,
-  unresolvedAlerts: 0, criticalAlerts: 0, errorAlerts: 0, warningAlerts: 0, timestamp: "",
-});
-
-// ===== Error handling =====
-function handleApiError(error: unknown, defaultMessage: string): string {
-  if (error instanceof ApiError) { if (error.isAuthError) { router.push("/login"); return "请先登录"; } return error.message; }
-  if (error instanceof Error) return error.message;
-  return defaultMessage;
-}
-
-// ===== Status refresh =====
-async function handleRefreshStatus() {
-  if (!firstLoadDone.value) statusLoading.value = true;
-  try {
-    let statusData: any = null;
-    try { statusData = await fetchStatus(isFirstRefresh); } catch (e: any) { if (!(e instanceof ApiError && e.isCancelled)) console.error("状态API失败:", e); }
-    if (statusData && statusData !== null) {
-      status.loggedIn = !!statusData.loggedIn;
-      status.tokenHealth = statusData.tokenHealth || "";
-      status.loginAgeText = statusData.loginAgeText || "";
-      status.polls = statusData.stats?.polls || 0;
-      status.handled = statusData.stats?.handled || 0;
-      status.aiCalls = statusData.stats?.aiCalls || 0;
-      status.aiFails = statusData.stats?.aiFails || 0;
-      status.lastPollAt = statusData.stats?.lastPollAt ? new Date(statusData.stats.lastPollAt).toLocaleString() : "从未";
-      status.lastLatencyMs = statusData.stats?.lastLatencyMs == null ? "—" : statusData.stats.lastLatencyMs + " ms";
-      qrCodeBound.value = !!statusData.hasBotCredentials;
-      accountsList.value = statusData.accounts || [];
-      healthData.kv = statusData.kv || "—";
-      healthData.loggedIn = statusData.loggedIn;
-      healthData.unresolvedAlerts = statusData.alerts?.unresolved || 0;
-      healthData.criticalAlerts = statusData.alerts?.critical || 0;
-      healthData.errorAlerts = statusData.alerts?.error || 0;
-      healthData.warningAlerts = statusData.alerts?.warning || 0;
-      healthData.timestamp = statusData.timestamp || new Date().toISOString();
-      isFirstRefresh = false; firstLoadDone.value = true;
-    }
-  } catch (e: any) { console.error("状态刷新失败:", e); } finally { statusLoading.value = false; }
-}
-
-// ===== Poll =====
-async function handleTriggerPoll() {
-  isPolling.value = true; pollResult.value = "正在轮询...";
-  try {
-    const d = await triggerPoll();
-    pollResult.value = `✅ 轮询完成\n拉取: ${d.pulled || 0} 条\n回复: ${d.handled || 0} 条\n耗时: ${d.latencyMs || 0}ms` + (d.error ? `\n⚠️ ${d.error}` : "");
-    handleRefreshStatus();
-  } catch (e: any) { pollResult.value = "❌ 失败: " + handleApiError(e, "轮询失败"); } finally { isPolling.value = false; }
-}
-
-// ===== Config =====
-let saveTimer: number | null = null;
-function debouncedSaveConfig() {
-  if (saveTimer) clearTimeout(saveTimer);
-  saveTimer = window.setTimeout(() => { handleSaveConfig(); }, 300);
-}
-
-async function handleLoadConfig() {
-  configResult.value = "加载中...";
-  try {
-    const d = await fetchConfig(); if (d === null) return;
-    config.version = d.version || 0;
-    config.aiProvider = d.aiProvider || "cloudflare"; config.aiModel = d.aiModel || "";
-    config.aiImageModel = d.aiImageModel || "@cf/black-forest-labs/flux-1-schnell";
-    config.aiVideoModel = d.aiVideoModel || "bytedance/seedance-2.0-fast";
-    config.aiBaseUrl = d.aiBaseUrl || ""; config.aiApiKey = d.aiApiKey || "";
-    config.aiMaxTokens = d.aiMaxTokens || 1024;     config.aiSystemPrompt = d.aiSystemPrompt || "";
-    config.aiMaxRetries = d.aiMaxRetries ?? 2;
-    config.webhookEnabled = d.webhookEnabled || false;
-    config.webhookUrl = d.webhookUrl || "";
-    config.webhookTitle = d.webhookTitle || "";
-    config.webhookApiKey = d.webhookApiKey || "";
-    config.webhookChannels = d.webhookChannels || [];
-    config.aiCustomProviders = d.aiCustomProviders || [];
-    // 加载预设数据（每个提供商独立配置）
-    config.aiPresets = d.aiPresets || [];
-    // 从旧的 aiPresets 迁移到 aiCustomProviders（旧预设无 name 字段，用 id 生成）
-    if (config.aiCustomProviders.length === 0 && config.aiPresets.length > 0) {
-      config.aiCustomProviders = config.aiPresets.map((p: any) => ({
-        id: p.id, name: p.name || p.id.replace("custom_", "提供商 "), icon: "🤖",
-      }));
-    }
-    configResult.value = d.hasEnvOverride ? "✅ 已加载当前配置（注意：当前有环境变量覆盖）" : "✅ 已加载当前配置";
-  } catch (e: any) { if (e instanceof ApiError && e.isCancelled) return; configResult.value = "❌ 加载失败: " + handleApiError(e, "加载失败"); }
-}
-async function handleSaveConfig() {
-  configSaving.value = true; configResult.value = "保存中...";
-  try {
-    const d = await saveConfig({ ...config, _version: config.version });
-    if (d.ok) {
-      configResult.value = "✅ " + (d.message || "配置已保存");
-      await handleLoadConfig();
-    }
-    else if (d.error === "CONFLICT") {
-      configResult.value = "⚠️ " + (d.message || "配置已被其他人修改，正在重新加载...");
-      await handleLoadConfig();
-    }
-    else if (d.error === "VALIDATION_ERROR") configResult.value = "⚠️ 验证失败: " + (d.message || "请检查配置项");
-    else configResult.value = "❌ " + (d.error || "保存失败");
-  } catch (e: any) {
-    if (e instanceof ApiError && e.isAuthError) {
-      configResult.value = "❌ 登录已过期，请刷新页面重新登录";
-    } else {
-      configResult.value = "❌ 保存失败: " + handleApiError(e, "保存失败");
-    }
-  } finally { configSaving.value = false; }
-}
-
 // ===== Chat =====
 async function handleSendChat() {
   const q = chatInput.value.trim(); if (!q || chatLoading.value) return;
@@ -522,20 +376,6 @@ async function handleDebug() {
   catch (e: any) { debugInfo.value = "错误: " + handleApiError(e, "诊断失败"); } finally { debugLoading.value = false; }
 }
 
-// ===== Alerts =====
-async function handleRefreshAlerts() {
-  alertsLoading.value = true;
-  try {
-    const data = await fetchAlerts(alertsOnlyActive.value); if (data === null) return;
-    if (data && data.alerts) {
-      alerts.value = data.alerts; alertsTotal.value = data.total || 0; alertsTotalPages.value = data.totalPages || 1;
-      if (data.summary) { alertSummary.total = data.summary.total || 0; alertSummary.unresolved = data.summary.unresolved || 0; alertSummary.byLevel = { info: data.summary.byLevel?.info || 0, warning: data.summary.byLevel?.warning || 0, error: data.summary.byLevel?.error || 0, critical: data.summary.byLevel?.critical || 0 }; }
-    }
-  } catch (e: any) { if (!(e instanceof ApiError && e.isCancelled)) console.error("刷新报警失败:", e); } finally { alertsLoading.value = false; }
-}
-async function handleResolveAlert(id: string) { try { const d = await resolveAlert(id); if (d.success) handleRefreshAlerts(); } catch (e: any) { console.error("解决报警失败:", e); } }
-async function handleResolveAllAlerts() { if (!confirm("确认解决所有报警？")) return; try { const d = await resolveAllAlerts(); if (d.success) handleRefreshAlerts(); } catch (e: any) { console.error("解决所有报警失败:", e); } }
-
 // ===== Sessions =====
 async function handleRefreshSessions() {
   sessionsLoading.value = true;
@@ -557,8 +397,8 @@ onMounted(async () => {
     let loginOk = true; try { const d = await checkLogin(); if (!d.loggedIn) loginOk = false; } catch { loginOk = false; }
     if (!loginOk) { router.push("/login"); return; }
   }
-  handleRefreshStatus(); handleLoadConfig(); handleRefreshAlerts(); handleRefreshSessions(); connectWebSocket();
-  async function tick() { try { await handleRefreshStatus(); if (activeSection.value === "alerts") await handleRefreshAlerts(); } finally { refreshTimer = window.setTimeout(tick, 30000); } }
+  handleRefreshStatus(); handleLoadConfig(); handleRefreshSessions(); connectWebSocket();
+  async function tick() { try { await handleRefreshStatus(); } finally { refreshTimer = window.setTimeout(tick, 30000); } }
   refreshTimer = window.setTimeout(tick, 30000);
 });
 
