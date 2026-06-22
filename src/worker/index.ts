@@ -86,16 +86,21 @@ export default {
           const { generateImage } = await import("./services/ai");
           const imageDataResult = await generateImage(env.AI, prompt, model, provider, baseUrl, apiKey, undefined, undefined, allKeys, maxRetries);
           const imageData = imageDataResult.data;
-            if (imageData && !(imageData instanceof Uint8Array && imageData.length === 0)) {
+            if (imageData) {
+              const dataLen = imageData instanceof Uint8Array ? imageData.length : (typeof imageData === "string" ? imageData.length : 0);
+              if (dataLen === 0) {
+                Logger.error("[queue] Image data is empty", { type: typeof imageData, constructor: imageData?.constructor?.name });
+              } else {
               const doId = env.ILINK_CONNECTION.idFromName("main");
               const doStub = env.ILINK_CONNECTION.get(doId);
               let imageUrl: string;
               if (typeof imageData === "string") {
                 imageUrl = imageData;
               } else {
+                const arr = imageData instanceof Uint8Array ? imageData : new Uint8Array(imageData);
                 let binary = "";
-                for (let i = 0; i < imageData.length; i++) binary += String.fromCharCode(imageData[i]);
-                const mime = detectImageMime(imageData);
+                for (let i = 0; i < arr.length; i++) binary += String.fromCharCode(arr[i]);
+                const mime = detectImageMime(arr);
                 imageUrl = `data:${mime};base64,${btoa(binary)}`;
               }
               Logger.info("[queue] Broadcasting image", { imageUrlLength: imageUrl.length, isDataUrl: imageUrl.startsWith("data:") });

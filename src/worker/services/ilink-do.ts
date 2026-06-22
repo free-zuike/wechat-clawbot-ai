@@ -1514,9 +1514,14 @@ export class ILinkConnectionDO implements DurableObject {
       }
       // 解码 base64
       const base64 = imageData.startsWith("data:") ? imageData.split(",")[1] || "" : imageData;
+      if (!base64) {
+        Logger.error("[DO] Get image: empty base64", { id, imageDataLength: imageData.length });
+        return new Response(JSON.stringify({ error: "图片数据为空" }), { status: 404, headers: { "Content-Type": "application/json" } });
+      }
       const binary = atob(base64);
       const bytes = new Uint8Array(binary.length);
       for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      Logger.info("[DO] Get image decoded", { id, bytesLength: bytes.length, contentType });
       return new Response(bytes, {
         headers: { "Content-Type": contentType, "Cache-Control": "public, max-age=3600" },
       });
