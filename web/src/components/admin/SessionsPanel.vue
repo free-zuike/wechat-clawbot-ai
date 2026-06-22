@@ -18,9 +18,9 @@
         <button class="btn secondary small" @click="$emit('refresh')">🔄 刷新</button>
       </div>
 
-      <div v-if="items.length === 0" class="empty-state">暂无会话记录</div>
+      <div v-if="!items || items.length === 0" class="empty-state">暂无会话记录</div>
       <div v-else>
-        <div class="session-item" v-for="session in items" :key="session.from_user_id">
+        <div class="session-item" v-for="session in (items || [])" :key="session.from_user_id">
           <div class="session-user">👤 {{ session.from_user_id }}</div>
           <div class="session-info">
             <span>📨 {{ session.message_count }} 条消息</span>
@@ -29,10 +29,10 @@
         </div>
       </div>
 
-      <div v-if="totalPages > 1" class="pagination">
-        <button class="btn secondary small" :disabled="page <= 1" @click="$emit('prevPage')">← 上一页</button>
-        <span>第 {{ page }} / {{ totalPages }} 页（共 {{ total }} 条）</span>
-        <button class="btn secondary small" :disabled="page >= totalPages" @click="$emit('nextPage')">下一页 →</button>
+      <div v-if="totalPages && totalPages > 1" class="pagination">
+        <button class="btn secondary small" :disabled="(page || 1) <= 1" @click="$emit('prevPage')">← 上一页</button>
+        <span>第 {{ page || 1 }} / {{ totalPages || 1 }} 页（共 {{ total || 0 }} 条）</span>
+        <button class="btn secondary small" :disabled="(page || 1) >= (totalPages || 1)" @click="$emit('nextPage')">下一页 →</button>
       </div>
     </template>
   </div>
@@ -40,12 +40,12 @@
 
 <script setup lang="ts">
 defineProps<{
-  items: any[];
-  loading: boolean;
-  search: string;
-  page: number;
-  totalPages: number;
-  total: number;
+  items?: any[];
+  loading?: boolean;
+  search?: string;
+  page?: number;
+  totalPages?: number;
+  total?: number;
 }>();
 
 defineEmits(["refresh", "prevPage", "nextPage", "update:search"]);
