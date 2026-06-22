@@ -60,6 +60,21 @@ export class Router {
     if (path === "/metrics") return json(await metrics.export());
     if (path === "/errors") return json(await errorTracker.getStats());
 
+    // 图片代理路由（匹配 /api/image/:id）
+    if (path.startsWith("/api/image/")) {
+      const imageId = path.replace("/api/image/", "");
+      if (imageId) {
+        try {
+          const doId = env.ILINK_CONNECTION.idFromName("main");
+          const doStub = env.ILINK_CONNECTION.get(doId);
+          const resp = await doStub.fetch(new Request(`http://localhost/get-image/${imageId}`));
+          return resp;
+        } catch (e: any) {
+          return json({ error: "获取图片失败: " + e.message }, 500);
+        }
+      }
+    }
+
     if (path.startsWith("/api/")) {
       const route = this.routes.find(r => {
         const pathMatch = r.path === path || (r.path.endsWith('/') && path === r.path.slice(0, -1));

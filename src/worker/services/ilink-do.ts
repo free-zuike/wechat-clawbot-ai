@@ -375,6 +375,12 @@ export class ILinkConnectionDO implements DurableObject {
     if (url.pathname === "/broadcast-image") {
       return this.handleBroadcastImage(request);
     }
+    if (url.pathname === "/store-image") {
+      return this.handleStoreImage(request);
+    }
+    if (url.pathname.startsWith("/get-image/")) {
+      return this.handleGetImage(url);
+    }
     if (url.pathname === "/store-pending-video") {
       return this.handleStorePendingVideo(request);
     }
@@ -506,6 +512,13 @@ export class ILinkConnectionDO implements DurableObject {
         this.websockets.delete(ws);
       }
     }
+  }
+
+  private detectImageMime(data: Uint8Array): string {
+    if (data[0] === 0xFF && data[1] === 0xD8) return "image/jpeg";
+    if (data[0] === 0x89 && data[1] === 0x50) return "image/png";
+    if (data[0] === 0x52 && data[1] === 0x49) return "image/webp";
+    return "image/png";
   }
 
   // ========== 保存 session（admin登录时调用）==========
@@ -1412,11 +1425,28 @@ export class ILinkConnectionDO implements DurableObject {
         });
       }
 
+      // 如果是 data URL（太大无法通过 WebSocket 发送），先存入 DO storage
+      let broadcastUrl = imageData;
+      if (imageData.startsWith("data:")) {
+        const storeResp = await this.handleStoreImage(new Request("http://localhost/store-image", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ imageData, model, provider, source, prompt }),
+        }));
+        const storeData = await storeResp.json() as { id?: string; error?: string };
+        if (storeData.id) {
+          broadcastUrl = `/api/image/${storeData.id}`;
+          Logger.info("[DO] Image stored for broadcast", { id: storeData.id, broadcastUrl });
+        } else {
+          Logger.error("[DO] Failed to store image for broadcast", { error: storeData.error });
+        }
+      }
+
       // 广播到 WebSocket
       this.broadcastToWebSockets({
         type: "media_generated",
         mediaType: logType,
-        url: imageData,
+        url: broadcastUrl,
         model: model,
         provider: providerName || provider,
         source,
@@ -1433,6 +1463,64 @@ export class ILinkConnectionDO implements DurableObject {
       return new Response(JSON.stringify({ error: e.message }), {
         status: 500, headers: { "Content-Type": "application/json" },
       });
+    }
+  }
+
+  // ========== 图片存储（避免 WebSocket 消息过大）==========
+  private async handleStoreImage(request: Request): Promise<Response> {
+    try {
+      const body = await request.json() as { imageData: string; model?: string; provider?: string; source?: string; prompt?: string };
+      const { imageData } = body;
+      if (!imageData) {
+        return new Response(JSON.stringify({ error: "缺少 imageData" }), { status: 400, headers: { "Content-Type": "application/json" } });
+      }
+      const id = `img_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`;
+      await this.doState.storage.put(`image:${id}`, imageData);
+      await this.doState.storage.put(`image-meta:${id}`, JSON.stringify({ createdAt: Date.now(), model: body.model, provider: body.provider, source: body.source, prompt: body.prompt }));
+      Logger.info("[DO] Image stored", { id, dataLength: imageData.length });
+      return new Response(JSON.stringify({ id }), { headers: { "Content-Type": "application/json" } });
+    } catch (e: any) {
+      Logger.error("[DO] Store image error", { error: e.message });
+      return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { "Content-Type": "application/json" } });
+    }
+  }
+
+  private async handleGetImage(url: URL): Promise<Response> {
+    try {
+      const id = url.pathname.replace("/get-image/", "");
+      if (!id) {
+        return new Response(JSON.stringify({ error: "缺少图片 ID" }), { status: 400, headers: { "Content-Type": "application/json" } });
+      }
+      const imageData = await this.doState.storage.get<string>(`image:${id}`);
+      if (!imageData) {
+        return new Response(JSON.stringify({ error: "图片不存在或已过期" }), { status: 404, headers: { "Content-Type": "application/json" } });
+      }
+      // 检查元数据，超过 24 小时自动清理
+      const metaRaw = await this.doState.storage.get<string>(`image-meta:${id}`);
+      if (metaRaw) {
+        const meta = JSON.parse(metaRaw);
+        if (Date.now() - meta.createdAt > 86400000) {
+          await this.doState.storage.delete([`image:${id}`, `image-meta:${id}`]);
+          return new Response(JSON.stringify({ error: "图片已过期" }), { status: 410, headers: { "Content-Type": "application/json" } });
+        }
+      }
+      // 检测 MIME 类型
+      let contentType = "image/png";
+      if (imageData.startsWith("data:")) {
+        const match = imageData.match(/^data:(image\/[^;]+)/);
+        if (match) contentType = match[1];
+      }
+      // 解码 base64
+      const base64 = imageData.startsWith("data:") ? imageData.split(",")[1] || "" : imageData;
+      const binary = atob(base64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      return new Response(bytes, {
+        headers: { "Content-Type": contentType, "Cache-Control": "public, max-age=3600" },
+      });
+    } catch (e: any) {
+      Logger.error("[DO] Get image error", { error: e.message });
+      return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { "Content-Type": "application/json" } });
     }
   }
 
@@ -1908,10 +1996,18 @@ export class ILinkConnectionDO implements DurableObject {
                   // Uint8Array：转换为 base64 data URL 后发送
                   let binary = "";
                   for (let i = 0; i < imageData.length; i++) binary += String.fromCharCode(imageData[i]);
-                  const dataUrl = `data:image/png;base64,${btoa(binary)}`;
+                  const mime = this.detectImageMime(imageData);
+                  const dataUrl = `data:${mime};base64,${btoa(binary)}`;
                   await sendImageSimple(useCreds!, from, ctxToken, dataUrl);
                   replyContent = `[图片生成] ${mediaPrompt}`;
-                  this.broadcastToWebSockets({ type: "media_generated", mediaType: "image", url: dataUrl, model: cfg.aiImageModel, provider: cfg.aiProvider });
+                  // 存入 DO storage 后广播 URL 引用（避免 WebSocket 消息过大）
+                  const storeResp = await this.handleStoreImage(new Request("http://localhost/store-image", {
+                    method: "POST", headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ imageData: dataUrl, model: cfg.aiImageModel, provider: cfg.aiProvider, source: "wechat", prompt: mediaPrompt }),
+                  }));
+                  const storeData = await storeResp.json() as { id?: string };
+                  const broadcastUrl = storeData.id ? `/api/image/${storeData.id}` : dataUrl;
+                  this.broadcastToWebSockets({ type: "media_generated", mediaType: "image", url: broadcastUrl, model: cfg.aiImageModel, provider: cfg.aiProvider, source: "wechat" });
                 }
               } else {
                 await sendTextMessage(useCreds!, from, ctxToken, `❌ 图片生成失败 (${modelInfo})\n请稍后重试或换个描述试试`);

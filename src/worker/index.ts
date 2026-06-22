@@ -27,6 +27,13 @@ export interface Env {
   ILINK_CONNECTION: DurableObjectNamespace<ILinkConnectionDO>;
 }
 
+function detectImageMime(data: Uint8Array): string {
+  if (data[0] === 0xFF && data[1] === 0xD8) return "image/jpeg";
+  if (data[0] === 0x89 && data[1] === 0x50) return "image/png";
+  if (data[0] === 0x52 && data[1] === 0x49) return "image/webp";
+  return "image/png";
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     if (!metrics.getCounters()['init']) {
@@ -79,7 +86,7 @@ export default {
           const { generateImage } = await import("./services/ai");
           const imageDataResult = await generateImage(env.AI, prompt, model, provider, baseUrl, apiKey, undefined, undefined, allKeys, maxRetries);
           const imageData = imageDataResult.data;
-            if (imageData) {
+            if (imageData && !(imageData instanceof Uint8Array && imageData.length === 0)) {
               const doId = env.ILINK_CONNECTION.idFromName("main");
               const doStub = env.ILINK_CONNECTION.get(doId);
               let imageUrl: string;
@@ -88,7 +95,8 @@ export default {
               } else {
                 let binary = "";
                 for (let i = 0; i < imageData.length; i++) binary += String.fromCharCode(imageData[i]);
-                imageUrl = `data:image/png;base64,${btoa(binary)}`;
+                const mime = detectImageMime(imageData);
+                imageUrl = `data:${mime};base64,${btoa(binary)}`;
               }
               Logger.info("[queue] Broadcasting image", { imageUrlLength: imageUrl.length, isDataUrl: imageUrl.startsWith("data:") });
               const broadcastResp = await doStub.fetch(new Request("http://localhost/broadcast-image", {
