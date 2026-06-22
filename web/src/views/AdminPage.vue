@@ -264,7 +264,114 @@ const mergedMessages = computed(() => {
 // ===== Debug =====
 const debugInfo = ref(""); const debugLoading = ref(false);
 
-// ===== Alerts =====
+// ===== Accounts =====
+const accountsList = ref<Array<{ accountId: string; baseUrl: string; lastPollAt: string; pollLoopRunning: boolean }>>([]);
+
+// ===== Health =====
+const healthData = reactive({
+  kv: "—", loggedIn: false, totalPolls: 0, totalHandled: 0, totalAICalls: 0, totalAIFails: 0,
+  timestamp: "",
+});
+
+// ===== Error handling =====
+function handleApiError(error: unknown, defaultMessage: string): string {
+  if (error instanceof ApiError) { if (error.isAuthError) { router.push("/login"); return "请先登录"; } return error.message; }
+  if (error instanceof Error) return error.message;
+  return defaultMessage;
+}
+
+// ===== Status refresh =====
+async function handleRefreshStatus() {
+  if (!firstLoadDone.value) statusLoading.value = true;
+  try {
+    let statusData: any = null;
+    try { statusData = await fetchStatus(isFirstRefresh); } catch (e: any) { if (!(e instanceof ApiError && e.isCancelled)) console.error("状态API失败:", e); }
+    if (statusData && statusData !== null) {
+      status.loggedIn = !!statusData.loggedIn;
+      status.tokenHealth = statusData.tokenHealth || "";
+      status.loginAgeText = statusData.loginAgeText || "";
+      status.polls = statusData.stats?.polls || 0;
+      status.handled = statusData.stats?.handled || 0;
+      status.aiCalls = statusData.stats?.aiCalls || 0;
+      status.aiFails = statusData.stats?.aiFails || 0;
+      status.lastPollAt = statusData.stats?.lastPollAt ? new Date(statusData.stats.lastPollAt).toLocaleString() : "从未";
+      status.lastLatencyMs = statusData.stats?.lastLatencyMs == null ? "—" : statusData.stats.lastLatencyMs + " ms";
+      qrCodeBound.value = !!statusData.hasBotCredentials;
+      accountsList.value = statusData.accounts || [];
+      healthData.kv = statusData.kv || "—";
+      healthData.loggedIn = statusData.loggedIn;
+      healthData.timestamp = statusData.timestamp || new Date().toISOString();
+      isFirstRefresh = false; firstLoadDone.value = true;
+    }
+  } catch (e: any) { console.error("状态刷新失败:", e); } finally { statusLoading.value = false; }
+}
+
+// ===== Poll =====
+async function handleTriggerPoll() {
+  isPolling.value = true; pollResult.value = "正在轮询...";
+  try {
+    const d = await triggerPoll();
+    pollResult.value = `✅ 轮询完成\n拉取: ${d.pulled || 0} 条\n回复: ${d.handled || 0} 条\n耗时: ${d.latencyMs || 0}ms` + (d.error ? `\n⚠️ ${d.error}` : "");
+    handleRefreshStatus();
+  } catch (e: any) { pollResult.value = "❌ 失败: " + handleApiError(e, "轮询失败"); } finally { isPolling.value = false; }
+}
+
+// ===== Config =====
+let saveTimer: number | null = null;
+function debouncedSaveConfig() {
+  if (saveTimer) clearTimeout(saveTimer);
+  saveTimer = window.setTimeout(() => { handleSaveConfig(); }, 300);
+}
+
+async function handleLoadConfig() {
+  configResult.value = "加载中...";
+  try {
+    const d = await fetchConfig(); if (d === null) return;
+    config.version = d.version || 0;
+    config.aiProvider = d.aiProvider || "cloudflare"; config.aiModel = d.aiModel || "";
+    config.aiImageModel = d.aiImageModel || "@cf/black-forest-labs/flux-1-schnell";
+    config.aiVideoModel = d.aiVideoModel || "bytedance/seedance-2.0-fast";
+    config.aiBaseUrl = d.aiBaseUrl || ""; config.aiApiKey = d.aiApiKey || "";
+    config.aiMaxTokens = d.aiMaxTokens || 1024;     config.aiSystemPrompt = d.aiSystemPrompt || "";
+    config.aiMaxRetries = d.aiMaxRetries ?? 2;
+    config.webhookEnabled = d.webhookEnabled || false;
+    config.webhookUrl = d.webhookUrl || "";
+    config.webhookTitle = d.webhookTitle || "";
+    config.webhookApiKey = d.webhookApiKey || "";
+    config.webhookChannels = d.webhookChannels || [];
+    config.aiCustomProviders = d.aiCustomProviders || [];
+    config.aiPresets = d.aiPresets || [];
+    if (config.aiCustomProviders.length === 0 && config.aiPresets.length > 0) {
+      config.aiCustomProviders = config.aiPresets.map((p: any) => ({
+        id: p.id, name: p.name || p.id.replace("custom_", "提供商 "), icon: "🤖",
+      }));
+    }
+    configResult.value = d.hasEnvOverride ? "✅ 已加载当前配置（注意：当前有环境变量覆盖）" : "✅ 已加载当前配置";
+  } catch (e: any) { if (e instanceof ApiError && e.isCancelled) return; configResult.value = "❌ 加载失败: " + handleApiError(e, "加载失败"); }
+}
+async function handleSaveConfig() {
+  configSaving.value = true; configResult.value = "保存中...";
+  try {
+    const d = await saveConfig({ ...config, _version: config.version });
+    if (d.ok) {
+      configResult.value = "✅" + (d.message || "配置已保存");
+      await handleLoadConfig();
+    }
+    else if (d.error === "CONFLICT") {
+      configResult.value = "⚠️ " + (d.message || "配置已被其他人修改，正在重新加载...");
+      await handleLoadConfig();
+    }
+    else if (d.error === "VALIDATION_ERROR") configResult.value = "⚠️ 验证失败: " + (d.message || "请检查配置项");
+    else configResult.value = "❌" + (d.error || "保存失败");
+  } catch (e: any) {
+    if (e instanceof ApiError && e.isAuthError) {
+      configResult.value = "❌ 登录已过期，请刷新页面重新登录";
+    } else {
+      configResult.value = "❌ 保存失败: " + handleApiError(e, "保存失败");
+    }
+  } finally { configSaving.value = false; }
+}
+
 // ===== Chat =====
 async function handleSendChat() {
   const q = chatInput.value.trim(); if (!q || chatLoading.value) return;
