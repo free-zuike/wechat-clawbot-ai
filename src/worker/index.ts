@@ -82,8 +82,15 @@ export default {
             if (imageData) {
               const doId = env.ILINK_CONNECTION.idFromName("main");
               const doStub = env.ILINK_CONNECTION.get(doId);
-              const imageUrl = typeof imageData === "string" ? imageData : null;
-              await               doStub.fetch(new Request("http://localhost/broadcast-image", {
+              let imageUrl: string;
+              if (typeof imageData === "string") {
+                imageUrl = imageData;
+              } else {
+                let binary = "";
+                for (let i = 0; i < imageData.length; i++) binary += String.fromCharCode(imageData[i]);
+                imageUrl = `data:image/png;base64,${btoa(binary)}`;
+              }
+              await doStub.fetch(new Request("http://localhost/broadcast-image", {
                 method: "POST",
                 body: JSON.stringify({ imageData: imageUrl, model, provider, source, keyIndex: imageDataResult.keyIndex, prompt }),
               }));
