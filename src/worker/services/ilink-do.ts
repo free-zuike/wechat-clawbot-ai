@@ -1493,8 +1493,10 @@ export class ILinkConnectionDO implements DurableObject {
       }
       const imageData = await this.doState.storage.get<string>(`image:${id}`);
       if (!imageData) {
+        Logger.error("[DO] Get image: not found", { id });
         return new Response(JSON.stringify({ error: "图片不存在或已过期" }), { status: 404, headers: { "Content-Type": "application/json" } });
       }
+      Logger.info("[DO] Get image found", { id, dataLength: imageData.length, startsWith: imageData.slice(0, 30) });
       // 检查元数据，超过 24 小时自动清理
       const metaRaw = await this.doState.storage.get<string>(`image-meta:${id}`);
       if (metaRaw) {
