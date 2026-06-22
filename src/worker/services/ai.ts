@@ -413,12 +413,30 @@ export async function generateImage(
 
   try {
     const response = await aiBinding.run(imageModel, { prompt });
+    Logger.info("[ai] Cloudflare AI response", { type: typeof response, isArray: Array.isArray(response), keys: Object.keys(response || {}), constructor: response?.constructor?.name, hasBody: !!response?.body, isReadableStream: response instanceof ReadableStream });
 
     if (response instanceof Uint8Array) {
       return { data: response, keyIndex: 0 };
     }
     if (response instanceof ArrayBuffer) {
       return { data: new Uint8Array(response), keyIndex: 0 };
+    }
+    if (response instanceof ReadableStream) {
+      const reader = response.getReader();
+      const chunks: Uint8Array[] = [];
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+      const totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
+      const result = new Uint8Array(totalLength);
+      let offset = 0;
+      for (const chunk of chunks) {
+        result.set(chunk, offset);
+        offset += chunk.length;
+      }
+      return { data: result, keyIndex: 0 };
     }
     if (response?.images?.[0]) {
       const img = response.images[0];
