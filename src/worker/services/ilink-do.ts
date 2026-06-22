@@ -432,8 +432,6 @@ export class ILinkConnectionDO implements DurableObject {
   // ========== 拉取消息（立即返回，不长轮询）==========
 
   private async handleLongPoll(): Promise<Response> {
-    Logger.info("[DO] Poll triggered");
-
     // 确保轮询循环在运行
     if (!this.ilinkCreds) {
       return new Response(JSON.stringify({
@@ -484,12 +482,10 @@ export class ILinkConnectionDO implements DurableObject {
     const [client, server] = [pair[0], pair[1]];
 
     this.websockets.add(server);
-    Logger.info("[DO] WebSocket connected", { total: this.websockets.size });
 
     server.accept();
     server.addEventListener("close", () => {
       this.websockets.delete(server);
-      Logger.info("[DO] WebSocket disconnected", { total: this.websockets.size });
     });
     server.addEventListener("error", () => {
       this.websockets.delete(server);
@@ -691,7 +687,7 @@ export class ILinkConnectionDO implements DurableObject {
 🎨 以图生图（仅 Agnes Image 2.1 Flash）：
 先发一张图片，60秒内发送 /图片 <描述> 即可基于图片生成`;
         await sendTextMessage(creds, userId, syncBuf || "", welcomeMsg);
-        Logger.info("[DO] Welcome message sent", { userId });
+      Logger.info("[DO] Welcome message sent", { userId });
       } catch (e: any) {
         Logger.warn("[DO] Failed to send welcome message", { error: e?.message });
       }
@@ -787,15 +783,6 @@ export class ILinkConnectionDO implements DurableObject {
     try {
       const body = await request.json() as { toUserId?: string; contextToken?: string; text?: string };
       const { toUserId, contextToken, text } = body;
-
-      Logger.info("[DO] handleSend called", {
-        toUserId: toUserId?.slice(0, 20),
-        contextTokenLen: contextToken?.length,
-        textPreview: text?.slice(0, 50),
-        hasCreds: !!this.ilinkCreds,
-        botTokenLen: this.ilinkCreds?.botToken?.length,
-        accountId: this.ilinkCreds?.accountId?.slice(0, 15),
-      });
 
       if (!toUserId || !text) {
         return new Response(JSON.stringify({ error: "缺少参数" }), {
@@ -1015,7 +1002,7 @@ export class ILinkConnectionDO implements DurableObject {
         if (found) providerName = found.name || "";
       } catch {}
 
-      console.log("[DO] handleLogGeneration", { type, provider, model, source, providerName });
+      console.log("[DO] logGeneration", { type, provider, model, source });
       if (this.env.DB) {
         await this.env.DB.prepare(
           `INSERT INTO generation_logs (type, prompt, result, provider, model, status, error, source, from_user, created_at, key_index, provider_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
@@ -1082,7 +1069,6 @@ export class ILinkConnectionDO implements DurableObject {
       ).all();
 
       if (pending.length === 0) return;
-      Logger.info("[DO] Checking pending videos", { count: pending.length });
 
       // 查找提供商名称
       const cfg = await this.getConfigCached();
@@ -1459,7 +1445,7 @@ export class ILinkConnectionDO implements DurableObject {
       pollLoopRunning: a.pollLoopRunning,
     }));
 
-    Logger.info(`[DO] Status check: accounts=${this.accounts.size} ilinkCreds=${!!this.ilinkCreds} listLen=${accountsList.length}`);
+    Logger.info(`[DO] Status check: accounts=${this.accounts.size}`);
 
     // 兼容：如果没有 accounts 但有 ilinkCreds，构造一个
     if (accountsList.length === 0 && this.ilinkCreds) {
@@ -1576,8 +1562,6 @@ export class ILinkConnectionDO implements DurableObject {
     const account = this.accounts.get(accountId);
     if (!account) return;
 
-    Logger.info("[DO] Account poll loop started", { accountId });
-
     while (account.pollLoopRunning) {
       try {
         const pollStart = Date.now();
@@ -1594,7 +1578,6 @@ export class ILinkConnectionDO implements DurableObject {
         this.runtimeStats.lastLatencyMs = Date.now() - pollStart;
 
         if (result.msgs && result.msgs.length > 0) {
-          Logger.info("[DO] Received messages", { accountId, count: result.msgs.length });
           await this.processMessages(result.msgs, account.creds);
         }
 
@@ -1602,8 +1585,6 @@ export class ILinkConnectionDO implements DurableObject {
         await new Promise((resolve) => setTimeout(resolve, 30000));
 
       } catch (e: any) {
-        Logger.error("[DO] Account poll error", { accountId, error: e.message });
-
         if (e.code === "ILINK_SESSION_TIMEOUT" || e.message?.includes("ILINK_SESSION_TIMEOUT")) {
           account.consecutiveErrors++;
           try {
@@ -1611,7 +1592,6 @@ export class ILinkConnectionDO implements DurableObject {
             if (refreshResult.status === "confirmed" && refreshResult.bot_token) {
               account.creds.botToken = refreshResult.bot_token;
               account.syncBuf = "";
-              Logger.info("[DO] Token refreshed", { accountId });
               account.consecutiveErrors = 0;
               await this.saveAccounts();
               continue;
@@ -1625,15 +1605,13 @@ export class ILinkConnectionDO implements DurableObject {
 
         account.consecutiveErrors++;
         if (account.consecutiveErrors > 10) {
-          Logger.error("[DO] Account too many errors, stopping", { accountId });
+          Logger.error("[DO] Account errors exceeded", { accountId });
           account.pollLoopRunning = false;
           return;
         }
         await new Promise((resolve) => setTimeout(resolve, 30000));
       }
     }
-
-    Logger.info("[DO] Account poll loop stopped", { accountId });
   }
 
   // ========== 处理消息 ==========
@@ -1715,13 +1693,11 @@ export class ILinkConnectionDO implements DurableObject {
     const cfg = { aiSystemPrompt, aiModel, aiProvider, aiBaseUrl, aiApiKey, aiMaxTokens, aiImageModel, aiVideoModel, allKeys, aiMaxRetries, aiCustomProviders: (kvConfig.aiCustomProviders as any[]) || [], webhook: { enabled: webhookEnabled, url: webhookUrl, title: webhookTitle, apiKey: webhookApiKey, channels: webhookChannels } };
     this.cache.config = cfg;
     this.cache.configLoadedAt = now;
-    Logger.info("[DO] Config loaded", { webhookEnabled, hasWebhookUrl: !!webhookUrl, provider: aiProvider });
     return cfg;
   }
 
   private async processMessages(msgs: WeixinMessage[], creds?: ILinkCredentials): Promise<void> {
     const useCreds = creds || this.ilinkCreds;
-    Logger.info(`[DO] processMessages: ${msgs.length} msgs, using creds=${useCreds?.accountId || 'NONE'}`);
     const cfg = await this.getConfigCached();
     const { aiSystemPrompt: systemPrompt, aiModel } = cfg;
 
@@ -1734,7 +1710,6 @@ export class ILinkConnectionDO implements DurableObject {
 
     // 并行处理同一账号的多条消息（每条消息独立上下文，不互相干扰）
     const processOne = async (msg: WeixinMessage) => {
-      Logger.info(`[DO] processOne: type=${msg.message_type} from=${msg.from_user_id?.slice(0,10)} text=${(msg.item_list?.[0] as any)?.text_item?.text?.slice(0,20) || 'N/A'}`);
       // 只处理用户消息
       if (msg.message_type !== undefined && msg.message_type !== MessageType.USER) return;
       if (msg.message_type === undefined && !msg.from_user_id) return;
@@ -1748,19 +1723,8 @@ export class ILinkConnectionDO implements DurableObject {
       let imageCdnParams: { encryptQueryParam: string; aesKey: string } | undefined;
       let hasRealText = false;
       for (const item of (msg.item_list || [])) {
-        Logger.info("[DO] Message item", {
-          type: item.type,
-          hasImageItem: !!item.image_item,
-          cdnUrl: item.image_item?.cdn_url?.slice(0, 80),
-          imgUrl: item.image_item?.url?.slice(0, 80),
-          hasMedia: !!item.image_item?.media,
-          hasTextItem: !!item.text_item,
-          text: item.text_item?.text?.slice(0, 20),
-        });
         if (item.type === MessageItemType.IMAGE) {
-          // 优先使用直接 URL
           imageUrl = item.image_item?.cdn_url || item.image_item?.url;
-          // 如果没有直接 URL，缓存 CDN 加密参数用于后续下载
           if (!imageUrl && item.image_item?.media?.encrypt_query_param && item.image_item?.media?.aes_key) {
             imageCdnParams = {
               encryptQueryParam: item.image_item.media.encrypt_query_param,
@@ -1779,29 +1743,20 @@ export class ILinkConnectionDO implements DurableObject {
         if (imageUrl) {
           this.recentImageUrls.set(from, { url: imageUrl, timestamp: now });
         } else if (imageCdnParams) {
-          // CDN 加密图片：尝试下载后缓存为 base64 data URL
           const downloaded = await downloadImageFromCdn(imageCdnParams.encryptQueryParam, imageCdnParams.aesKey);
           if (downloaded) {
-            // 转为 base64 data URL 传给 Agnes
             let binary = "";
             for (let i = 0; i < downloaded.length; i++) binary += String.fromCharCode(downloaded[i]);
             const dataUrl = `data:image/png;base64,${btoa(binary)}`;
             this.recentImageUrls.set(from, { url: dataUrl, timestamp: now });
-            Logger.info("[DO] Cached CDN image as base64 for image-to-image", { from: from.slice(0, 10), size: downloaded.length });
           }
         }
-        // 清理 60 秒前的旧缓存
         for (const [key, val] of this.recentImageUrls) {
           if (now - val.timestamp > 60_000) this.recentImageUrls.delete(key);
-        }
-        if (imageUrl) {
-          Logger.info("[DO] Cached image URL for image-to-image", { from: from.slice(0, 10), url: imageUrl.slice(0, 80) });
         }
         await this.markMessageProcessed(`${useCreds?.accountId || "default"}:${this.generateMessageId(msg, imageUrl || "cdn-image")}`);
         return;
       }
-
-      Logger.info("[DO] Image cache decision", { imageUrl: imageUrl?.slice(0, 80), hasRealText, from: from?.slice(0, 10), itemTypes: (msg.item_list || []).map((i: any) => i.type) });
 
       if (!text) return;
 
@@ -2057,7 +2012,6 @@ export class ILinkConnectionDO implements DurableObject {
 
   private async initCredentials(): Promise<void> {
     const now = Date.now();
-    Logger.info(`[DO] initCredentials: accounts=${this.accounts.size} cached=${!!this.cache.credentials}`);
 
     // 1) 内存缓存：5 分钟内复用
     if (this.cache.credentials && now - this.cache.credentialsLoadedAt < 5 * 60 * 1000) {
@@ -2107,7 +2061,6 @@ export class ILinkConnectionDO implements DurableObject {
               consecutiveErrors: 0, lastPollAt: "", pollLoopRunning: false,
             });
           }
-          Logger.info(`[DO] initCredentials: loaded from KV, accounts=${this.accounts.size}`);
           return;
         }
       }

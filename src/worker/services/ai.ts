@@ -137,7 +137,6 @@ export async function callAIWithContext(
 
   const quick = tryQuickReply(cleanMsg);
   if (quick) {
-    Logger.info(`[ai] Quick reply for ${userId}`);
     return quick;
   }
 
@@ -196,10 +195,7 @@ export async function callAIWithContext(
   context.lastUpdated = now;
   try {
     if (db) { await saveContextToD1(db, userId, context); } else { await saveContextToSQLite(storage, userId, context); }
-    Logger.info(`[ai] Context saved for ${userId}`, { messageCount: context.messages.length });
-  } catch (e) {
-    Logger.error(`[ai] Context save failed for ${userId}`, { error: (e as Error).message });
-  }
+  } catch {}
 
   return (reply || "").slice(0, 700) || "（AI 没有返回内容）";
 }
@@ -381,10 +377,7 @@ export async function generateImage(
         if (!resp.ok) {
           const errBody = await resp.text().catch(() => "");
           Logger.error("[ai] Image API error", { status: resp.status, body: errBody.slice(0, 200), url, attempt });
-          if (attempt < retries && attempt < keys.length - 1) {
-            Logger.info("[ai] Retrying with next key", { attempt: attempt + 1 });
-            continue;
-          }
+          if (attempt < retries && attempt < keys.length - 1) continue;
           let errMsg = `图片生成失败 (HTTP ${resp.status})`;
           try {
             const parsed = JSON.parse(errBody);
@@ -395,14 +388,12 @@ export async function generateImage(
         const data = await resp.json() as any;
         const item = data?.data?.[0];
         if (item?.url) {
-          Logger.info("[ai] Image URL received", { url: item.url.slice(0, 80), keyIndex: attempt });
           return { data: item.url, keyIndex: attempt };
         }
         if (item?.b64_json) {
           const binary = atob(item.b64_json);
           const bytes = new Uint8Array(binary.length);
           for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-          Logger.info("[ai] Image Base64 decoded", { size: bytes.length, keyIndex: attempt });
           return { data: bytes, keyIndex: attempt };
         }
         Logger.warn("[ai] Unexpected image response", { keys: Object.keys(data || {}), dataKeys: data?.data ? Object.keys(data.data) : [] });
@@ -417,20 +408,16 @@ export async function generateImage(
 
   // Cloudflare Workers AI
   if (!aiBinding) {
-    Logger.warn("[ai] AI binding not available, provider check failed", { provider, hasBaseUrl: !!baseUrl, hasApiKey: !!apiKey });
     return { data: null, keyIndex: 0 };
   }
 
   try {
     const response = await aiBinding.run(imageModel, { prompt });
-    Logger.info("[ai] Image model response", { type: typeof response, isArrayBuffer: response instanceof ArrayBuffer, isUint8Array: response instanceof Uint8Array, keys: response && typeof response === "object" ? Object.keys(response) : null });
 
     if (response instanceof Uint8Array) {
-      Logger.info("[ai] Image generated (Uint8Array)", { size: response.length });
       return { data: response, keyIndex: 0 };
     }
     if (response instanceof ArrayBuffer) {
-      Logger.info("[ai] Image generated (ArrayBuffer)", { size: response.byteLength });
       return { data: new Uint8Array(response), keyIndex: 0 };
     }
     if (response?.images?.[0]) {
@@ -439,14 +426,12 @@ export async function generateImage(
         const binary = atob(img);
         const bytes = new Uint8Array(binary.length);
         for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-        Logger.info("[ai] Image generated (base64)", { size: bytes.length });
         return { data: bytes, keyIndex: 0 };
       }
       return { data: img, keyIndex: 0 };
     }
     if (response?.result?.image) {
       const imgUrl = response.result.image;
-      Logger.info("[ai] Image generated (URL)", { url: imgUrl });
       const resp = await fetch(imgUrl);
       if (resp.ok) {
         const buf = await resp.arrayBuffer();
@@ -462,7 +447,6 @@ export async function generateImage(
           const binary = atob(base64);
           const bytes = new Uint8Array(binary.length);
           for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-          Logger.info("[ai] Image generated (data URL)", { size: bytes.length });
           return { data: bytes, keyIndex: 0 };
         }
       }
@@ -471,7 +455,6 @@ export async function generateImage(
         const binary = atob(dataUrl);
         const bytes = new Uint8Array(binary.length);
         for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-        Logger.info("[ai] Image generated (raw base64)", { size: bytes.length });
         return { data: bytes, keyIndex: 0 };
       }
     }
@@ -520,18 +503,15 @@ export async function submitVideoTask(
         return null;
       }
       const submitData = await resp.json() as any;
-      Logger.info("[ai] Video task submitted", { taskId: submitData.task_id, videoId: submitData.video_id, status: submitData.status });
 
       const taskId = submitData.task_id || submitData.id;
       const videoId = submitData.video_id;
       const url = submitData.remixed_from_video_id; // 极少数情况会同步返回
 
       if (url) {
-        Logger.info("[ai] Video task returned immediate URL", { url: url.slice(0, 80) });
         return { taskId: taskId || `sync_${Date.now()}`, videoId, baseUrl, provider: effectiveProvider, apiKey, model: videoModel, prompt, url };
       }
       if (!taskId && !videoId) {
-        Logger.warn("[ai] No task_id or video_id in response", { keys: Object.keys(submitData || {}) });
         return null;
       }
       return { taskId, videoId, baseUrl, provider: effectiveProvider, apiKey, model: videoModel, prompt };
@@ -543,7 +523,6 @@ export async function submitVideoTask(
 
   // Cloudflare AI
   if (!aiBinding) {
-    Logger.warn("[ai] AI binding not available for video");
     return null;
   }
   try {
@@ -557,12 +536,10 @@ export async function submitVideoTask(
     if (response?.state === "Processing" || response?.state === "Queued") {
       const jobId = response.id || response.job_id;
       if (jobId) {
-        Logger.info("[ai] Cloudflare video task submitted", { jobId });
         return { taskId: jobId, baseUrl: `cf://${videoModel}`, provider: "cloudflare", apiKey: "", model: videoModel, prompt };
       }
     }
     if (response?.result?.video) {
-      Logger.info("[ai] Cloudflare video returned immediately", { url: response.result.video.slice(0, 80) });
       return { taskId: `sync_${Date.now()}`, baseUrl: `cf://${videoModel}`, provider: "cloudflare", apiKey: "", model: videoModel, prompt, url: response.result.video };
     }
     if (typeof response === "string" && response.startsWith("http")) {

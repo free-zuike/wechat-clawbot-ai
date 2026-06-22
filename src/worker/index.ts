@@ -39,22 +39,17 @@ export default {
   },
 
   async scheduled(_event: ScheduledEvent, env: Env): Promise<void> {
-    console.log("[cron] scheduled event triggered at", new Date().toISOString());
     try {
-      // 通过 Durable Object 实现实时消息接收
-      // 使用固定 ID "main" 确保只有一个 DO 实例处理 iLink 连接
       const doId = env.ILINK_CONNECTION.idFromName("main");
       const doStub = env.ILINK_CONNECTION.get(doId);
 
-      // 调用 DO 的 /poll 接口：会初始化凭证 + 启动轮询循环
       const response = await doStub.fetch(new Request("http://localhost/poll"));
       const data = await response.json();
-      console.log("[cron] DO /poll:", JSON.stringify(data));
+      console.log("[cron] /poll:", JSON.stringify(data));
 
-      // 检查待处理的视频生成任务
       const videoCheckResponse = await doStub.fetch(new Request("http://localhost/check-pending-videos"));
       const videoCheckData = await videoCheckResponse.json();
-      console.log("[cron] DO /check-pending-videos:", JSON.stringify(videoCheckData));
+      console.log("[cron] /check-pending-videos:", JSON.stringify(videoCheckData));
 
     } catch (e: any) {
       console.error("[cron] error:", e);

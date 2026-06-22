@@ -97,7 +97,6 @@ async function post(
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   
   try {
-    Logger.debug(`[iLink] POST ${endpoint}`, { url, payloadSize: body.length });
     const r = await fetch(url, { method: "POST", headers, body, signal: ctrl.signal });
     const duration = Date.now() - startTime;
     clearTimeout(timer);
@@ -105,27 +104,10 @@ async function post(
     const text = await r.text();
     const status = r.status;
     
-    // 打印响应头（调试用）
-    const responseHeaders: Record<string, string> = {};
-    r.headers.forEach((value, key) => {
-      if (key.toLowerCase().includes('error') || key.toLowerCase().includes('token') || 
-          key.toLowerCase().includes('param') || key.toLowerCase().includes('code')) {
-        responseHeaders[key] = value;
-      }
-    });
-    
-    Logger.debug(`[iLink] POST ${endpoint} completed`, { 
-      status, 
-      durationMs: duration,
-      responseLength: text.length,
-      responseHeaders,
-    });
-    
     if (!r.ok) {
       Logger.warn(`[iLink] POST ${endpoint} failed`, { 
         status, 
         response: text.slice(0, 500),
-        responseHeaders 
       });
       throw new ClawBotError('ILINK_HTTP_ERROR', `${endpoint} HTTP ${status}`, 502, { status, response: text });
     }
@@ -133,14 +115,8 @@ async function post(
     try {
       const json = JSON.parse(text);
       
-      // 检查是否为空对象
       const jsonKeys = Object.keys(json);
       if (jsonKeys.length === 0) {
-        Logger.debug(`[iLink] ${endpoint} returned empty object (normal for media messages)`, { 
-          endpoint,
-          status,
-          response: text,
-        });
         return json;
       }
       
@@ -153,26 +129,20 @@ async function post(
       }
       
       if (json.ret !== undefined && json.ret !== 0) {
-        Logger.warn(`[iLink] ${endpoint} returned ret=${json.ret}`, { ret: json.ret, fullResponse: JSON.stringify(json).slice(0, 500) });
+        Logger.warn(`[iLink] ${endpoint} returned ret=${json.ret}`, { ret: json.ret });
         throw new ClawBotError('ILINK_API_ERROR', `${endpoint} ret=${json.ret}`, 502, { ret: json.ret });
       }
       
       return json;
     } catch (error) {
-      // 如果是 ClawBotError（包括 ILINK_API_ERROR、ILINK_SESSION_TIMEOUT），直接抛出
       if (error instanceof ClawBotError) {
         throw error;
       }
-      // 否则是 JSON 解析错误
       Logger.error(`[iLink] Failed to parse response`, { 
         endpoint,
         status,
         error: error.message, 
-        response: text.slice(0, 1000),
-        responseLength: text.length,
-        responseHeaders: Object.fromEntries(
-          Array.from(r.headers as any).map(([k, v]: [string, string]) => [k, v.slice(0, 200)])
-        ),
+        response: text.slice(0, 500),
       });
       throw new ClawBotError('ILINK_PARSE_ERROR', 'Failed to parse response', 502, { 
         error: error.message, 
@@ -183,13 +153,11 @@ async function post(
     }
   } catch (e) {
     clearTimeout(timer);
-    const duration = Date.now() - startTime;
     if (e instanceof ClawBotError) throw e;
     if ((e as any)?.name === "AbortError") {
-      Logger.debug(`[iLink] ${endpoint} timeout after ${duration}ms`);
       throw e;
     }
-    Logger.error(`[iLink] ${endpoint} error`, { error: (e as Error)?.message, durationMs: duration });
+    Logger.error(`[iLink] ${endpoint} error`, { error: (e as Error)?.message });
     throw new ClawBotError('ILINK_NETWORK_ERROR', `Network error: ${(e as Error)?.message}`, 503);
   }
 }
@@ -206,17 +174,14 @@ export async function fetchQRCode(baseUrl = DEFAULT_BASE): Promise<{ qrcode: str
   clearTimeout(timer);
   
   if (!r.ok) {
-    Logger.error(`[iLink] Failed to fetch QR code`, { status: r.status });
     throw new ClawBotError('ILINK_QRCODE_ERROR', `获取二维码失败: ${r.status}`, 502);
   }
   
   const data = await r.json() as any;
   if (!data.qrcode || !data.qrcode_img_content) {
-    Logger.error(`[iLink] Invalid QR code response`, { response: JSON.stringify(data) });
     throw new ClawBotError('ILINK_QRCODE_ERROR', '返回数据无效', 502);
   }
   
-  Logger.info(`[iLink] QR code fetched successfully`);
   return { qrcode: data.qrcode, qrcode_img_content: data.qrcode_img_content };
 }
 
@@ -234,12 +199,10 @@ export async function getQRCodeStatus(qrcode: string, baseUrl = DEFAULT_BASE): P
   const timer = setTimeout(() => ctrl.abort(), 25000);
   
   try {
-    Logger.debug(`[iLink] Polling QR status`, { qrcode: maskToken(qrcode) });
     const r = await fetch(url, { headers: { "iLink-App-ClientVersion": "1" }, signal: ctrl.signal });
     clearTimeout(timer);
     
     if (!r.ok) {
-      Logger.warn(`[iLink] QR status poll failed`, { status: r.status });
       return { status: "wait" };
     }
     
@@ -255,19 +218,9 @@ export async function getQRCodeStatus(qrcode: string, baseUrl = DEFAULT_BASE): P
       raw: data,
     };
     
-    if (s === "confirmed") {
-      Logger.info(`[iLink] QR status confirmed`, { 
-        ilink_bot_id: maskToken(data.ilink_bot_id || ""),
-        baseurl: data.baseurl 
-      });
-    } else if (s === "expired") {
-      Logger.warn(`[iLink] QR code expired`);
-    }
-    
     return result;
   } catch {
     clearTimeout(timer);
-    Logger.debug(`[iLink] QR status poll timeout or error`);
     return { status: "wait" };
   }
 }
@@ -277,29 +230,20 @@ export async function getUpdates(
   creds: ILinkCredentials,
   buf: string = "",
 ): Promise<GetUpdatesResp> {
-  Logger.debug(`[iLink] Getting updates`, { buf: maskToken(buf) });
-  
   try {
     const resp = await withRetry(
       () => post(creds, "ilink/bot/getupdates", { get_updates_buf: buf }, DEFAULT_LONG_POLL_MS),
       {
         retries: 2,
         baseDelayMs: 1000,
-        onRetry: (attempt, error) => Logger.warn(`[iLink] Retrying getUpdates (attempt ${attempt})`, { error: error.message }),
         shouldRetry: (error) => !(error instanceof ClawBotError && error.code === 'ILINK_SESSION_TIMEOUT')
       }
     );
     
     const result = resp as GetUpdatesResp;
-    
-    if (result.get_updates_buf && result.get_updates_buf !== buf) {
-      Logger.debug(`[iLink] Updates received`, { msgsCount: result.msgs?.length, bufChanged: true });
-    }
-    
     return result;
   } catch (e: any) {
     if (e?.name === "AbortError") {
-      Logger.debug(`[iLink] getUpdates timeout`);
       return { ret: 0, msgs: [], get_updates_buf: buf };
     }
     throw e;
@@ -349,49 +293,24 @@ export async function sendTextMessage(
     context_token: contextToken,
     item_list: [{ type: MessageItemType.TEXT, text_item: { text } }],
   };
-
-  Logger.info(`[iLink] Sending message`, {
-    toUserId: toUserId.slice(0, 12),
-    fromUserId: (creds.userId || "").slice(0, 12),
-    textLength: text.length,
-    textPreview: text.slice(0, 50),
-    contextToken: contextToken.slice(0, 20) + "...",
-  });
   
   const response = await withRetry(
     () => post(creds, "ilink/bot/sendmessage", { msg }, DEFAULT_API_MS),
     {
       retries: 2,
       baseDelayMs: 500,
-      onRetry: (attempt, error) => Logger.warn(`[iLink] Retrying sendMessage (attempt ${attempt})`, { error: error.message }),
       shouldRetry: (error) => !(error instanceof ClawBotError && error.code === 'ILINK_SESSION_TIMEOUT')
     }
   );
   
-  // 验证响应是否表示消息已成功发送
   const responseStr = JSON.stringify(response);
-  Logger.info(`[iLink] Message API response`, { 
-    response: responseStr.slice(0, 500),
-    responseLength: responseStr.length,
-    hasRet: response?.ret !== undefined,
-    retValue: response?.ret,
-    hasErrcode: response?.errcode !== undefined,
-    errcodeValue: response?.errcode,
-    errmsg: response?.errmsg,
-    msgId: response?.msg_id || response?.message_id,
-  });
   
-  // 检查响应中是否有错误指示
   if (response && typeof response === 'object') {
     if (response.ret !== undefined && response.ret !== 0) {
-      Logger.error(`[iLink] Message send returned error ret=${response.ret}`, { response: responseStr.slice(0, 300) });
+      Logger.error(`[iLink] Message send returned error ret=${response.ret}`);
     }
     if (response.errcode !== undefined && response.errcode !== 0) {
-      Logger.error(`[iLink] Message send returned errcode=${response.errcode}`, { response: responseStr.slice(0, 300) });
-    }
-    // 如果响应为空对象，可能表示消息未实际发送
-    if (Object.keys(response).length === 0) {
-      Logger.warn(`[iLink] Message send returned empty response - message may not have been delivered`, { response: responseStr });
+      Logger.error(`[iLink] Message send returned errcode=${response.errcode}`);
     }
   }
 }
@@ -449,51 +368,13 @@ export async function sendMediaMessage(
   };
 
   // 检查 media 对象结构
-  let mediaInfo: any = {};
-  if (item.type === MessageItemType.IMAGE && item.image_item?.media) {
-    mediaInfo = {
-      hasEncryptQueryParam: !!item.image_item.media.encrypt_query_param,
-      encryptQueryParamLength: item.image_item.media.encrypt_query_param?.length || 0,
-      hasAesKey: !!item.image_item.media.aes_key,
-      aesKeyLength: item.image_item.media.aes_key?.length || 0,
-      encryptType: item.image_item.media.encrypt_type,
-    };
-  } else if (item.type === MessageItemType.VIDEO && item.video_item?.media) {
-    mediaInfo = {
-      hasEncryptQueryParam: !!item.video_item.media.encrypt_query_param,
-      encryptQueryParamLength: item.video_item.media.encrypt_query_param?.length || 0,
-      hasAesKey: !!item.video_item.media.aes_key,
-      aesKeyLength: item.video_item.media.aes_key?.length || 0,
-      encryptType: item.video_item.media.encrypt_type,
-    };
-  }
-
-  Logger.info("[iLink] ========== 开始发送消息 ==========", {
-    toUserId: toUserId,
-    fromUserId: "",
-    contextToken: contextToken.slice(0, 30) + "...",
-    contextTokenLength: contextToken.length,
-    itemType: item.type,
-    itemTypeName: item.type === MessageItemType.IMAGE ? "IMAGE" : item.type === MessageItemType.VIDEO ? "VIDEO" : "OTHER",
-    messageId: messageId,
-    mediaInfo,
-    fullMessageSize: JSON.stringify({ msg }).length,
-    hasItemList: !!msg.item_list && msg.item_list.length > 0,
-  });
 
   try {
-    Logger.info("[iLink] POST 请求准备", {
-      url: creds.baseUrl + "/ilink/bot/sendmessage",
-      botToken: creds.botToken.slice(0, 20) + "...",
-      channelVersion: DEFAULT_CHANNEL_VERSION,
-    });
-    
     const resp = await withRetry(
       () => post(creds, "ilink/bot/sendmessage", { msg }, DEFAULT_API_MS),
       {
         retries: 2,
         baseDelayMs: 500,
-        onRetry: (attempt, error) => Logger.warn(`[iLink] Retrying sendmessage (attempt ${attempt})`, { error: error.message }),
         shouldRetry: (error) => !(error instanceof ClawBotError && error.code === 'ILINK_SESSION_TIMEOUT')
       }
     );
@@ -504,35 +385,12 @@ export async function sendMediaMessage(
     const hasError = resp && ('errcode' in resp && resp.errcode !== 0) || ('ret' in resp && resp.ret !== 0);
     
     if (hasError) {
-      // 打印完整的消息体以便诊断
-      Logger.error("[iLink] sendmessage failed with ret=-1, full message body:", {
-        messageBody: JSON.stringify({ msg }, null, 2),
-        response: JSON.stringify(resp),
-        toUserId,
-        fromUserId: creds.accountId,
-        contextTokenLength: contextToken.length,
-      });
-      throw new ClawBotError('ILINK_API_ERROR', `sendmessage error: errcode=${resp?.errcode}, ret=${resp?.ret}, errmsg=${resp?.errmsg}`, 502, { errcode: resp?.errcode, ret: resp?.ret, errmsg: resp?.errmsg });
+      Logger.error("[iLink] sendmessage error", { errcode: resp?.errcode, ret: resp?.ret, errmsg: resp?.errmsg });
+      throw new ClawBotError('ILINK_API_ERROR', `sendmessage error: errcode=${resp?.errcode}, ret=${resp?.ret}`, 502, { errcode: resp?.errcode, ret: resp?.ret });
     }
-
-    Logger.info("[iLink] ========== 消息发送成功 ==========", {
-      response: JSON.stringify(resp || {}),
-      responseType: typeof resp,
-      responseIsEmpty: respKeys.length === 0,
-      hasRet: resp !== undefined && resp !== null && 'ret' in resp,
-      retValue: resp?.ret,
-      hasErrcode: resp !== undefined && resp !== null && 'errcode' in resp,
-      errcodeValue: resp?.errcode,
-      toUserId: toUserId,
-    });
   } catch (e: any) {
-    Logger.error("[iLink] ========== 消息发送失败 ==========", {
-      errorCode: e?.code || "UNKNOWN",
-      errorMessage: e?.message || String(e),
-      errorDetails: e?.data || {},
-      toUserId: toUserId,
-      itemType: item.type,
-    });
+    if (e instanceof ClawBotError) throw e;
+    Logger.error("[iLink] sendmessage failed", { error: e?.message });
     throw e;
   }
 }
@@ -547,8 +405,6 @@ export async function sendImageSimple(
   contextToken: string,
   imageUrl: string,
 ): Promise<void> {
-  Logger.info("[iLink] sendImageSimple", { toUserId, imageUrl: imageUrl.substring(0, 80) });
-  
   // 1. 下载图片
   const imgResp = await fetch(imageUrl, { signal: AbortSignal.timeout(30000) });
   if (!imgResp.ok) throw new ClawBotError("ILINK_DOWNLOAD_FAILED", `Download failed: ${imgResp.status}`);
@@ -556,8 +412,6 @@ export async function sendImageSimple(
   
   // 2. 使用统一的 uploadAndSendMedia 上传并发送
   await uploadAndSendMedia(creds, toUserId, contextToken, MessageItemType.IMAGE, "generated.png", fileBytes, "image/png");
-  
-  Logger.info("[iLink] sendImageSimple: success");
 }
 
 // ========== CDN 图片下载（用于以图生图）==========
@@ -571,9 +425,7 @@ export async function downloadImageFromCdn(
 ): Promise<Uint8Array | null> {
   const CDN_DOWNLOAD_BASE = "https://novac2c.cdn.weixin.qq.com/c2c";
   try {
-    // 构造下载 URL
     const downloadUrl = `${CDN_DOWNLOAD_BASE}/download?encrypted_query_param=${encodeURIComponent(encryptQueryParam)}`;
-    Logger.info("[iLink] downloadImageFromCdn", { url: downloadUrl.substring(0, 100) });
     
     const resp = await fetch(downloadUrl, { signal: AbortSignal.timeout(30000) });
     if (!resp.ok) {
@@ -582,17 +434,13 @@ export async function downloadImageFromCdn(
     }
     
     const encryptedBytes = new Uint8Array(await resp.arrayBuffer());
-    Logger.info("[iLink] downloadImageFromCdn: downloaded", { size: encryptedBytes.length });
     
-    // AES-CBC 解密（使用 aes_key）
     const keyBytes = base64ToBytes(aesKeyBase64);
-    const iv = new Uint8Array(16); // CBC 模式使用全零 IV
+    const iv = new Uint8Array(16);
     const cryptoKey = await crypto.subtle.importKey("raw", keyBytes, { name: "AES-CBC" }, false, ["decrypt"]);
     const decrypted = await crypto.subtle.decrypt({ name: "AES-CBC", iv }, cryptoKey, encryptedBytes.buffer);
     
-    const imageBytes = new Uint8Array(decrypted);
-    Logger.info("[iLink] downloadImageFromCdn: decrypted", { size: imageBytes.length });
-    return imageBytes;
+    return new Uint8Array(decrypted);
   } catch (e: any) {
     Logger.warn("[iLink] downloadImageFromCdn error", { error: e?.message });
     return null;
@@ -632,16 +480,6 @@ export async function uploadAndSendMedia(
   // 计算 MD5 和提取视频时长
   const rawMd5 = md5Hex(fileBytes);
   const videoDuration = messageItemType === MessageItemType.VIDEO ? extractMp4Duration(fileBytes) : undefined;
-  Logger.info("[iLink] [uploadAndSendMedia] Starting media upload & send", {
-    toUserId: toUserId.slice(0, 12),
-    messageItemType,
-    mediaType,
-    fileName,
-    fileSize: fileBytes.length,
-    contentType,
-    videoDuration,
-    rawMd5: rawMd5.slice(0, 16),
-  });
 
   try {
     // 1. 上传到 iLink CDN（getuploadurl + AES 加密 + POST）
@@ -649,27 +487,11 @@ export async function uploadAndSendMedia(
 
     // 2. 构造 CDNMedia 引用消息体
     const item = buildMediaItem(messageItemType, uploaded, fileName, uploaded.fileSizeCiphertext, rawMd5, videoDuration);
-    Logger.info("[iLink] [uploadAndSendMedia] Building media item", {
-      itemType: item.type,
-      hasMedia: !!(item as any).image_item?.media || !!(item as any).video_item?.media || !!(item as any).file_item?.media,
-      videoDuration,
-      encryptType: (item as any).image_item?.media?.encrypt_type ?? (item as any).video_item?.media?.encrypt_type,
-      itemPreview: JSON.stringify(item).slice(0, 300),
-    });
 
     // 3. 发送消息
     await sendMediaMessage(creds, toUserId, contextToken, item);
-    Logger.info("[iLink] [uploadAndSendMedia] Media sent via CDN upload", {
-      filekey: uploaded.filekey,
-      fileSize: uploaded.fileSize,
-    });
   } catch (e: any) {
-    Logger.error("[iLink] [uploadAndSendMedia] FAILED", {
-      errorCode: e?.code || "UNKNOWN",
-      errorMessage: e?.message?.slice(0, 400) || String(e).slice(0, 400),
-      fileSize: fileBytes.length,
-      mediaType,
-    });
+    Logger.error("[iLink] uploadAndSendMedia failed", { error: e?.message?.slice(0, 200), mediaType });
     throw e;
   }
 }
