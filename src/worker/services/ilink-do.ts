@@ -251,6 +251,12 @@ export class ILinkConnectionDO implements DurableObject {
             last_updated INTEGER NOT NULL
           )
         `);
+        await this.env.DB.exec(`
+          CREATE TABLE IF NOT EXISTS processed_messages (
+            message_id TEXT PRIMARY KEY,
+            created_at INTEGER NOT NULL
+          )
+        `);
         Logger.info("[DO] D1 tables initialized");
       } catch (e: any) {
         Logger.error("[DO] D1 init failed", { error: e?.message });
@@ -2237,6 +2243,10 @@ export class ILinkConnectionDO implements DurableObject {
 
   private async hasProcessedMessage(messageId: string): Promise<boolean> {
     try {
+      if (this.env.DB) {
+        const { results } = await this.env.DB.prepare(`SELECT 1 as found FROM processed_messages WHERE message_id = ? LIMIT 1`).bind(messageId).all();
+        return results.length > 0;
+      }
       const rows = this.doState.storage.sql.exec(
         `SELECT 1 as found FROM processed_messages WHERE message_id = ? LIMIT 1`,
         messageId
@@ -2250,10 +2260,14 @@ export class ILinkConnectionDO implements DurableObject {
 
   private async markMessageProcessed(messageId: string): Promise<void> {
     try {
-      this.doState.storage.sql.exec(
-        `INSERT OR IGNORE INTO processed_messages (message_id, created_at) VALUES (?, ?)`,
-        messageId, Date.now()
-      );
+      if (this.env.DB) {
+        await this.env.DB.prepare(`INSERT OR IGNORE INTO processed_messages (message_id, created_at) VALUES (?, ?)`).bind(messageId, Date.now()).run();
+      } else {
+        this.doState.storage.sql.exec(
+          `INSERT OR IGNORE INTO processed_messages (message_id, created_at) VALUES (?, ?)`,
+          messageId, Date.now()
+        );
+      }
     } catch (e) {
       Logger.warn("[DO] Failed to mark message processed", { error: (e as Error).message, messageId });
     }
