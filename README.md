@@ -132,7 +132,7 @@ npx wrangler tail
 ### Cloudflare Dashboard 部署
 
 如果通过 Cloudflare Dashboard 的 Git 集成部署：
-- **构建命令**：`npm run build`
+- **构建命令**：`npm ci && npm run build`
 - **输出目录**：`dist`
 - **Node.js 版本**：18+
 
