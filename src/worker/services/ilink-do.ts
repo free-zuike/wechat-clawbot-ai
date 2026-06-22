@@ -1905,12 +1905,13 @@ export class ILinkConnectionDO implements DurableObject {
                   this.broadcastToWebSockets({ type: "media_generated", mediaType: "image", url: imageData, model: cfg.aiImageModel, provider: cfg.aiProvider });
                   await this.logGeneration("image", mediaPrompt, imageData, cfg.aiProvider, cfg.aiImageModel, "success", undefined, "wechat", from);
                 } else {
-                  // Uint8Array：转换为 Blob URL 后发送
-                  const blob = new Blob([imageData.buffer as ArrayBuffer], { type: "image/png" });
-                  const blobUrl = URL.createObjectURL(blob);
-                  await sendImageSimple(useCreds!, from, ctxToken, blobUrl);
-                  URL.revokeObjectURL(blobUrl);
+                  // Uint8Array：转换为 base64 data URL 后发送
+                  let binary = "";
+                  for (let i = 0; i < imageData.length; i++) binary += String.fromCharCode(imageData[i]);
+                  const dataUrl = `data:image/png;base64,${btoa(binary)}`;
+                  await sendImageSimple(useCreds!, from, ctxToken, dataUrl);
                   replyContent = `[图片生成] ${mediaPrompt}`;
+                  this.broadcastToWebSockets({ type: "media_generated", mediaType: "image", url: dataUrl, model: cfg.aiImageModel, provider: cfg.aiProvider });
                 }
               } else {
                 await sendTextMessage(useCreds!, from, ctxToken, `❌ 图片生成失败 (${modelInfo})\n请稍后重试或换个描述试试`);
