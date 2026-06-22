@@ -7,7 +7,7 @@ import { generateSessionToken } from "../utils";
 import { getUpdates, sendTextMessage, sendTextChunked, sendTypingStatus, extractMessageText, getQRCodeStatus, sendImageMessage, sendVideoMessage, sendImageSimple, uploadAndSendMedia, MessageType, MessageItemType, downloadImageFromCdn } from "./ilink";
 import { callAIWithContext, isImageGenerationRequest, isVideoGenerationRequest, extractMediaPrompt, extractImageSize, extractVideoDuration, extractUrl, generateImage, generateVideo, submitVideoTask } from "./ai";
 import { sendWebhook } from "./webhook";
-import { clearContextSQLite } from "./context";
+import { clearContextSQLite, clearContextD1 } from "./context";
 import type { ILinkCredentials, WeixinMessage } from "../types";
 
 export interface ILINKSessionState {
@@ -242,6 +242,13 @@ export class ILinkConnectionDO implements DurableObject {
             error_message TEXT,
             retry_count INTEGER DEFAULT 0,
             created_at INTEGER NOT NULL
+          )
+        `);
+        await this.env.DB.exec(`
+          CREATE TABLE IF NOT EXISTS contexts (
+            user_id TEXT PRIMARY KEY,
+            messages TEXT NOT NULL DEFAULT '[]',
+            last_updated INTEGER NOT NULL
           )
         `);
         Logger.info("[DO] D1 tables initialized");
@@ -1814,7 +1821,7 @@ export class ILinkConnectionDO implements DurableObject {
       // 检查重置命令
       const RESET_COMMANDS = new Set(["新对话", "/reset", "/clear", "重置", "清空"]);
       if (RESET_COMMANDS.has(text.trim())) {
-        await clearContextSQLite(this.doState.storage.sql, from);
+        if (this.env.DB) { await clearContextD1(this.env.DB, from); } else { await clearContextSQLite(this.doState.storage.sql, from); }
         await sendTextMessage(useCreds!, from, ctxToken, "✅ 已开始新对话");
         await this.markMessageProcessed(messageId);
         processedCount++;
@@ -1963,14 +1970,15 @@ export class ILinkConnectionDO implements DurableObject {
           return;
         }
 
-        // 调用 AI 生成回复（使用 DO SQLite 存储上下文，不再走 KV）
+        // 调用 AI 生成回复（使用 D1 存储上下文）
         const reply = await callAIWithContext(
           this.doState.storage.sql,
           this.env.AI,
           from,
           text,
           systemPrompt,
-          { provider: cfg.aiProvider, model: aiModel, baseUrl: cfg.aiBaseUrl, apiKey: cfg.aiApiKey, maxTokens: cfg.aiMaxTokens }
+          { provider: cfg.aiProvider, model: aiModel, baseUrl: cfg.aiBaseUrl, apiKey: cfg.aiApiKey, maxTokens: cfg.aiMaxTokens },
+          this.env.DB
         );
 
         // 发送回复（自动分段）+ AI 信息

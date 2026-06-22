@@ -116,6 +116,58 @@ export async function clearContextSQLite(sql: SqlStorage, userId: string): Promi
   }
 }
 
+// ========== D1 版本 ==========
+
+export async function getContextFromD1(db: D1Database, userId: string): Promise<UserContext> {
+  try {
+    const { results } = await db.prepare(
+      `SELECT messages, last_updated FROM contexts WHERE user_id = ?`
+    ).bind(userId).all();
+
+    if (results.length > 0) {
+      const row = results[0] as { messages: string; last_updated: number };
+      try {
+        const messages = JSON.parse(row.messages as string);
+        const lastUpdated = row.last_updated as number;
+        const expireMs = CONTEXT_EXPIRE_HOURS * 60 * 60 * 1000;
+        if (Date.now() - lastUpdated > expireMs) {
+          await db.prepare(`DELETE FROM contexts WHERE user_id = ?`).bind(userId).run();
+          return { userId, messages: [], lastUpdated: Date.now() };
+        }
+        return { userId, messages, lastUpdated };
+      } catch {
+        await db.prepare(`DELETE FROM contexts WHERE user_id = ?`).bind(userId).run();
+      }
+    }
+  } catch (error) {
+    Logger.warn(`[Context] Error loading D1 context for ${userId}`, { error: (error as Error).message });
+  }
+  return { userId, messages: [], lastUpdated: Date.now() };
+}
+
+export async function saveContextToD1(db: D1Database, userId: string, context: UserContext): Promise<void> {
+  context.lastUpdated = Date.now();
+  if (context.messages.length > MAX_CONTEXT_MESSAGES) {
+    context.messages = context.messages.slice(-MAX_CONTEXT_MESSAGES);
+  }
+  try {
+    await db.prepare(
+      `INSERT INTO contexts (user_id, messages, last_updated) VALUES (?, ?, ?)
+       ON CONFLICT(user_id) DO UPDATE SET messages = excluded.messages, last_updated = excluded.last_updated`
+    ).bind(userId, JSON.stringify(context.messages), context.lastUpdated).run();
+  } catch (error) {
+    Logger.error(`[Context] Error saving D1 context for ${userId}`, { error: (error as Error).message });
+  }
+}
+
+export async function clearContextD1(db: D1Database, userId: string): Promise<void> {
+  try {
+    await db.prepare(`DELETE FROM contexts WHERE user_id = ?`).bind(userId).run();
+  } catch (error) {
+    Logger.error(`[Context] Error clearing D1 context for ${userId}`, { error: (error as Error).message });
+  }
+}
+
 // ========== 通用工具函数 ==========
 
 // 构建带上下文的 AI 消息数组（带 token 截断）

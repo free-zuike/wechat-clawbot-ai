@@ -5,6 +5,9 @@ import {
   getContextFromSQLite,
   saveContextToSQLite,
   clearContextSQLite,
+  getContextFromD1,
+  saveContextToD1,
+  clearContextD1,
   buildMessagesWithContext,
   shouldClearContext,
 } from "./context";
@@ -127,7 +130,8 @@ export async function callAIWithContext(
   userId: string,
   userMessage: string,
   systemPrompt: string,
-  aiConfig?: Partial<AIConfig>
+  aiConfig?: Partial<AIConfig>,
+  db?: D1Database
 ): Promise<string> {
   const cleanMsg = (userMessage || "").trim();
 
@@ -138,7 +142,7 @@ export async function callAIWithContext(
   }
 
   if (shouldClearContext(cleanMsg)) {
-    await clearContextSQLite(storage, userId);
+    if (db) { await clearContextD1(db, userId); } else { await clearContextSQLite(storage, userId); }
     return "✅ 已清空对话上下文，我们重新开始吧！";
   }
 
@@ -155,7 +159,7 @@ export async function callAIWithContext(
   }
 
   const system = systemPrompt || DEFAULT_SYSTEM_PROMPT;
-  const context = await getContextFromSQLite(storage, userId);
+  const context = db ? await getContextFromD1(db, userId) : await getContextFromSQLite(storage, userId);
   const messages = buildMessagesWithContext(system, cleanMsg, context);
 
   Logger.info(`[ai] Calling AI for ${userId}`, { provider: config.provider, model: config.model });
@@ -180,7 +184,7 @@ export async function callAIWithContext(
 
   Logger.info(`[ai] AI reply for ${userId}`, { replyLength: reply.length, provider: config.provider });
 
-  // 始终保存上下文（即使 AI 未返回内容，也要保存用户消息）
+  // 始终保存上下文
   const now = Date.now();
   context.messages.push({ role: "user", content: cleanMsg.slice(0, 500), timestamp: now });
   if (reply) {
@@ -191,7 +195,7 @@ export async function callAIWithContext(
   }
   context.lastUpdated = now;
   try {
-    await saveContextToSQLite(storage, userId, context);
+    if (db) { await saveContextToD1(db, userId, context); } else { await saveContextToSQLite(storage, userId, context); }
     Logger.info(`[ai] Context saved for ${userId}`, { messageCount: context.messages.length });
   } catch (e) {
     Logger.error(`[ai] Context save failed for ${userId}`, { error: (e as Error).message });
