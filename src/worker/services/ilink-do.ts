@@ -834,7 +834,9 @@ export class ILinkConnectionDO implements DurableObject {
         });
       }
 
-      const modelInfo = `🤖 ${provider || "unknown"} · ${model || "unknown"}`;
+      const videoCfg = await this.getConfigCached();
+      const videoProviderName = ((videoCfg as any).aiCustomProviders || []).find((p: any) => p.id === provider)?.name || provider || "unknown";
+      const modelInfo = `🤖 ${videoProviderName} · ${model || "unknown"}`;
       try {
         await sendVideoMessage(creds, toUserId, contextToken, videoUrl);
       } catch {
@@ -1069,6 +1071,11 @@ export class ILinkConnectionDO implements DurableObject {
       if (pending.length === 0) return;
       Logger.info("[DO] Checking pending videos", { count: pending.length });
 
+      // 查找提供商名称
+      const cfg = await this.getConfigCached();
+      const customProviders = (cfg as any).aiCustomProviders || [];
+      const getProviderName = (id: string) => (customProviders.find((p: any) => p.id === id) as any)?.name || id;
+
       const now = Date.now();
       const MAX_AGE_MS = 24 * 60 * 60 * 1000; // 任务 24 小时后超时放弃
 
@@ -1114,7 +1121,7 @@ export class ILinkConnectionDO implements DurableObject {
         if (ageMs > MAX_AGE_MS) {
           Logger.warn("[DO] Video task timed out (> 24h) — marking as failed", { taskId, ageHours: Math.round(ageMs / 3600000) });
           await this.env.DB.prepare(`UPDATE pending_videos SET status = 'failed' WHERE task_id = ?`).bind(taskId).run();
-          const modelInfo = `🤖 ${task.provider} · ${task.model}`;
+          const modelInfo = `🤖 ${getProviderName(task.provider as string)} · ${task.model}`;
           // 凭证解析：先按 accountId 找，找不到时用第一个账号或 ilinkCreds
           const accountId = task.account_id as string | undefined;
           let sendCreds: ILinkCredentials | null = null;
@@ -1139,7 +1146,7 @@ export class ILinkConnectionDO implements DurableObject {
         base = base.replace(/\/v\d+\/(chat\/completions|images\/generations|videos?\/generations|videos\/?|videos|async-result\/.*)$/i, "");
         base = base.replace(/\/v\d+$/, "");
         const taskAccountId = task.account_id as string | undefined;
-        const modelInfo = `🤖 ${task.provider} · ${task.model}`;
+        const modelInfo = `🤖 ${getProviderName(task.provider as string)} · ${task.model}`;
 
         // 凭证解析：先按 taskAccountId 找，找不到时尝试所有账号，最后用 ilinkCreds
         let creds: ILinkCredentials | null = null;
@@ -1706,6 +1713,10 @@ export class ILinkConnectionDO implements DurableObject {
     Logger.info(`[DO] processMessages: ${msgs.length} msgs, using creds=${useCreds?.accountId || 'NONE'}`);
     const cfg = await this.getConfigCached();
     const { aiSystemPrompt: systemPrompt, aiModel } = cfg;
+
+    // 查找提供商显示名称
+    const customProviders = (cfg as any).aiCustomProviders || [];
+    const providerName = (customProviders.find((p: any) => p.id === cfg.aiProvider) as any)?.name || cfg.aiProvider;
     let processedCount = 0;
     let aiSuccessCount = 0;
     let aiFailCount = 0;
@@ -1859,7 +1870,7 @@ export class ILinkConnectionDO implements DurableObject {
               startTypingKeepAlive();
               const videoParams = extractVideoDuration(text);
               const result = await submitVideoTask(this.env.AI, mediaPrompt, cfg.aiVideoModel, cfg.aiProvider, cfg.aiBaseUrl, cfg.aiApiKey, videoParams?.numFrames, videoParams?.frameRate);
-              const modelInfo = `🤖 ${cfg.aiProvider} · ${cfg.aiVideoModel}`;
+              const modelInfo = `🤖 ${providerName} · ${cfg.aiVideoModel}`;
               if (result) {
                 if (result.url) {
                   // 同步返回了 URL：先发文本通知，再异步尝试发送视频文件
@@ -1915,7 +1926,7 @@ export class ILinkConnectionDO implements DurableObject {
               const imageSize = extractImageSize(text);
               const imageDataResult = await generateImage(this.env.AI, mediaPrompt, cfg.aiImageModel, cfg.aiProvider, cfg.aiBaseUrl, cfg.aiApiKey, imageUrl, imageSize, cfg.allKeys, cfg.aiMaxRetries);
               const imageData = imageDataResult.data;
-              const modelInfo = `🤖 ${cfg.aiProvider} · ${cfg.aiImageModel}`;
+              const modelInfo = `🤖 ${providerName} · ${cfg.aiImageModel}`;
               Logger.info("[DO] Image generation result", { success: !!imageData, type: typeof imageData });
               if (imageData) {
                 if (typeof imageData === "string") {
