@@ -561,7 +561,7 @@ export async function generateImage(
     Logger.info("[ai] Cloudflare AI response", { type: typeof response, constructor: response?.constructor?.name, keys: Object.keys(response || {}).slice(0, 10) });
 
     // 通用提取：自动适配所有响应格式
-    const extracted = extractImageFromAny(response);
+    const extracted = await extractImageFromAny(response);
     if (extracted) return { data: extracted, keyIndex: 0 };
 
     Logger.warn("[ai] Could not extract image from response", { response: JSON.stringify(response).slice(0, 300) });
