@@ -453,6 +453,28 @@ export async function generateImage(
         return { data: new Uint8Array(buf), keyIndex: 0 };
       }
     }
+    // Worker AI 返回格式: { image: "data:image/jpeg;base64,..." }
+    if (response?.image && typeof response.image === "string") {
+      const dataUrl = response.image;
+      if (dataUrl.startsWith("data:")) {
+        const base64 = dataUrl.split(",")[1];
+        if (base64) {
+          const binary = atob(base64);
+          const bytes = new Uint8Array(binary.length);
+          for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+          Logger.info("[ai] Image generated (data URL)", { size: bytes.length });
+          return { data: bytes, keyIndex: 0 };
+        }
+      }
+      // 纯 base64 字符串
+      if (dataUrl.startsWith("/9j/") || dataUrl.startsWith("iVBOR")) {
+        const binary = atob(dataUrl);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+        Logger.info("[ai] Image generated (raw base64)", { size: bytes.length });
+        return { data: bytes, keyIndex: 0 };
+      }
+    }
     Logger.warn("[ai] Unexpected image response format", { response: JSON.stringify(response).slice(0, 200) });
     return { data: null, keyIndex: 0 };
   } catch (e: any) {
