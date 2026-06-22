@@ -1373,8 +1373,11 @@ export class ILinkConnectionDO implements DurableObject {
   // ========== 广播图片到 WebSocket（由 Queue 消费者调用）==========
   private async handleBroadcastImage(request: Request): Promise<Response> {
     try {
-      const body = await request.json() as { imageData: string | null; model?: string; provider?: string; error?: boolean; message?: string; source?: string; mediaType?: string; keyIndex?: number; prompt?: string };
+      const bodyText = await request.text();
+      Logger.info("[DO] broadcast-image received", { bodyLength: bodyText.length });
+      const body = JSON.parse(bodyText) as { imageData: string | null; model?: string; provider?: string; error?: boolean; message?: string; source?: string; mediaType?: string; keyIndex?: number; prompt?: string };
       const { imageData, model, provider, error: isError, message: errorMsg, source, mediaType, keyIndex, prompt } = body;
+      Logger.info("[DO] broadcast-image parsed", { hasImageData: !!imageData, imageDataLength: imageData?.length || 0, isError, logType: mediaType || "image" });
       const logType = mediaType || "image";
 
       // 查找提供商名称

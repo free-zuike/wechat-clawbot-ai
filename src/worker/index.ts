@@ -90,10 +90,15 @@ export default {
                 for (let i = 0; i < imageData.length; i++) binary += String.fromCharCode(imageData[i]);
                 imageUrl = `data:image/png;base64,${btoa(binary)}`;
               }
-              await doStub.fetch(new Request("http://localhost/broadcast-image", {
+              Logger.info("[queue] Broadcasting image", { imageUrlLength: imageUrl.length, isDataUrl: imageUrl.startsWith("data:") });
+              const broadcastResp = await doStub.fetch(new Request("http://localhost/broadcast-image", {
                 method: "POST",
                 body: JSON.stringify({ imageData: imageUrl, model, provider, source, keyIndex: imageDataResult.keyIndex, prompt }),
               }));
+              if (!broadcastResp.ok) {
+                const errText = await broadcastResp.text().catch(() => "unknown");
+                Logger.error("[queue] Broadcast image failed", { status: broadcastResp.status, body: errText });
+              }
               Logger.info("[queue] Image generated" + (isFromChat ? " (chat)" : " and broadcast"));
             } else {
               Logger.error("[queue] Image generation returned null");
