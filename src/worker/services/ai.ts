@@ -335,6 +335,152 @@ export function extractUrl(text: string): string | undefined {
   return urlMatch ? urlMatch[1] : undefined;
 }
 
+/** 从任意格式的响应中提取图片字节数据，兼容所有 AI 模型的返回格式 */
+async function extractImageFromAny(response: any): Promise<Uint8Array | null> {
+  // 1. 已经是 Uint8Array
+  if (response instanceof Uint8Array) return response;
+
+  // 2. ArrayBuffer
+  if (response instanceof ArrayBuffer) return new Uint8Array(response);
+
+  // 3. ReadableStream（流式响应，如 flux-1-schnell）
+  if (response instanceof ReadableStream) {
+    const reader = response.getReader();
+    const chunks: Uint8Array[] = [];
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+    }
+    const totalLength = chunks.reduce((acc, c) => acc + c.length, 0);
+    const result = new Uint8Array(totalLength);
+    let offset = 0;
+    for (const chunk of chunks) { result.set(chunk, offset); offset += chunk.length; }
+    return result;
+  }
+
+  // 4. Response 对象（有 body）
+  if (response instanceof Response) {
+    const buf = await response.arrayBuffer();
+    if (buf.byteLength > 0) return new Uint8Array(buf);
+  }
+
+  // 5. 有 body 属性（可能是 Response-like）
+  if (response?.body instanceof ReadableStream) {
+    const reader = response.body.getReader();
+    const chunks: Uint8Array[] = [];
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+    }
+    const totalLength = chunks.reduce((acc, c) => acc + c.length, 0);
+    const result = new Uint8Array(totalLength);
+    let offset = 0;
+    for (const chunk of chunks) { result.set(chunk, offset); offset += chunk.length; }
+    return result;
+  }
+
+  // 6. 对象类型：递归查找图片数据
+  if (response && typeof response === "object") {
+    // 检查常见属性名
+    const IMAGE_KEYS = ["image", "data", "b64_json", "url", "content", "output", "result"];
+    for (const key of IMAGE_KEYS) {
+      const val = response[key];
+      if (!val) continue;
+
+      // { image: "data:image/...;base64,xxx" }
+      if (typeof val === "string") {
+        const bytes = decodeImageString(val);
+        if (bytes) return bytes;
+      }
+      // { images: ["base64..."] } 或 { data: [{ b64_json: "..." }] }
+      if (Array.isArray(val) && val.length > 0) {
+        const first = val[0];
+        if (typeof first === "string") {
+          const bytes = decodeImageString(first);
+          if (bytes) return bytes;
+        }
+        if (first?.b64_json) {
+          const bytes = decodeBase64(first.b64_json);
+          if (bytes) return bytes;
+        }
+        if (first?.url) {
+          const bytes = await fetchImageUrl(first.url);
+          if (bytes) return bytes;
+        }
+      }
+      // { data: "base64..." } 直接是字符串
+      if (typeof val === "string") {
+        const bytes = decodeImageString(val);
+        if (bytes) return bytes;
+      }
+    }
+
+    // 检查嵌套: response.result.image, response.data[0].b64_json
+    if (response.result?.image) {
+      const val = response.result.image;
+      if (typeof val === "string") {
+        const bytes = decodeImageString(val);
+        if (bytes) return bytes;
+      }
+      if (typeof val === "string" && val.startsWith("http")) {
+        const bytes = await fetchImageUrl(val);
+        if (bytes) return bytes;
+      }
+    }
+    if (response.data?.[0]?.b64_json) {
+      const bytes = decodeBase64(response.data[0].b64_json);
+      if (bytes) return bytes;
+    }
+    if (response.data?.[0]?.url) {
+      const bytes = await fetchImageUrl(response.data[0].url);
+      if (bytes) return bytes;
+    }
+  }
+
+  // 7. 纯字符串（可能是 base64）
+  if (typeof response === "string") {
+    const bytes = decodeImageString(response);
+    if (bytes) return bytes;
+  }
+
+  return null;
+}
+
+/** 解码 base64 / data URL 字符串为 Uint8Array */
+function decodeImageString(str: string): Uint8Array | null {
+  if (!str || typeof str !== "string") return null;
+  // data:image/...;base64,xxx
+  if (str.startsWith("data:")) {
+    const parts = str.split(",");
+    if (parts[1]) return decodeBase64(parts[1]);
+    return null;
+  }
+  // 纯 base64（检测常见图片头）
+  if (str.startsWith("/9j/") || str.startsWith("iVBOR") || str.startsWith("UklGR")) {
+    return decodeBase64(str);
+  }
+  return null;
+}
+
+function decodeBase64(b64: string): Uint8Array | null {
+  try {
+    const binary = atob(b64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return bytes;
+  } catch { return null; }
+}
+
+async function fetchImageUrl(url: string): Promise<Uint8Array | null> {
+  try {
+    const resp = await fetch(url);
+    if (resp.ok) return new Uint8Array(await resp.arrayBuffer());
+  } catch {}
+  return null;
+}
+
 export async function generateImage(
   aiBinding: any,
   prompt: string,
@@ -413,70 +559,13 @@ export async function generateImage(
 
   try {
     const response = await aiBinding.run(imageModel, { prompt });
-    Logger.info("[ai] Cloudflare AI response", { type: typeof response, isArray: Array.isArray(response), keys: Object.keys(response || {}), constructor: response?.constructor?.name, hasBody: !!response?.body, isReadableStream: response instanceof ReadableStream });
+    Logger.info("[ai] Cloudflare AI response", { type: typeof response, constructor: response?.constructor?.name, keys: Object.keys(response || {}).slice(0, 10) });
 
-    if (response instanceof Uint8Array) {
-      return { data: response, keyIndex: 0 };
-    }
-    if (response instanceof ArrayBuffer) {
-      return { data: new Uint8Array(response), keyIndex: 0 };
-    }
-    if (response instanceof ReadableStream) {
-      const reader = response.getReader();
-      const chunks: Uint8Array[] = [];
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        chunks.push(value);
-      }
-      const totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
-      const result = new Uint8Array(totalLength);
-      let offset = 0;
-      for (const chunk of chunks) {
-        result.set(chunk, offset);
-        offset += chunk.length;
-      }
-      return { data: result, keyIndex: 0 };
-    }
-    if (response?.images?.[0]) {
-      const img = response.images[0];
-      if (typeof img === "string") {
-        const binary = atob(img);
-        const bytes = new Uint8Array(binary.length);
-        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-        return { data: bytes, keyIndex: 0 };
-      }
-      return { data: img, keyIndex: 0 };
-    }
-    if (response?.result?.image) {
-      const imgUrl = response.result.image;
-      const resp = await fetch(imgUrl);
-      if (resp.ok) {
-        const buf = await resp.arrayBuffer();
-        return { data: new Uint8Array(buf), keyIndex: 0 };
-      }
-    }
-    // Worker AI 返回格式: { image: "data:image/jpeg;base64,..." }
-    if (response?.image && typeof response.image === "string") {
-      const dataUrl = response.image;
-      if (dataUrl.startsWith("data:")) {
-        const base64 = dataUrl.split(",")[1];
-        if (base64) {
-          const binary = atob(base64);
-          const bytes = new Uint8Array(binary.length);
-          for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-          return { data: bytes, keyIndex: 0 };
-        }
-      }
-      // 纯 base64 字符串
-      if (dataUrl.startsWith("/9j/") || dataUrl.startsWith("iVBOR")) {
-        const binary = atob(dataUrl);
-        const bytes = new Uint8Array(binary.length);
-        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-        return { data: bytes, keyIndex: 0 };
-      }
-    }
-    Logger.warn("[ai] Unexpected image response format", { response: JSON.stringify(response).slice(0, 200) });
+    // 通用提取：自动适配所有响应格式
+    const extracted = extractImageFromAny(response);
+    if (extracted) return { data: extracted, keyIndex: 0 };
+
+    Logger.warn("[ai] Could not extract image from response", { response: JSON.stringify(response).slice(0, 300) });
     return { data: null, keyIndex: 0 };
   } catch (e: any) {
     Logger.error("[ai] Image generation failed", { error: e?.message, model: imageModel, prompt: prompt.slice(0, 50) });
