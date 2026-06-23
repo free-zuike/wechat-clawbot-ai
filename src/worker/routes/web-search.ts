@@ -1,36 +1,54 @@
-// 联网搜索 - 使用 Unsplash API 返回真实图片
+// 联网搜索 - 使用 Wikipedia API 返回真实图片
 
 import { json, verifyAdmin } from "../utils";
 import type { Env } from "../index";
 
-// Unsplash 免费 API（无需密钥，有速率限制）
-async function searchUnsplash(query: string): Promise<Array<{ url: string; title: string; source: string }>> {
-  const resp = await fetch(
-    `https://api.unsplash.com/search/photos?query=${encodeURIComponent(query)}&per_page=10&client_id=demo`,
-    { headers: { "Accept-Version": "v1" } }
-  );
-  if (!resp.ok) return [];
-  const data = await resp.json() as any;
-  return (data.results || []).map((r: any) => ({
-    url: r.urls?.small || r.urls?.regular || "",
-    title: r.alt_description || query,
-    source: r.user?.name || "",
-  })).filter((i: any) => i.url);
-}
-
-// 使用 Bing 图片搜索解析（备用）
-async function searchBing(query: string): Promise<Array<{ url: string; title: string; source: string }>> {
-  const resp = await fetch(`https://www.bing.com/images/search?q=${encodeURIComponent(query)}&form=HDRSC2`, {
-    headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
-  });
-  const html = await resp.text();
+async function searchWikipedia(query: string): Promise<Array<{ url: string; title: string; source: string }>> {
   const images: Array<{ url: string; title: string; source: string }> = [];
-  // 提取 murl（真实图片地址）
-  const murlRegex = /"murl":"(https?:\/\/[^"]+)"/g;
-  let match;
-  while ((match = murlRegex.exec(html)) !== null && images.length < 10) {
-    images.push({ url: match[1], title: query, source: "" });
+
+  // 中文 Wikipedia 搜索
+  try {
+    const zhResp = await fetch(`https://zh.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(query)}`);
+    if (zhResp.ok) {
+      const data = await zhResp.json() as any;
+      if (data.thumbnail?.source) {
+        images.push({ url: data.thumbnail.source, title: data.extract?.slice(0, 100) || query, source: "Wikipedia" });
+      }
+      if (data.originalimage?.source && data.originalimage.source !== data.thumbnail?.source) {
+        images.push({ url: data.originalimage.source, title: data.extract?.slice(0, 100) || query, source: "Wikipedia" });
+      }
+    }
+  } catch {}
+
+  // 英文 Wikipedia 搜索（补充）
+  if (images.length === 0) {
+    try {
+      const enResp = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(query)}`);
+      if (enResp.ok) {
+        const data = await enResp.json() as any;
+        if (data.thumbnail?.source) {
+          images.push({ url: data.thumbnail.source, title: data.extract?.slice(0, 100) || query, source: "Wikipedia" });
+        }
+        if (data.originalimage?.source && data.originalimage.source !== data.thumbnail?.source) {
+          images.push({ url: data.originalimage.source, title: data.extract?.slice(0, 100) || query, source: "Wikipedia" });
+        }
+      }
+    } catch {}
   }
+
+  // Wikipedia 搜索相关页面
+  try {
+    const searchResp = await fetch(`https://zh.wikipedia.org/api/rest_v1/page/search/${encodeURIComponent(query)}?limit=5`);
+    if (searchResp.ok) {
+      const data = await searchResp.json() as any;
+      for (const page of (data.pages || [])) {
+        if (page.thumbnail?.source && images.length < 10) {
+          images.push({ url: page.thumbnail.source, title: page.title || query, source: "Wikipedia" });
+        }
+      }
+    }
+  } catch {}
+
   return images;
 }
 
@@ -46,15 +64,20 @@ export async function handleWebSearch(request: Request, env: Env): Promise<Respo
     const type = url.searchParams.get("type") || "images";
 
     if (type === "images") {
-      // 先尝试 Unsplash，失败则用 Bing
-      let images = await searchUnsplash(query);
+      const images = await searchWikipedia(query);
+
       if (images.length === 0) {
-        images = await searchBing(query);
+        const links = [
+          { name: "Bing 图片", url: `https://www.bing.com/images/search?q=${encodeURIComponent(query)}` },
+          { name: "Google 图片", url: `https://www.google.com/search?q=${encodeURIComponent(query)}&tbm=isch` },
+          { name: "Pixabay", url: `https://pixabay.com/images/search/${encodeURIComponent(query)}/` },
+        ];
+        return json({ images: [], links, query, message: "暂无直接图片结果，请点击链接搜索" });
       }
+
       return json({ images, query });
     }
 
-    // 文本搜索 - 返回搜索链接
     const links = [
       { name: "Bing", url: `https://www.bing.com/search?q=${encodeURIComponent(query)}` },
       { name: "Google", url: `https://www.google.com/search?q=${encodeURIComponent(query)}` },
