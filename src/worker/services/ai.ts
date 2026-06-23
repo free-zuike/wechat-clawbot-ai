@@ -78,35 +78,48 @@ export function tryQuickReply(text: string): string | null {
 async function executeWebSearch(query: string): Promise<string> {
   const images: string[] = [];
 
-  // 方法1: LoremFlickr 获取关键词图片（最多3张）
-  for (let i = 0; i < 3; i++) {
-    try {
-      const resp = await fetch(`https://loremflickr.com/400/300/${encodeURIComponent(query)}?lock=${i + 1}`, {
-        method: "HEAD",
-        redirect: "follow",
-      });
-      if (resp.ok && resp.url && !images.includes(resp.url)) {
-        images.push(resp.url);
-      }
-    } catch {}
-  }
-
-  // 方法2: Wikipedia 缩略图
+  // 方法1: Bing 图片搜索 HTML 提取真实图片 URL
   try {
-    const wikiResp = await fetch(`https://zh.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(query)}`);
-    if (wikiResp.ok) {
-      const data = await wikiResp.json() as any;
-      if (data.thumbnail?.source && !images.includes(data.thumbnail.source)) {
-        images.push(data.thumbnail.source);
-      }
-      if (data.originalimage?.source && !images.includes(data.originalimage.source)) {
-        images.push(data.originalimage.source);
+    const resp = await fetch(`https://www.bing.com/images/search?q=${encodeURIComponent(query)}&form=HDRSC2&first=1`, {
+      headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" },
+    });
+    const html = await resp.text();
+    // Bing 图片搜索结果中 murl 字段是真实图片地址
+    const murlRegex = /"murl":"(https?:\/\/[^"]+)"/g;
+    let match;
+    while ((match = murlRegex.exec(html)) !== null) {
+      const url = match[1];
+      if (!images.includes(url) && images.length < 5) {
+        images.push(url);
       }
     }
   } catch {}
 
-  // 方法3: 英文 Wikipedia
+  // 方法2: LoremFlickr 备用
   if (images.length === 0) {
+    for (let i = 0; i < 3; i++) {
+      try {
+        const resp = await fetch(`https://loremflickr.com/400/300/${encodeURIComponent(query)}?lock=${i + 1}`, {
+          method: "HEAD",
+          redirect: "follow",
+        });
+        if (resp.ok && resp.url && !images.includes(resp.url)) {
+          images.push(resp.url);
+        }
+      } catch {}
+    }
+  }
+
+  // 方法3: Wikipedia 缩略图
+  if (images.length === 0) {
+    try {
+      const wikiResp = await fetch(`https://zh.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(query)}`);
+      if (wikiResp.ok) {
+        const data = await wikiResp.json() as any;
+        if (data.thumbnail?.source) images.push(data.thumbnail.source);
+        if (data.originalimage?.source) images.push(data.originalimage.source);
+      }
+    } catch {}
     try {
       const wikiResp = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(query)}`);
       if (wikiResp.ok) {
@@ -121,11 +134,10 @@ async function executeWebSearch(query: string): Promise<string> {
     for (let i = 0; i < images.length; i++) {
       result += `![${query} 图片${i + 1}](${images[i]})\n`;
     }
-    result += `\n更多图片请搜索：https://www.bing.com/images/search?q=${encodeURIComponent(query)}`;
     return result;
   }
 
-  return `未找到直接图片。请搜索：https://www.bing.com/images/search?q=${encodeURIComponent(query)}`;
+  return `未找到图片，请点击搜索：https://www.bing.com/images/search?q=${encodeURIComponent(query)}`;
 }
 
 // ========== OpenAI 兼容 API 调用 ==========
