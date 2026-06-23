@@ -1,53 +1,35 @@
-// 联网搜索 - 使用 Wikipedia API 返回真实图片
+// 联网搜索 - 使用 LoremFlickr API 返回真实图片
 
 import { json, verifyAdmin } from "../utils";
 import type { Env } from "../index";
 
-async function searchWikipedia(query: string): Promise<Array<{ url: string; title: string; source: string }>> {
+async function searchImages(query: string): Promise<Array<{ url: string; title: string; source: string }>> {
   const images: Array<{ url: string; title: string; source: string }> = [];
 
-  // 中文 Wikipedia 搜索
+  // 方法1: LoremFlickr（免费，按关键词返回图片）
   try {
-    const zhResp = await fetch(`https://zh.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(query)}`);
-    if (zhResp.ok) {
-      const data = await zhResp.json() as any;
-      if (data.thumbnail?.source) {
-        images.push({ url: data.thumbnail.source, title: data.extract?.slice(0, 100) || query, source: "Wikipedia" });
-      }
-      if (data.originalimage?.source && data.originalimage.source !== data.thumbnail?.source) {
-        images.push({ url: data.originalimage.source, title: data.extract?.slice(0, 100) || query, source: "Wikipedia" });
-      }
+    const resp = await fetch(`https://loremflickr.com/400/300/${encodeURIComponent(query)}?lock=1`, {
+      method: "HEAD",
+      redirect: "follow",
+    });
+    if (resp.ok && resp.url) {
+      images.push({ url: resp.url, title: query, source: "LoremFlickr" });
     }
   } catch {}
 
-  // 英文 Wikipedia 搜索（补充）
-  if (images.length === 0) {
+  // 方法2: 多张图片
+  for (let i = 0; i < 4; i++) {
     try {
-      const enResp = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(query)}`);
-      if (enResp.ok) {
-        const data = await enResp.json() as any;
-        if (data.thumbnail?.source) {
-          images.push({ url: data.thumbnail.source, title: data.extract?.slice(0, 100) || query, source: "Wikipedia" });
-        }
-        if (data.originalimage?.source && data.originalimage.source !== data.thumbnail?.source) {
-          images.push({ url: data.originalimage.source, title: data.extract?.slice(0, 100) || query, source: "Wikipedia" });
-        }
+      const resp = await fetch(`https://loremflickr.com/400/300/${encodeURIComponent(query)}?lock=${i + 2}`, {
+        method: "HEAD",
+        redirect: "follow",
+      });
+      if (resp.ok && resp.url && !images.find(img => img.url === resp.url)) {
+        images.push({ url: resp.url, title: query, source: "LoremFlickr" });
       }
     } catch {}
+    if (images.length >= 5) break;
   }
-
-  // Wikipedia 搜索相关页面
-  try {
-    const searchResp = await fetch(`https://zh.wikipedia.org/api/rest_v1/page/search/${encodeURIComponent(query)}?limit=5`);
-    if (searchResp.ok) {
-      const data = await searchResp.json() as any;
-      for (const page of (data.pages || [])) {
-        if (page.thumbnail?.source && images.length < 10) {
-          images.push({ url: page.thumbnail.source, title: page.title || query, source: "Wikipedia" });
-        }
-      }
-    }
-  } catch {}
 
   return images;
 }
@@ -64,7 +46,7 @@ export async function handleWebSearch(request: Request, env: Env): Promise<Respo
     const type = url.searchParams.get("type") || "images";
 
     if (type === "images") {
-      const images = await searchWikipedia(query);
+      const images = await searchImages(query);
 
       if (images.length === 0) {
         const links = [
