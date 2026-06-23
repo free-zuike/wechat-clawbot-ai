@@ -120,18 +120,12 @@ function submitEdit() {
 }
 
 function renderMessage(text: string): { isImage: boolean; html: string; text: string } {
-  // 检测 markdown 图片
-  const imgMatch = text.match(/!\[([^\]]*)\]\(([^)]+)\)/);
-  if (imgMatch) {
-    const alt = imgMatch[1] || "生成的图片";
-    const src = imgMatch[2];
-    const prefix = text.slice(0, text.indexOf(imgMatch[0]));
-    const suffix = text.slice(text.indexOf(imgMatch[0]) + imgMatch[0].length);
-    return {
-      isImage: true,
-      html: `${prefix ? `<div style="margin-bottom:8px;white-space:pre-wrap">${prefix}</div>` : ''}<img src="${src}" alt="${alt}" style="max-width:100%;max-height:400px;border-radius:8px;margin:4px 0;object-fit:contain" />${suffix ? `<div style="margin-top:8px;white-space:pre-wrap">${suffix}</div>` : ''}`,
-      text,
-    };
+  // 检测 markdown 图片并全部转换为 <img> 标签
+  if (/!\[([^\]]*)\]\(([^)]+)\)/.test(text)) {
+    const html = text.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (_m, alt, src) => {
+      return `<img src="${src}" alt="${alt || '图片'}" style="max-width:100%;max-height:400px;border-radius:8px;margin:4px 0;object-fit:contain" />`;
+    }).replace(/\n/g, "<br>");
+    return { isImage: true, html, text };
   }
   // 检测视频标签
   const vidMatch = text.match(/<video[^>]+src="([^"]+)"[^>]*>/);
