@@ -259,7 +259,7 @@ export class ILinkConnectionDO implements DurableObject {
         `);
         Logger.info("[DO] D1 tables initialized");
       } catch (e: any) {
-        Logger.error("[DO] D1 init failed", { error: e?.message });
+        Logger.warn("[DO] D1 init skipped", { error: e?.message || String(e) });
       }
     }
   }
