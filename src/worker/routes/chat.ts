@@ -146,6 +146,7 @@ export async function handleChat(request: Request, env: Env): Promise<Response> 
       baseUrl: aiConfig.baseUrl,
       apiKey: aiConfig.apiKey,
       maxTokens: aiConfig.maxTokens,
+      thinking: aiConfig.thinking,
     });
 
     Logger.info(`[chat][${requestId}] reply`, { length: reply.length });

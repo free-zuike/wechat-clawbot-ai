@@ -11,7 +11,7 @@ import { configCache } from "../utils/cache";
 import type { Env } from "../index";
 
 const KV_CONFIG_KEY = "clawbot:config";
-const CONFIG_FIELDS = ["aiProvider", "aiModel", "aiBaseUrl", "aiApiKey", "aiMaxTokens", "aiSystemPrompt", "webhookUrl", "webhookEnabled", "webhookTitle", "webhookApiKey", "webhookChannels", "aiPresets", "aiCustomProviders", "aiMaxRetries"] as const;
+const CONFIG_FIELDS = ["aiProvider", "aiModel", "aiBaseUrl", "aiApiKey", "aiMaxTokens", "aiSystemPrompt", "webhookUrl", "webhookEnabled", "webhookTitle", "webhookApiKey", "webhookChannels", "aiPresets", "aiCustomProviders", "aiMaxRetries", "aiThinking"] as const;
 
 // 读取 KV 配置时自动修复所有掩码密钥
 // 旧数据中 apiKey 可能被掩码保存（如 sk-r***yu3C），需要还原为真实值
@@ -117,6 +117,7 @@ function getConfigResponse(kvConfig: Record<string, unknown>) {
     aiPresets: maskedPresets,
     aiCustomProviders: (kvConfig.aiCustomProviders as any[]) || [],
     aiMaxRetries: (kvConfig.aiMaxRetries as number) ?? 2,
+    aiThinking: (kvConfig.aiThinking as boolean) || false,
   };
 }
 
@@ -147,6 +148,7 @@ export function resolveAIConfig(kvConfig: Record<string, unknown>) {
       allKeys: [apiKey, ...backupKeys].filter(Boolean),
       maxTokens: active.maxTokens || 1024,
       maxRetries,
+      thinking: active.thinking || false,
     };
   }
 
@@ -158,6 +160,7 @@ export function resolveAIConfig(kvConfig: Record<string, unknown>) {
     allKeys: [(kvConfig.aiApiKey as string) || ""].filter(Boolean),
     maxTokens: (kvConfig.aiMaxTokens as number) || 1024,
     maxRetries,
+    thinking: (kvConfig.aiThinking as boolean) || false,
   };
 }
 

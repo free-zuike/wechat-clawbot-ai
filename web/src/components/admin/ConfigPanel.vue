@@ -66,6 +66,13 @@
         </div>
         <div v-else class="form-empty">← 从左侧选择提供商</div>
         <div v-if="config.aiProvider" class="field" style="margin-top: 12px"><label>最大 Token 数</label><input v-model.number="config.aiMaxTokens" class="input" type="number" min="1" max="32000" placeholder="1024" /></div>
+        <div v-if="config.aiProvider" class="field">
+          <label class="checkbox-label">
+            <input type="checkbox" v-model="config.aiThinking" />
+            🧠 开启 Thinking 模式（深度思考）
+          </label>
+          <div class="field-hint">开启后模型会先推理再回答，对复杂问题效果更好，但会增加响应时间和 Token 消耗</div>
+        </div>
       </div>
     </div>
 
@@ -113,6 +120,7 @@ interface Preset {
   apiKey: string;
   apiKeys?: string[];
   maxTokens: number;
+  thinking?: boolean;
 }
 
 interface CustomProvider {
@@ -139,6 +147,7 @@ const props = defineProps<{
     aiCustomProviders: CustomProvider[];
     aiPresets?: Preset[];
     aiMaxRetries?: number;
+    aiThinking?: boolean;
   };
   result: string;
   saving: boolean;
@@ -290,6 +299,7 @@ function syncCurrentToPreset() {
     apiKey: props.config.aiApiKey,
     apiKeys: [...backupKeys.value],
     maxTokens: props.config.aiMaxTokens,
+    thinking: props.config.aiThinking || false,
   });
 }
 

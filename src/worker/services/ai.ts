@@ -119,8 +119,21 @@ async function callOpenAICompatible(params: {
   messages: Array<{ role: string; content: string | any[] }>;
   maxTokens: number;
   temperature?: number;
+  thinking?: boolean;
 }): Promise<string> {
   const url = params.baseUrl.trim().replace(/\/+$/, "");
+
+  const body: any = {
+    model: params.model,
+    messages: params.messages,
+    max_tokens: params.maxTokens,
+    temperature: params.temperature ?? 0.7,
+  };
+
+  // 开启 Thinking 模式（深度推理）
+  if (params.thinking) {
+    body.chat_template_kwargs = { enable_thinking: true };
+  }
 
   const resp = await fetch(url, {
     method: "POST",
@@ -128,12 +141,7 @@ async function callOpenAICompatible(params: {
       "Content-Type": "application/json",
       "Authorization": `Bearer ${params.apiKey}`,
     },
-    body: JSON.stringify({
-      model: params.model,
-      messages: params.messages,
-      max_tokens: params.maxTokens,
-      temperature: params.temperature ?? 0.7,
-    }),
+    body: JSON.stringify(body),
   });
 
   if (!resp.ok) {
@@ -166,6 +174,7 @@ interface AIConfig {
   baseUrl: string;
   apiKey: string;
   maxTokens: number;
+  thinking?: boolean;
 }
 
 // ========== 带上下文的 AI 调用（微信消息处理）==========
@@ -197,6 +206,7 @@ export async function callAIWithContext(
     baseUrl: aiConfig?.baseUrl || "",
     apiKey: aiConfig?.apiKey || "",
     maxTokens: aiConfig?.maxTokens || 1024,
+    thinking: aiConfig?.thinking || false,
   };
 
   if (config.provider !== "cloudflare" && !config.model) {
@@ -218,6 +228,7 @@ export async function callAIWithContext(
         model: config.model,
         messages,
         maxTokens: config.maxTokens,
+        thinking: config.thinking,
       });
     } else {
       reply = await callCloudflareAI(aiBinding, config.model, messages, config.maxTokens);
@@ -239,7 +250,7 @@ export async function callAIWithContext(
       if (config.provider !== "cloudflare") {
         reply = await callOpenAICompatible({
           baseUrl: config.baseUrl, apiKey: config.apiKey, model: config.model,
-          messages: toolMessages, maxTokens: config.maxTokens,
+          messages: toolMessages, maxTokens: config.maxTokens, thinking: config.thinking,
         });
       } else {
         reply = await callCloudflareAI(aiBinding, config.model, toolMessages, config.maxTokens);
@@ -286,6 +297,7 @@ export async function callAI(
     baseUrl: aiConfig?.baseUrl || "",
     apiKey: aiConfig?.apiKey || "",
     maxTokens: aiConfig?.maxTokens || 1024,
+    thinking: aiConfig?.thinking || false,
   };
 
   if (config.provider !== "cloudflare" && !config.model) {
@@ -308,6 +320,7 @@ export async function callAI(
           { role: "user", content: cleanMsg },
         ],
         maxTokens: config.maxTokens,
+        thinking: config.thinking,
       });
     } else {
       text = await callCloudflareAI(aiBinding, config.model, [
