@@ -75,6 +75,42 @@ export function tryQuickReply(text: string): string | null {
 
 // ========== 联网搜索工具 ==========
 
+// 检测用户是否在请求图片搜索
+function detectImageSearch(query: string): string | null {
+  // 图片相关关键词
+  const imagePatterns = [
+    /(.+?)(?:的|的)?图片/,
+    /(.+?)(?:的|的)?照片/,
+    /(.+?)(?:的|的)?写真/,
+    /(.+?)(?:的|的)?壁纸/,
+    /(?:搜索|搜|找|查|看|看一下|给我看|帮我找|帮我搜|帮我查)(?:一下)?(.+?)(?:的|的)?(?:图片|照片|写真)/,
+    /(?:搜|搜索|找)(.+?)(?:图片|照片)/,
+    /(?:图片|照片|写真|壁纸)(?:搜索|搜|找|查)(.+)/,
+    /(?:找|给我)(?:一些?|几张?)?(.+?)(?:的)?(?:图片|照片)/,
+    /(?:有没有|有没有|有没有)(.+?)(?:的)?(?:图片|照片)/,
+    /(?:看看|看一下|看看)(.+?)(?:的)?(?:图片|照片)/,
+  ];
+
+  for (const pattern of imagePatterns) {
+    const match = query.match(pattern);
+    if (match) {
+      const keyword = (match[1] || query).trim();
+      if (keyword && keyword.length >= 1 && keyword.length <= 20) {
+        return keyword;
+      }
+    }
+  }
+
+  // 简单匹配：消息很短且包含图片相关词
+  if (query.length <= 15 && /图片|照片|写真|壁纸/.test(query)) {
+    // 提取人名或关键词（去掉图片相关词）
+    const cleaned = query.replace(/图片|照片|写真|壁纸|的|搜索|搜|找|查|看一下|帮我|给我|一些|几张/g, "").trim();
+    if (cleaned) return cleaned;
+  }
+
+  return null;
+}
+
 async function executeWebSearch(query: string): Promise<string> {
   const images: string[] = [];
 
@@ -229,6 +265,24 @@ export async function callAIWithContext(
 
   const system = systemPrompt || DEFAULT_SYSTEM_PROMPT;
   const context = db ? await getContextFromD1(db, userId) : await getContextFromSQLite(storage, userId);
+
+  // 直接检测图片搜索意图（不依赖 AI 工具调用）
+  const imageSearchQuery = detectImageSearch(cleanMsg);
+  if (imageSearchQuery) {
+    Logger.info(`[ai] Image search detected`, { query: imageSearchQuery });
+    const searchResults = await executeWebSearch(imageSearchQuery);
+    if (searchResults.includes("![")) {
+      // 保存上下文后直接返回图片
+      const now = Date.now();
+      context.messages.push({ role: "user", content: cleanMsg.slice(0, 500), timestamp: now });
+      context.messages.push({ role: "assistant", content: searchResults.slice(0, 500), timestamp: now });
+      if (context.messages.length > 10) context.messages = context.messages.slice(-10);
+      context.lastUpdated = now;
+      try { if (db) { await saveContextToD1(db, userId, context); } else { await saveContextToSQLite(storage, userId, context); } } catch {}
+      return searchResults;
+    }
+  }
+
   const messages = buildMessagesWithContext(system, cleanMsg, context);
 
   Logger.info(`[ai] Calling AI for ${userId}`, { provider: config.provider, model: config.model });
@@ -325,6 +379,16 @@ export async function callAI(
   }
 
   const system = systemPrompt || DEFAULT_SYSTEM_PROMPT;
+
+  // 直接检测图片搜索意图
+  const imageSearchQuery = detectImageSearch(cleanMsg);
+  if (imageSearchQuery) {
+    Logger.info(`[ai] Image search detected (no context)`, { query: imageSearchQuery });
+    const searchResults = await executeWebSearch(imageSearchQuery);
+    if (searchResults.includes("![")) {
+      return searchResults;
+    }
+  }
 
   Logger.info(`[ai] Calling AI (no context)`, { provider: config.provider, model: config.model });
 
