@@ -1,19 +1,21 @@
-// 聊天记录跨浏览器同步 - 使用 KV 存储
+// 聊天记录跨浏览器同步 - 使用 D1 存储
 
 import { json, verifyAdmin } from "../utils";
 import type { Env } from "../index";
 
 const MAX_MESSAGES = 100;
-const KV_KEY = "clawbot:chat-messages";
 
 export async function handleChatMessages(request: Request, env: Env): Promise<Response> {
   const v = await verifyAdmin(request, env);
   if (!v.ok) return json({ error: v.error }, 401);
 
   try {
+    // 确保表存在
+    await env.DB.exec(`CREATE TABLE IF NOT EXISTS chat_messages (id INTEGER PRIMARY KEY AUTOINCREMENT, role TEXT NOT NULL, text TEXT NOT NULL, created_at INTEGER NOT NULL)`);
+
     if (request.method === "GET") {
-      const raw = await env.CLAWBOT_KV.get(KV_KEY);
-      const messages = raw ? JSON.parse(raw) : [];
+      const { results } = await env.DB.prepare(`SELECT role, text, created_at FROM chat_messages ORDER BY created_at ASC LIMIT ?`).bind(MAX_MESSAGES).all();
+      const messages = (results || []).map((r: any) => ({ role: r.role, text: r.text }));
       return json({ messages });
     }
 
@@ -22,9 +24,15 @@ export async function handleChatMessages(request: Request, env: Env): Promise<Re
       if (!Array.isArray(body.messages)) {
         return json({ error: "无效的消息格式" }, 400);
       }
-      // 只保留最近 100 条
+      // 清空旧数据，插入新数据
+      await env.DB.exec(`DELETE FROM chat_messages`);
+      const now = Date.now();
       const trimmed = body.messages.slice(-MAX_MESSAGES);
-      await env.CLAWBOT_KV.put(KV_KEY, JSON.stringify(trimmed));
+      if (trimmed.length > 0) {
+        const stmt = env.DB.prepare(`INSERT INTO chat_messages (role, text, created_at) VALUES (?, ?, ?)`);
+        const batch = trimmed.map((m, i) => stmt.bind(m.role, m.text, now + i));
+        await env.DB.batch(batch);
+      }
       return json({ ok: true, count: trimmed.length });
     }
 
