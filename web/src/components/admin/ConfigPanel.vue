@@ -28,9 +28,20 @@
         <div v-if="config.aiProvider === 'cloudflare'" class="form-section">
           <h4>☁️ Cloudflare Workers AI</h4>
           <p class="form-desc">使用 Cloudflare 绑定，无需 API 地址和密钥</p>
-          <div class="field"><label>AI 模型</label><input v-model="config.aiModel" class="input" placeholder="@cf/meta/llama-3.2-3b-instruct" /></div>
-          <div class="field"><label>图片生成模型</label><input v-model="config.aiImageModel" class="input" placeholder="@cf/black-forest-labs/flux-1-schnell" /><div class="field-hint">用于"画一只猫"等图片生成指令</div></div>
-          <div class="field"><label>视频生成模型</label><input v-model="config.aiVideoModel" class="input" placeholder="bytedance/seedance-2.0-fast" /><div class="field-hint">用于"生成视频"等视频生成指令</div></div>
+          <div class="field"><label>AI 模型</label><div class="model-input-row"><input v-model="config.aiModel" class="input" placeholder="@cf/meta/llama-3.2-3b-instruct" /><button class="btn tiny secondary" @click="fetchModels('text')">获取模型</button></div></div>
+          <div class="field"><label>图片生成模型</label><div class="model-input-row"><input v-model="config.aiImageModel" class="input" placeholder="@cf/black-forest-labs/flux-1-schnell" /><button class="btn tiny secondary" @click="fetchModels('image')">获取模型</button></div><div class="field-hint">用于"画一只猫"等图片生成指令</div></div>
+          <div class="field"><label>视频生成模型</label><div class="model-input-row"><input v-model="config.aiVideoModel" class="input" placeholder="bytedance/seedance-2.0-fast" /><button class="btn tiny secondary" @click="fetchModels('video')">获取模型</button></div><div class="field-hint">用于"生成视频"等视频生成指令</div></div>
+          <div v-if="modelList.length > 0" class="model-list">
+            <div class="model-list-header">
+              <span>可用模型 ({{ modelListType }})</span>
+              <button class="btn tiny secondary" @click="modelList = []">关闭</button>
+            </div>
+            <div v-for="m in modelList" :key="m.id" class="model-item" @click="selectModel(m)">
+              <span class="model-name">{{ m.name }}</span>
+              <span class="model-id">{{ m.id }}</span>
+              <span :class="['model-tier', m.tier]">{{ m.tier === 'free' ? '免费' : '付费' }}</span>
+            </div>
+          </div>
         </div>
         <div v-else-if="config.aiProvider" class="form-section">
           <h4>{{ getCurrentProviderName() }}</h4>
@@ -219,7 +230,13 @@ function deleteProvider(id: string, event: Event) {
   removePreset(id);
 
   if (props.config.aiProvider === id) {
-    selectProvider("cloudflare");
+    // 自动填入 Agnes AI 默认配置
+    const agnesPreset = ensurePresets().find(p => p.id === "agnes");
+    if (agnesPreset) {
+      selectProvider("agnes");
+    } else {
+      selectProvider("cloudflare");
+    }
   }
   emit("save");
 }
@@ -276,6 +293,35 @@ function syncCurrentToPreset() {
   });
 }
 
+// ===== 模型获取 =====
+const modelList = ref<Array<{ id: string; name: string; type: string; tier: string; provider: string }>>([]);
+const modelListType = ref("");
+const modelListTarget = ref<"aiModel" | "aiImageModel" | "aiVideoModel">("aiModel");
+
+async function fetchModels(type: string) {
+  modelListType.value = type;
+  if (type === "text") modelListTarget.value = "aiModel";
+  else if (type === "image") modelListTarget.value = "aiImageModel";
+  else modelListTarget.value = "aiVideoModel";
+
+  try {
+    const resp = await fetch("/api/ai-models", {
+      headers: { Authorization: `Bearer ${localStorage.getItem("clawbot_auth") || ""}` },
+    });
+    const data = await resp.json();
+    if (data.models) {
+      modelList.value = data.models.filter((m: any) => m.type === type);
+    }
+  } catch (e: any) {
+    modelList.value = [];
+  }
+}
+
+function selectModel(m: any) {
+  props.config[modelListTarget.value] = m.id;
+  modelList.value = [];
+}
+
 // 监听编辑字段变化，实时同步到当前提供商的预设
 watch(
   () => [props.config.aiModel, props.config.aiImageModel, props.config.aiVideoModel, props.config.aiBaseUrl, props.config.aiApiKey, props.config.aiMaxTokens],
@@ -311,6 +357,17 @@ watch(
 .provider-delete { font-size: 12px; cursor: pointer; opacity: 0.5; transition: opacity 0.15s; }
 .provider-delete:hover { opacity: 1; }
 .provider-rename { font-size: 12px; cursor: pointer; opacity: 0.5; transition: opacity 0.15s; }
+.model-input-row { display: flex; gap: 6px; align-items: center; }
+.model-input-row .input { flex: 1; }
+.model-list { margin-top: 8px; border: 1px solid var(--border-light); border-radius: 8px; max-height: 200px; overflow-y: auto; }
+.model-list-header { display: flex; justify-content: space-between; align-items: center; padding: 6px 10px; font-size: 12px; font-weight: 600; border-bottom: 1px solid var(--border-light); }
+.model-item { display: flex; align-items: center; gap: 8px; padding: 6px 10px; cursor: pointer; transition: background 0.15s; font-size: 12px; }
+.model-item:hover { background: var(--bg-skeleton-1); }
+.model-name { font-weight: 500; flex: 1; }
+.model-id { color: var(--text-muted); font-size: 11px; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.model-tier { padding: 1px 6px; border-radius: 4px; font-size: 10px; font-weight: 600; }
+.model-tier.free { background: var(--alert-success-bg); color: var(--alert-success-text); }
+.model-tier.paid { background: var(--alert-warn-bg); color: var(--alert-warn-text); }
 .provider-rename:hover { opacity: 1; }
 .ai-form { flex: 1; min-width: 0; }
 .form-section h4 { margin: 0 0 8px; font-size: 14px; }
