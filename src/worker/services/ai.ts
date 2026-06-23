@@ -651,10 +651,10 @@ export async function submitVideoTask(
     if (typeof response === "string" && response.startsWith("http")) {
       return { taskId: `sync_${Date.now()}`, baseUrl: `cf://${videoModel}`, provider: "cloudflare", apiKey: "", model: videoModel, prompt, url: response };
     }
-    Logger.warn("[ai] Unexpected Cloudflare video response", { keys: Object.keys(response || {}) });
+    Logger.warn("[ai] Unexpected Cloudflare video response", { keys: Object.keys(response || {}), response: JSON.stringify(response).slice(0, 300) });
     return null;
   } catch (e: any) {
-    Logger.error("[ai] Cloudflare video submit failed", { error: e?.message });
+    Logger.error("[ai] Cloudflare video submit failed", { error: e?.message || String(e), stack: e?.stack?.slice(0, 200), model: videoModel });
     return null;
   }
 }
