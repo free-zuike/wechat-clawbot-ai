@@ -1454,7 +1454,7 @@ export class ILinkConnectionDO implements DurableObject {
       });
 
       Logger.info("[DO] Media broadcasted to WebSocket", { mediaType: logType });
-      await this.logGeneration(logType, prompt || "", imageData, provider || "", model || "", "success", undefined, source || "", "", keyIndex, providerName);
+      await this.logGeneration(logType, prompt || "", broadcastUrl, provider || "", model || "", "success", undefined, source || "", "", keyIndex, providerName);
       return new Response(JSON.stringify({ success: true }), {
         headers: { "Content-Type": "application/json" },
       });
