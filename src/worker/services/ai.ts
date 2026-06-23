@@ -654,7 +654,12 @@ export async function submitVideoTask(
     Logger.warn("[ai] Unexpected Cloudflare video response", { keys: Object.keys(response || {}), response: JSON.stringify(response).slice(0, 300) });
     throw new Error(`Cloudflare 视频模型返回了意外的响应格式，可能该模型在当前计划不可用`);
   } catch (e: any) {
-    Logger.error("[ai] Cloudflare video submit failed", { error: e?.message || String(e), stack: e?.stack?.slice(0, 200), model: videoModel });
+    const errMsg = e?.message || String(e);
+    Logger.error("[ai] Cloudflare video submit failed", { error: errMsg, stack: e?.stack?.slice(0, 200), model: videoModel });
+    // 检测 Cloudflare 特定错误码
+    if (errMsg.includes("2021") || errMsg.includes("Invalid User Credentials") || errMsg.includes("not available")) {
+      throw new Error(`视频生成失败：Cloudflare 免费计划不支持该视频模型 (${videoModel})，请升级计划或使用其他提供商`);
+    }
     throw e;
   }
 }

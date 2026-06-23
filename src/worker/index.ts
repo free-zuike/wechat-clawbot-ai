@@ -25,6 +25,8 @@ export interface Env {
   AI_SYSTEM_PROMPT?: string;
   AI_MODEL?: string;
   ILINK_CONNECTION: DurableObjectNamespace<ILinkConnectionDO>;
+  ACCOUNT_ID?: string;
+  CF_API_TOKEN?: string;
 }
 
 function detectImageMime(data: Uint8Array): string {

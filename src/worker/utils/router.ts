@@ -13,6 +13,7 @@ import { handleRecentMessages, handleSessions, handleStats, handleHealth } from 
 import { handleDOPoll, handleDOSend, handleDOStatus, handleDOFlush, handleDOPendingVideos, handleDOGenerationLogs } from "../routes/do";
 import { handleWebSocket } from "../routes/websocket";
 import { handleTemplates } from "../routes/templates";
+import { handleAIModels } from "../routes/models";
 import { json } from "../utils";
 import { metrics, runHealthChecks, errorTracker } from "../utils/metrics";
 import { applyRateLimit } from "../utils/security";
@@ -46,6 +47,7 @@ export class Router {
     { path: "/api/admin/generation-logs", handler: handleDOGenerationLogs, rateLimit: true, rateLimitMax: 30 },
     { path: "/api/ws", handler: handleWebSocket },
     { path: "/api/templates", handler: handleTemplates, rateLimit: true, rateLimitMax: 30 },
+    { path: "/api/ai-models", method: "GET", handler: handleAIModels, rateLimit: true, rateLimitMax: 10 },
   ];
 
   async route(request: Request, env: Env): Promise<Response> {
