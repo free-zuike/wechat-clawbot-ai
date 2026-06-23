@@ -78,14 +78,19 @@ export function tryQuickReply(text: string): string | null {
 async function executeWebSearch(query: string): Promise<string> {
   const images: string[] = [];
 
-  // 方法1: Bing 图片搜索 HTML 提取真实图片 URL
+  // 方法1: Bing 图片搜索 async API（更可靠的端点）
   try {
-    const resp = await fetch(`https://www.bing.com/images/search?q=${encodeURIComponent(query)}&form=HDRSC2&first=1`, {
-      headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" },
+    const resp = await fetch(`https://www.bing.com/images/async?q=${encodeURIComponent(query)}&first=0&mmasync=1`, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml",
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+      },
     });
     const html = await resp.text();
-    // Bing 图片搜索结果中 murl 字段是真实图片地址
-    const murlRegex = /"murl":"(https?:\/\/[^"]+)"/g;
+    Logger.info(`[ai] Bing async search`, { htmlLength: html.length, hasMurl: html.includes("murl"), sample: html.slice(0, 500) });
+    // 提取 murl（原图 URL）
+    const murlRegex = /murl&quot;:&quot;(https?:\/\/[^&]+)&quot;/g;
     let match;
     while ((match = murlRegex.exec(html)) !== null) {
       const url = match[1];
@@ -93,40 +98,72 @@ async function executeWebSearch(query: string): Promise<string> {
         images.push(url);
       }
     }
+    // 备用正则：直接匹配 murl
+    if (images.length === 0) {
+      const altRegex = /"murl":"(https?:\/\/[^"]+)"/g;
+      while ((match = altRegex.exec(html)) !== null) {
+        const url = match[1];
+        if (!images.includes(url) && images.length < 5) {
+          images.push(url);
+        }
+      }
+    }
   } catch {}
 
-  // 方法2: LoremFlickr 备用
+  // 方法2: Bing 标准搜索页
+  if (images.length === 0) {
+    try {
+      const resp = await fetch(`https://www.bing.com/images/search?q=${encodeURIComponent(query)}&form=HDRSC2&first=1`, {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+          "Accept": "text/html,application/xhtml+xml",
+          "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+        },
+      });
+      const html = await resp.text();
+      Logger.info(`[ai] Bing standard search`, { htmlLength: html.length, hasMurl: html.includes("murl"), sample: html.slice(0, 500) });
+      const murlRegex = /"murl":"(https?:\/\/[^"]+)"/g;
+      let match;
+      while ((match = murlRegex.exec(html)) !== null) {
+        const url = match[1];
+        if (!images.includes(url) && images.length < 5) {
+          images.push(url);
+        }
+      }
+    } catch {}
+  }
+
+  // 方法3: LoremFlickr 备用（过滤默认占位图）
   if (images.length === 0) {
     for (let i = 0; i < 3; i++) {
       try {
-        const resp = await fetch(`https://loremflickr.com/400/300/${encodeURIComponent(query)}?lock=${i + 1}`, {
-          method: "HEAD",
+        const resp = await fetch(`https://loremflickr.com/400/300/${encodeURIComponent(query)}?lock=${Date.now() + i}`, {
           redirect: "follow",
         });
-        if (resp.ok && resp.url && !images.includes(resp.url)) {
-          images.push(resp.url);
+        const url = resp.url;
+        if (resp.ok && url && !images.includes(url)
+          && !url.includes("defaultImage")
+          && !url.includes("noimage")
+          && !url.includes("placeholder")) {
+          images.push(url);
         }
       } catch {}
     }
   }
 
-  // 方法3: Wikipedia 缩略图
+  // 方法4: Wikipedia 缩略图
   if (images.length === 0) {
-    try {
-      const wikiResp = await fetch(`https://zh.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(query)}`);
-      if (wikiResp.ok) {
-        const data = await wikiResp.json() as any;
-        if (data.thumbnail?.source) images.push(data.thumbnail.source);
-        if (data.originalimage?.source) images.push(data.originalimage.source);
-      }
-    } catch {}
-    try {
-      const wikiResp = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(query)}`);
-      if (wikiResp.ok) {
-        const data = await wikiResp.json() as any;
-        if (data.thumbnail?.source) images.push(data.thumbnail.source);
-      }
-    } catch {}
+    for (const lang of ["zh", "en"]) {
+      try {
+        const wikiResp = await fetch(`https://${lang}.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(query)}`);
+        if (wikiResp.ok) {
+          const data = await wikiResp.json() as any;
+          if (data.thumbnail?.source) images.push(data.thumbnail.source);
+          if (data.originalimage?.source) images.push(data.originalimage.source);
+        }
+      } catch {}
+      if (images.length > 0) break;
+    }
   }
 
   if (images.length > 0) {
