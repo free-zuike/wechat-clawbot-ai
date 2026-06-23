@@ -77,35 +77,29 @@ export function tryQuickReply(text: string): string | null {
 
 // 检测用户是否在请求图片搜索
 function detectImageSearch(query: string): string | null {
-  // 图片相关关键词
-  const imagePatterns = [
-    /(.+?)(?:的|的)?图片/,
-    /(.+?)(?:的|的)?照片/,
-    /(.+?)(?:的|的)?写真/,
-    /(.+?)(?:的|的)?壁纸/,
-    /(?:搜索|搜|找|查|看|看一下|给我看|帮我找|帮我搜|帮我查)(?:一下)?(.+?)(?:的|的)?(?:图片|照片|写真)/,
-    /(?:搜|搜索|找)(.+?)(?:图片|照片)/,
-    /(?:图片|照片|写真|壁纸)(?:搜索|搜|找|查)(.+)/,
-    /(?:找|给我)(?:一些?|几张?)?(.+?)(?:的)?(?:图片|照片)/,
-    /(?:有没有|有没有|有没有)(.+?)(?:的)?(?:图片|照片)/,
-    /(?:看看|看一下|看看)(.+?)(?:的)?(?:图片|照片)/,
-  ];
-
-  for (const pattern of imagePatterns) {
-    const match = query.match(pattern);
-    if (match) {
-      const keyword = (match[1] || query).trim();
-      if (keyword && keyword.length >= 1 && keyword.length <= 20) {
-        return keyword;
-      }
-    }
+  // 排除：明确是聊天/追问的语句（不触发搜索）
+  if (/推荐|再来|更多|换|别的|其他|更多几张|再来几张|多来几张|不要/.test(query) && query.length < 10) {
+    return null;
+  }
+  // 排除：太长的消息（超过20字可能是聊天）
+  if (query.length > 20) {
+    return null;
   }
 
-  // 简单匹配：消息很短且包含图片相关词
-  if (query.length <= 15 && /图片|照片|写真|壁纸/.test(query)) {
-    // 提取人名或关键词（去掉图片相关词）
-    const cleaned = query.replace(/图片|照片|写真|壁纸|的|搜索|搜|找|查|看一下|帮我|给我|一些|几张/g, "").trim();
-    if (cleaned) return cleaned;
+  // 精确匹配：xxx的图片/照片/写真/壁纸
+  const exactMatch = query.match(/^(.+?)(?:的|的)?(?:图片|照片|写真|壁纸|美照|高清图)$/);
+  if (exactMatch) {
+    const keyword = exactMatch[1].trim();
+    if (keyword && keyword.length >= 1 && keyword.length <= 15) return keyword;
+  }
+
+  // 包含搜索意图的短句
+  if (query.length <= 12) {
+    const searchMatch = query.match(/(?:搜|搜索|找|查|看|看看|给我看|帮我找|帮我搜)(?:一下)?(.+?)(?:图片|照片|写真|的图|的照)/);
+    if (searchMatch) {
+      const keyword = searchMatch[1].trim();
+      if (keyword) return keyword;
+    }
   }
 
   return null;
@@ -116,7 +110,8 @@ async function executeWebSearch(query: string): Promise<string> {
 
   // 方法1: 360 图片搜索 JSON API（免费，无需 key，中文搜索最佳）
   try {
-    const resp = await fetch(`https://image.so.com/j?q=${encodeURIComponent(query)}&sn=5`, {
+    const offset = Math.floor(Math.random() * 20);
+    const resp = await fetch(`https://image.so.com/j?q=${encodeURIComponent(query)}&sn=5&pn=${offset}`, {
       headers: {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Accept": "application/json",
