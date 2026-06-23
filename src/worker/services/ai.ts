@@ -19,11 +19,14 @@ const DEFAULT_SYSTEM_PROMPT =
   "如果用户问的问题你不知道，就直接说不知道。不要编造信息。" +
   "回复长度控制在 200 字以内，除非用户明确要求更长。" +
   "\n\n## 工具调用\n" +
-  "当你需要搜索互联网获取最新信息时，使用以下格式：\n" +
+  "当用户请求搜索、查找图片、查询信息时，使用以下格式：\n" +
   "[SEARCH:搜索关键词]\n" +
-  "例如：用户问\"今天天气怎么样\"，你可以回复：[SEARCH:今天天气 北京]\n" +
-  "搜索结果会自动返回给你，你可以基于结果回答用户。" +
-  "不要在回复中同时包含搜索标记和回答内容，先搜索再回答。";
+  "例如：\n" +
+  "- 用户问\"刘涛的图片\"→ [SEARCH:刘涛 图片]\n" +
+  "- 用户问\"今天天气怎么样\"→ [SEARCH:今天天气]\n" +
+  "搜索结果会自动返回给你（包含图片搜索链接），" +
+  "请将搜索结果整理后直接展示给用户，不要说\"我无法搜索\"或\"我不能发送图片\"。" +
+  "你可以直接把搜索链接展示给用户点击。";
 
 // 从 API baseUrl 中提取 base 和 version，用于构建其他端点
 // 例: "https://open.bigmodel.cn/api/paas/v4/chat/completions"
@@ -74,39 +77,36 @@ export function tryQuickReply(text: string): string | null {
 
 async function executeWebSearch(query: string): Promise<string> {
   try {
-    const searchUrl = `https://lite.duckduckgo.com/lite/?q=${encodeURIComponent(query)}`;
-    const resp = await fetch(searchUrl, {
-      headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
-    });
-    const html = await resp.text();
+    const links = [
+      `Bing 图片搜索: https://www.bing.com/images/search?q=${encodeURIComponent(query)}`,
+      `Google 图片搜索: https://www.google.com/search?q=${encodeURIComponent(query)}&tbm=isch`,
+      `Pixabay 免费图片: https://pixabay.com/images/search/${encodeURIComponent(query)}/`,
+      `Unsplash 免费图片: https://unsplash.com/s/photos/${encodeURIComponent(query)}`,
+    ];
 
-    const results: string[] = [];
-    // 提取搜索结果标题和链接
-    const resultRegex = /<a[^>]+rel="nofollow"[^>]+href="([^"]+)"[^>]*>([^<]*)<\/a>/gi;
-    let match;
-    while ((match = resultRegex.exec(html)) !== null) {
-      const title = match[2].trim();
-      if (title && !match[1].includes("duckduckgo") && results.length < 5) {
-        results.push(`- ${title}: ${match[1]}`);
-      }
+    let results = `搜索 "${query}" 的图片结果：\n`;
+    for (const link of links) {
+      results += `- ${link}\n`;
     }
 
-    // 提取页面摘要
-    const snippetRegex = /<td[^>]*class="result-snippet"[^>]*>([\s\S]*?)<\/td>/gi;
-    let snippetMatch;
-    let i = 0;
-    while ((snippetMatch = snippetRegex.exec(html)) !== null && i < 5) {
-      const snippet = snippetMatch[1].replace(/<[^>]+>/g, "").trim();
-      if (snippet && results[i]) {
-        results[i] = results[i].replace(/: https?:\/\/.+$/, `: ${snippet}`);
+    // 尝试 Wikipedia 获取摘要
+    try {
+      const wikiResp = await fetch(`https://zh.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(query)}`);
+      if (wikiResp.ok) {
+        const wikiData = await wikiResp.json() as any;
+        if (wikiData.extract) {
+          results += `\n简介: ${wikiData.extract.slice(0, 200)}`;
+        }
+        if (wikiData.thumbnail?.source) {
+          results += `\n参考图片: ${wikiData.thumbnail.source}`;
+        }
       }
-      i++;
-    }
+    } catch {}
 
-    return results.length > 0 ? results.join("\n") : "未找到相关搜索结果";
+    return results;
   } catch (e: any) {
     Logger.error("[ai] Web search failed", { error: e?.message });
-    return "搜索请求失败";
+    return `搜索 "${query}" 暂无结果，请点击以下链接搜索：\nhttps://www.bing.com/images/search?q=${encodeURIComponent(query)}`;
   }
 }
 
@@ -244,7 +244,7 @@ export async function callAIWithContext(
     const searchQuery = searchMatch[1].trim();
     Logger.info(`[ai] Tool call: SEARCH`, { query: searchQuery });
     const searchResults = await executeWebSearch(searchQuery);
-    const toolPrompt = `用户问: ${cleanMsg}\n\n搜索 "${searchQuery}" 的结果:\n${searchResults}\n\n请基于以上搜索结果回答用户的问题。不要使用搜索标记。`;
+    const toolPrompt = `用户问: ${cleanMsg}\n\n搜索 "${searchQuery}" 的结果:\n${searchResults}\n\n请直接把以上搜索链接展示给用户，让用户点击查看图片。如果Wikipedia有参考图片，也可以描述图片内容。不要说你无法搜索或无法发送图片。`;
     try {
       const toolMessages = buildMessagesWithContext(system, toolPrompt, context);
       if (config.provider !== "cloudflare") {
@@ -336,7 +336,7 @@ export async function callAI(
       Logger.info(`[ai] Tool call: SEARCH`, { query: searchQuery });
       const searchResults = await executeWebSearch(searchQuery);
       // 把搜索结果喂回 AI 重新生成
-      const toolPrompt = `用户问: ${cleanMsg}\n\n搜索 "${searchQuery}" 的结果:\n${searchResults}\n\n请基于以上搜索结果回答用户的问题。不要使用搜索标记。`;
+    const toolPrompt = `用户问: ${cleanMsg}\n\n搜索 "${searchQuery}" 的结果:\n${searchResults}\n\n请直接把以上搜索链接展示给用户，让用户点击查看图片。如果Wikipedia有参考图片，也可以描述图片内容。不要说你无法搜索或无法发送图片。`;
       if (config.provider !== "cloudflare") {
         text = await callOpenAICompatible({
           baseUrl: config.baseUrl,
