@@ -168,7 +168,7 @@ export default {
                 const doStub = env.ILINK_CONNECTION.get(doId);
                 await doStub.fetch(new Request("http://localhost/broadcast-image", {
                   method: "POST",
-                  body: JSON.stringify({ error: true, message: `视频生成失败 (${provider} · ${model})`, model, provider, mediaType: "video", prompt }),
+                  body: JSON.stringify({ error: true, message: `视频生成失败 (${provider} · ${model})`, model, provider, source, mediaType: "video", prompt }),
                 }));
               }
             } catch (e: any) {
@@ -177,7 +177,7 @@ export default {
               const doStub = env.ILINK_CONNECTION.get(doId);
               await doStub.fetch(new Request("http://localhost/broadcast-image", {
                 method: "POST",
-                body: JSON.stringify({ error: true, message: `视频生成失败: ${e?.message}`, model, provider, mediaType: "video", prompt }),
+                body: JSON.stringify({ error: true, message: `视频生成失败: ${e?.message || String(e)}`, model, provider, source, mediaType: "video", prompt }),
               }));
             }
           } else {

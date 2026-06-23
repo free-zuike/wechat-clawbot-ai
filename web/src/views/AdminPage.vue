@@ -475,6 +475,8 @@ function connectWebSocket() {
       if (msg.type === "media_error") {
         if (msg.source === "chat") {
           chatMessages.value.push({ role: "b", text: `❌ ${msg.message || "生成失败"}` });
+        } else {
+          wsMessages.value.push({ type: "media_error", message: msg.message || "生成失败", source: msg.source, timestamp: new Date().toLocaleString() });
         }
       }
     } catch {}
