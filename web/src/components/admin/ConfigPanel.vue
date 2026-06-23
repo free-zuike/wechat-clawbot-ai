@@ -196,7 +196,7 @@ function selectProvider(id: string) {
   if (id === "cloudflare") {
     props.config.aiModel = preset?.model || "@cf/meta/llama-3.2-3b-instruct";
     props.config.aiImageModel = preset?.imageModel || "@cf/black-forest-labs/flux-1-schnell";
-    props.config.aiVideoModel = preset?.videoModel || "bytedance/seedance-2.0-fast";
+    props.config.aiVideoModel = preset?.videoModel || "";
     props.config.aiBaseUrl = "";
     props.config.aiApiKey = "";
     backupKeys.value = [];
