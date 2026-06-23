@@ -14,6 +14,7 @@ import { handleDOPoll, handleDOSend, handleDOStatus, handleDOFlush, handleDOPend
 import { handleWebSocket } from "../routes/websocket";
 import { handleTemplates } from "../routes/templates";
 import { handleAIModels } from "../routes/models";
+import { handleChatMessages } from "../routes/chat-messages";
 import { json } from "../utils";
 import { metrics, runHealthChecks, errorTracker } from "../utils/metrics";
 import { applyRateLimit } from "../utils/security";
@@ -48,6 +49,7 @@ export class Router {
     { path: "/api/ws", handler: handleWebSocket },
     { path: "/api/templates", handler: handleTemplates, rateLimit: true, rateLimitMax: 30 },
     { path: "/api/ai-models", method: "GET", handler: handleAIModels, rateLimit: true, rateLimitMax: 10 },
+    { path: "/api/chat-messages", handler: handleChatMessages, rateLimit: true, rateLimitMax: 30 },
   ];
 
   async route(request: Request, env: Env): Promise<Response> {

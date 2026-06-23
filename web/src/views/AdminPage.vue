@@ -200,14 +200,43 @@ const configResult = ref("");
 const configSaving = ref(false);
 
 // ===== Chat =====
-const chatMessages = ref<Array<{ role: string; text: string }>>(JSON.parse(localStorage.getItem("chatMessages") || "[]"));
+const chatMessages = ref<Array<{ role: string; text: string }>>([]);
 const chatInput = ref("");
 const chatQuoteText = ref("");
 const chatLoading = ref(false);
 
-// 聊天面板 UI 状态持久化（最多保留最近 50 条）
-watch(chatMessages, (val) => {
-  localStorage.setItem("chatMessages", JSON.stringify(val.slice(-50)));
+// 加载聊天记录（从后端 KV）
+async function loadChatMessages() {
+  try {
+    const resp = await fetch("/api/chat-messages", {
+      headers: { Authorization: `Bearer ${localStorage.getItem("clawbot_auth") || ""}` },
+    });
+    if (resp.ok) {
+      const data = await resp.json();
+      if (data.messages) chatMessages.value = data.messages;
+    }
+  } catch {}
+}
+
+// 保存聊天记录到后端 KV
+async function saveChatMessages() {
+  try {
+    await fetch("/api/chat-messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${localStorage.getItem("clawbot_auth") || ""}`,
+      },
+      body: JSON.stringify({ messages: chatMessages.value.slice(-100) }),
+    });
+  } catch {}
+}
+
+// 聊天记录自动保存到后端（防抖）
+let chatSaveTimer: number | null = null;
+watch(chatMessages, () => {
+  if (chatSaveTimer) clearTimeout(chatSaveTimer);
+  chatSaveTimer = window.setTimeout(() => saveChatMessages(), 1000);
 }, { deep: true });
 
 // ===== QR =====
@@ -511,7 +540,7 @@ onMounted(async () => {
     let loginOk = true; try { const d = await checkLogin(); if (!d.loggedIn) loginOk = false; } catch { loginOk = false; }
     if (!loginOk) { router.push("/login"); return; }
   }
-  handleRefreshStatus(); handleLoadConfig(); handleRefreshSessions(); connectWebSocket();
+  handleRefreshStatus(); handleLoadConfig(); handleRefreshSessions(); connectWebSocket(); loadChatMessages();
   async function tick() { try { await handleRefreshStatus(); } finally { refreshTimer = window.setTimeout(tick, 30000); } }
   refreshTimer = window.setTimeout(tick, 30000);
 });
