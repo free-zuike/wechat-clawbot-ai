@@ -652,10 +652,10 @@ export async function submitVideoTask(
       return { taskId: `sync_${Date.now()}`, baseUrl: `cf://${videoModel}`, provider: "cloudflare", apiKey: "", model: videoModel, prompt, url: response };
     }
     Logger.warn("[ai] Unexpected Cloudflare video response", { keys: Object.keys(response || {}), response: JSON.stringify(response).slice(0, 300) });
-    return null;
+    throw new Error(`Cloudflare 视频模型返回了意外的响应格式，可能该模型在当前计划不可用`);
   } catch (e: any) {
     Logger.error("[ai] Cloudflare video submit failed", { error: e?.message || String(e), stack: e?.stack?.slice(0, 200), model: videoModel });
-    return null;
+    throw e;
   }
 }
 
