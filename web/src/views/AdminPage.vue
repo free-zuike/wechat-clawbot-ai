@@ -117,21 +117,6 @@
         />
       </section>
 
-      <section v-if="activeSection === 'sessions'">
-        <SessionsPanel
-          :items="sessions"
-          :loading="sessionsLoading"
-          :search="sessionsSearch"
-          :page="sessionsPage"
-          :total-pages="sessionsTotalPages"
-          :total="sessionsTotal"
-          @refresh="handleRefreshSessions"
-          @prev-page="sessionsPage--; handleRefreshSessions()"
-          @next-page="sessionsPage++; handleRefreshSessions()"
-          @update:search="(v: string) => { sessionsSearch = v; sessionsPage = 1; }"
-        />
-      </section>
-
       <section v-if="activeSection === 'templates'">
         <TemplatesPanel @send="(content: string) => { activeSection = 'chat'; chatInput = content; }" />
       </section>
@@ -151,13 +136,12 @@ import { useRouter } from "vue-router";
 import {
   fetchStatus, fetchConfig, saveConfig, triggerPoll, logout, chat,
   checkLogin, debugLogin,
-  fetchSessions, fetchHealth, getQRCode, getQRCodeStatus, ApiError,
+  fetchHealth, getQRCode, getQRCodeStatus, ApiError,
 } from "../api";
 import QRCode from "qrcode";
 import StatusPanel from "../components/admin/StatusPanel.vue";
 import ConfigPanel from "../components/admin/ConfigPanel.vue";
 import ChatPanel from "../components/admin/ChatPanel.vue";
-import SessionsPanel from "../components/admin/SessionsPanel.vue";
 import TemplatesPanel from "../components/admin/TemplatesPanel.vue";
 import TaskPanel from "../components/admin/TaskPanel.vue";
 import PendingVideosPanel from "../components/admin/PendingVideosPanel.vue";
@@ -177,7 +161,6 @@ const navItems = [
   { key: "control", label: "操作面板", icon: "🎯" },
   { key: "config", label: "系统配置", icon: "⚙️" },
   { key: "chat", label: "AI 测试", icon: "🤖" },
-  { key: "sessions", label: "用户会话", icon: "💬" },
   { key: "templates", label: "消息模板", icon: "📋" },
   { key: "videos", label: "视频任务", icon: "🎬" },
   { key: "logs", label: "生成记录", icon: "📝" },
@@ -286,11 +269,6 @@ const mergedMessages = computed(() => {
   }
   return result;
 });
-
-// ===== Sessions =====
-const sessions = ref<any[]>([]); const sessionsLoading = ref(false);
-const sessionsSearch = ref(""); const sessionsPage = ref(1);
-const sessionsTotalPages = ref(1); const sessionsTotal = ref(0);
 
 // ===== Debug =====
 const debugInfo = ref(""); const debugLoading = ref(false);
@@ -516,15 +494,6 @@ async function handleDebug() {
   catch (e: any) { debugInfo.value = "错误: " + handleApiError(e, "诊断失败"); } finally { debugLoading.value = false; }
 }
 
-// ===== Sessions =====
-async function handleRefreshSessions() {
-  sessionsLoading.value = true;
-  try {
-    const data = await fetchSessions(50, sessionsPage.value, sessionsSearch.value); if (data === null) return;
-    if (data && data.sessions) { sessions.value = data.sessions; sessionsTotal.value = data.total || 0; sessionsTotalPages.value = data.totalPages || 1; if (sessionsPage.value > sessionsTotalPages.value) sessionsPage.value = sessionsTotalPages.value || 1; }
-  } catch (e: any) { if (!(e instanceof ApiError && e.isCancelled)) console.error("刷新会话失败:", e); } finally { sessionsLoading.value = false; }
-}
-
 // ===== Logout =====
 async function handleLogout() {
   if (!confirm("确认退出登录？退出后需重新扫码。")) return;
@@ -537,7 +506,7 @@ onMounted(async () => {
     let loginOk = true; try { const d = await checkLogin(); if (!d.loggedIn) loginOk = false; } catch { loginOk = false; }
     if (!loginOk) { router.push("/login"); return; }
   }
-  handleRefreshStatus(); handleLoadConfig(); handleRefreshSessions(); connectWebSocket(); loadChatMessages();
+  handleRefreshStatus(); handleLoadConfig(); connectWebSocket(); loadChatMessages();
   async function tick() { try { await handleRefreshStatus(); } finally { refreshTimer = window.setTimeout(tick, 30000); } }
   refreshTimer = window.setTimeout(tick, 30000);
 });
