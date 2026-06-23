@@ -22,11 +22,11 @@ const DEFAULT_SYSTEM_PROMPT =
   "当用户请求搜索、查找图片、查询信息时，使用以下格式：\n" +
   "[SEARCH:搜索关键词]\n" +
   "例如：\n" +
-  "- 用户问\"刘涛的图片\"→ [SEARCH:刘涛 图片]\n" +
+  "- 用户问\"刘涛的图片\"→ [SEARCH:刘涛]\n" +
   "- 用户问\"今天天气怎么样\"→ [SEARCH:今天天气]\n" +
-  "搜索结果会自动返回给你（包含图片搜索链接），" +
-  "请将搜索结果整理后直接展示给用户，不要说\"我无法搜索\"或\"我不能发送图片\"。" +
-  "你可以直接把搜索链接展示给用户点击。";
+  "搜索结果会返回实际图片，请直接展示给用户。" +
+  "你有能力发送图片，直接用搜索结果中的图片回复用户即可。" +
+  "不要说\"我无法发送图片\"或\"我没办法直接发送图片文件\"。";
 
 // 从 API baseUrl 中提取 base 和 version，用于构建其他端点
 // 例: "https://open.bigmodel.cn/api/paas/v4/chat/completions"
@@ -76,38 +76,56 @@ export function tryQuickReply(text: string): string | null {
 // ========== 联网搜索工具 ==========
 
 async function executeWebSearch(query: string): Promise<string> {
-  try {
-    const links = [
-      `Bing 图片搜索: https://www.bing.com/images/search?q=${encodeURIComponent(query)}`,
-      `Google 图片搜索: https://www.google.com/search?q=${encodeURIComponent(query)}&tbm=isch`,
-      `Pixabay 免费图片: https://pixabay.com/images/search/${encodeURIComponent(query)}/`,
-      `Unsplash 免费图片: https://unsplash.com/s/photos/${encodeURIComponent(query)}`,
-    ];
+  const images: string[] = [];
 
-    let results = `搜索 "${query}" 的图片结果：\n`;
-    for (const link of links) {
-      results += `- ${link}\n`;
-    }
-
-    // 尝试 Wikipedia 获取摘要
+  // 方法1: LoremFlickr 获取关键词图片（最多3张）
+  for (let i = 0; i < 3; i++) {
     try {
-      const wikiResp = await fetch(`https://zh.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(query)}`);
-      if (wikiResp.ok) {
-        const wikiData = await wikiResp.json() as any;
-        if (wikiData.extract) {
-          results += `\n简介: ${wikiData.extract.slice(0, 200)}`;
-        }
-        if (wikiData.thumbnail?.source) {
-          results += `\n参考图片: ${wikiData.thumbnail.source}`;
-        }
+      const resp = await fetch(`https://loremflickr.com/400/300/${encodeURIComponent(query)}?lock=${i + 1}`, {
+        method: "HEAD",
+        redirect: "follow",
+      });
+      if (resp.ok && resp.url && !images.includes(resp.url)) {
+        images.push(resp.url);
       }
     } catch {}
-
-    return results;
-  } catch (e: any) {
-    Logger.error("[ai] Web search failed", { error: e?.message });
-    return `搜索 "${query}" 暂无结果，请点击以下链接搜索：\nhttps://www.bing.com/images/search?q=${encodeURIComponent(query)}`;
   }
+
+  // 方法2: Wikipedia 缩略图
+  try {
+    const wikiResp = await fetch(`https://zh.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(query)}`);
+    if (wikiResp.ok) {
+      const data = await wikiResp.json() as any;
+      if (data.thumbnail?.source && !images.includes(data.thumbnail.source)) {
+        images.push(data.thumbnail.source);
+      }
+      if (data.originalimage?.source && !images.includes(data.originalimage.source)) {
+        images.push(data.originalimage.source);
+      }
+    }
+  } catch {}
+
+  // 方法3: 英文 Wikipedia
+  if (images.length === 0) {
+    try {
+      const wikiResp = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(query)}`);
+      if (wikiResp.ok) {
+        const data = await wikiResp.json() as any;
+        if (data.thumbnail?.source) images.push(data.thumbnail.source);
+      }
+    } catch {}
+  }
+
+  if (images.length > 0) {
+    let result = `找到 ${images.length} 张 "${query}" 的图片：\n`;
+    for (let i = 0; i < images.length; i++) {
+      result += `![${query} 图片${i + 1}](${images[i]})\n`;
+    }
+    result += `\n更多图片请搜索：https://www.bing.com/images/search?q=${encodeURIComponent(query)}`;
+    return result;
+  }
+
+  return `未找到直接图片。请搜索：https://www.bing.com/images/search?q=${encodeURIComponent(query)}`;
 }
 
 // ========== OpenAI 兼容 API 调用 ==========
@@ -244,7 +262,7 @@ export async function callAIWithContext(
     const searchQuery = searchMatch[1].trim();
     Logger.info(`[ai] Tool call: SEARCH`, { query: searchQuery });
     const searchResults = await executeWebSearch(searchQuery);
-    const toolPrompt = `用户问: ${cleanMsg}\n\n搜索 "${searchQuery}" 的结果:\n${searchResults}\n\n请直接把以上搜索链接展示给用户，让用户点击查看图片。如果Wikipedia有参考图片，也可以描述图片内容。不要说你无法搜索或无法发送图片。`;
+    const toolPrompt = `用户问: ${cleanMsg}\n\n搜索 "${searchQuery}" 的结果:\n${searchResults}\n\n请直接展示搜索结果中的图片（保持markdown图片格式 ![描述](url)）给用户看，如果有多张图都展示出来。简短介绍图片内容，不要说你无法搜索或无法发送图片。`;
     try {
       const toolMessages = buildMessagesWithContext(system, toolPrompt, context);
       if (config.provider !== "cloudflare") {
@@ -336,7 +354,7 @@ export async function callAI(
       Logger.info(`[ai] Tool call: SEARCH`, { query: searchQuery });
       const searchResults = await executeWebSearch(searchQuery);
       // 把搜索结果喂回 AI 重新生成
-    const toolPrompt = `用户问: ${cleanMsg}\n\n搜索 "${searchQuery}" 的结果:\n${searchResults}\n\n请直接把以上搜索链接展示给用户，让用户点击查看图片。如果Wikipedia有参考图片，也可以描述图片内容。不要说你无法搜索或无法发送图片。`;
+    const toolPrompt = `用户问: ${cleanMsg}\n\n搜索 "${searchQuery}" 的结果:\n${searchResults}\n\n请直接展示搜索结果中的图片（保持markdown图片格式 ![描述](url)）给用户看，如果有多张图都展示出来。简短介绍图片内容，不要说你无法搜索或无法发送图片。`;
       if (config.provider !== "cloudflare") {
         text = await callOpenAICompatible({
           baseUrl: config.baseUrl,
