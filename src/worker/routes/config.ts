@@ -81,7 +81,7 @@ function getConfigResponse(kvConfig: Record<string, unknown>) {
   if (activePreset) {
     currentModel = activePreset.model || currentModel;
     currentImageModel = activePreset.imageModel || currentImageModel;
-    currentVideoModel = activePreset.videoModel || currentVideoModel;
+    if (activePreset.videoModel !== undefined) currentVideoModel = activePreset.videoModel;
     currentBaseUrl = activePreset.baseUrl || currentBaseUrl;
     currentApiKey = activePreset.apiKey || currentApiKey;
     currentMaxTokens = activePreset.maxTokens || currentMaxTokens;
