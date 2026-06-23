@@ -52,15 +52,21 @@
         <span class="quote-content">{{ quoteText.slice(0, 80) }}{{ quoteText.length > 80 ? '...' : '' }}</span>
         <button class="quote-close" @click="$emit('clear-quote')">✕</button>
       </div>
+      <div v-if="searchImageUrl" class="ref-bar">
+        <span class="ref-icon">🖼️</span>
+        <span class="ref-content">参考图片已设置</span>
+        <button class="quote-close" @click="searchImageUrl = ''">✕</button>
+      </div>
       <div class="input-row">
         <input
           :value="input"
           @input="$emit('update:input', ($event.target as HTMLInputElement).value)"
           class="input"
-          placeholder="输入消息..."
+          placeholder="输入消息，支持 /图片 描述 生成图片..."
           :disabled="loading"
           @keyup.enter="$emit('send')"
         />
+        <button class="btn secondary small" @click="$emit('search')" title="联网搜索">🔍</button>
         <button class="btn" :disabled="loading || !input.trim()" @click="$emit('send')">
           {{ loading ? "发送中..." : "发送" }}
         </button>
@@ -73,6 +79,7 @@
 
     <div class="notice" style="margin-top: 16px">
       💬 <strong>提示：</strong>常见问候语使用本地快捷回复（零 Token 消耗），其他消息走 AI 模型。
+      <br>🔍 <strong>搜索：</strong>点击搜索按钮可联网搜索图片，搜索结果可作为以图生图的参考。
     </div>
   </div>
 </template>
@@ -87,11 +94,12 @@ defineProps<{
   quoteText?: string;
 }>();
 
-const emit = defineEmits(["send", "update:input", "edit", "resend", "quote", "clear-quote", "clear-chat", "delete-msg"]);
+const emit = defineEmits(["send", "update:input", "edit", "resend", "quote", "clear-quote", "clear-chat", "delete-msg", "search"]);
 
 const hoverIdx = ref(-1);
 const editingIdx = ref(-1);
 const editText = ref("");
+const searchImageUrl = ref("");
 
 function startEdit(idx: number, text: string) {
   editingIdx.value = idx;
@@ -217,8 +225,20 @@ function renderMessage(text: string): { isImage: boolean; html: string; text: st
   color: var(--text-muted);
   border-left: 3px solid var(--link);
 }
-.quote-icon { flex-shrink: 0; }
-.quote-content { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ref-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  margin-bottom: 6px;
+  background: rgba(34,197,94,0.1);
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--success);
+  border-left: 3px solid var(--success);
+}
+.ref-icon, .quote-icon { flex-shrink: 0; }
+.ref-content, .quote-content { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .quote-close { background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 14px; padding: 0 4px; }
 .quote-close:hover { color: var(--error); }
 .input-row { display: flex; gap: 8px; align-items: center; }
