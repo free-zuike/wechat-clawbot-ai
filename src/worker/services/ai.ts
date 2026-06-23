@@ -114,19 +114,19 @@ function detectImageSearch(query: string): string | null {
 async function executeWebSearch(query: string): Promise<string> {
   const images: string[] = [];
 
-  // 方法1: 百度图片搜索 JSON API（免费，无需 key，中文搜索最佳）
+  // 方法1: 360 图片搜索 JSON API（免费，无需 key，中文搜索最佳）
   try {
-    const resp = await fetch(`https://image.baidu.com/search/acjson?tn=resultjson_com&word=${encodeURIComponent(query)}&pn=0&rn=5`, {
+    const resp = await fetch(`https://image.so.com/j?q=${encodeURIComponent(query)}&sn=5`, {
       headers: {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Accept": "application/json",
-        "Referer": "https://image.baidu.com/",
+        "Referer": "https://image.so.com/",
       },
     });
     const data = await resp.json() as any;
-    if (data.data) {
-      for (const item of data.data) {
-        const url = item.thumbURL || item.middleURL || item.hoverURL;
+    if (data.list) {
+      for (const item of data.list) {
+        const url = item.img || item.thumb;
         if (url && !images.includes(url) && images.length < 5) {
           images.push(url);
         }
@@ -134,19 +134,26 @@ async function executeWebSearch(query: string): Promise<string> {
     }
   } catch {}
 
-  // 方法2: Wikipedia 缩略图
+  // 方法2: 百度图片搜索（备用）
   if (images.length === 0) {
-    for (const lang of ["zh", "en"]) {
-      try {
-        const wikiResp = await fetch(`https://${lang}.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(query)}`);
-        if (wikiResp.ok) {
-          const data = await wikiResp.json() as any;
-          if (data.thumbnail?.source) images.push(data.thumbnail.source);
-          if (data.originalimage?.source) images.push(data.originalimage.source);
+    try {
+      const resp = await fetch(`https://image.baidu.com/search/acjson?tn=resultjson_com&word=${encodeURIComponent(query)}&pn=0&rn=5`, {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+          "Accept": "application/json",
+          "Referer": "https://image.baidu.com/",
+        },
+      });
+      const data = await resp.json() as any;
+      if (data.data) {
+        for (const item of data.data) {
+          const url = item.thumbURL || item.middleURL || item.hoverURL;
+          if (url && !images.includes(url) && images.length < 5) {
+            images.push(url);
+          }
         }
-      } catch {}
-      if (images.length > 0) break;
-    }
+      }
+    } catch {}
   }
 
   if (images.length > 0) {
