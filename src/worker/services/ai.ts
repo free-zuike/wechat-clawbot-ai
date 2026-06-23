@@ -83,7 +83,7 @@ async function executeWebSearch(query: string): Promise<string> {
 
   // 方法1: 360 图片搜索 JSON API（免费，无需 key，中文搜索最佳）
   try {
-    const offset = Math.floor(Math.random() * 20);
+    const offset = Math.floor(Math.random() * 6) * 5;
     const resp = await fetch(`https://image.so.com/j?q=${encodeURIComponent(query)}&sn=5&pn=${offset}`, {
       headers: {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
