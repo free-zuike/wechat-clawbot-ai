@@ -410,12 +410,12 @@ async function handleWebSearch() {
       headers: { Authorization: `Bearer ${localStorage.getItem("clawbot_auth") || ""}` },
     });
     const data = await resp.json();
-    if (data.links && data.links.length > 0) {
-      const links = data.links.map((l: any) => `- [${l.name}](${l.url})`).join("\n");
-      chatMessages.value.push({ role: "b", text: `🔍 搜索 "${data.query}" 的图片：\n\n${links}\n\n${data.message || ""}` });
-    } else if (data.images && data.images.length > 0) {
-      const results = data.images.map((img: any) => `- [${img.title || "图片"}](${img.url})`).join("\n");
+    if (data.images && data.images.length > 0) {
+      const results = data.images.map((img: any) => `![${img.title || "图片"}](${img.url})`).join("\n\n");
       chatMessages.value.push({ role: "b", text: `🔍 搜索到 ${data.images.length} 张图片：\n\n${results}` });
+    } else if (data.links && data.links.length > 0) {
+      const links = data.links.map((l: any) => `- [${l.name}](${l.url})`).join("\n");
+      chatMessages.value.push({ role: "b", text: `🔍 搜索 "${data.query}"：\n\n${links}` });
     } else {
       chatMessages.value.push({ role: "b", text: `🔍 未找到相关结果` });
     }
