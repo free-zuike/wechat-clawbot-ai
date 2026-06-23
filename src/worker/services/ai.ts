@@ -311,19 +311,25 @@ export async function callAIWithContext(
     const searchQuery = searchMatch[1].trim();
     Logger.info(`[ai] Tool call: SEARCH`, { query: searchQuery });
     const searchResults = await executeWebSearch(searchQuery);
-    const toolPrompt = `用户问: ${cleanMsg}\n\n搜索 "${searchQuery}" 的结果:\n${searchResults}\n\n请直接展示搜索结果中的图片（保持markdown图片格式 ![描述](url)）给用户看，如果有多张图都展示出来。简短介绍图片内容，不要说你无法搜索或无法发送图片。`;
-    try {
-      const toolMessages = buildMessagesWithContext(system, toolPrompt, context);
-      if (config.provider !== "cloudflare") {
-        reply = await callOpenAICompatible({
-          baseUrl: config.baseUrl, apiKey: config.apiKey, model: config.model,
-          messages: toolMessages, maxTokens: config.maxTokens, thinking: config.thinking,
-        });
-      } else {
-        reply = await callCloudflareAI(aiBinding, config.model, toolMessages, config.maxTokens);
+
+    // 如果搜索直接返回了图片（markdown格式），直接展示，不再调第二次AI（避免超时）
+    if (searchResults.includes("![")) {
+      reply = searchResults;
+    } else {
+      const toolPrompt = `用户问: ${cleanMsg}\n\n搜索 "${searchQuery}" 的结果:\n${searchResults}\n\n请基于以上结果回答用户。`;
+      try {
+        const toolMessages = buildMessagesWithContext(system, toolPrompt, context);
+        if (config.provider !== "cloudflare") {
+          reply = await callOpenAICompatible({
+            baseUrl: config.baseUrl, apiKey: config.apiKey, model: config.model,
+            messages: toolMessages, maxTokens: config.maxTokens, thinking: config.thinking,
+          });
+        } else {
+          reply = await callCloudflareAI(aiBinding, config.model, toolMessages, config.maxTokens);
+        }
+      } catch (e: any) {
+        Logger.error(`[ai] Tool call AI failed`, { error: e?.message });
       }
-    } catch (e: any) {
-      Logger.error(`[ai] Tool call AI failed`, { error: e?.message });
     }
   }
 
@@ -402,24 +408,28 @@ export async function callAI(
       const searchQuery = searchMatch[1].trim();
       Logger.info(`[ai] Tool call: SEARCH`, { query: searchQuery });
       const searchResults = await executeWebSearch(searchQuery);
-      // 把搜索结果喂回 AI 重新生成
-    const toolPrompt = `用户问: ${cleanMsg}\n\n搜索 "${searchQuery}" 的结果:\n${searchResults}\n\n请直接展示搜索结果中的图片（保持markdown图片格式 ![描述](url)）给用户看，如果有多张图都展示出来。简短介绍图片内容，不要说你无法搜索或无法发送图片。`;
-      if (config.provider !== "cloudflare") {
-        text = await callOpenAICompatible({
-          baseUrl: config.baseUrl,
-          apiKey: config.apiKey,
-          model: config.model,
-          messages: [
+      // 如果搜索直接返回了图片，直接展示，避免第二次AI调用超时
+      if (searchResults.includes("![")) {
+        text = searchResults;
+      } else {
+        const toolPrompt = `用户问: ${cleanMsg}\n\n搜索 "${searchQuery}" 的结果:\n${searchResults}\n\n请基于以上结果回答用户。`;
+        if (config.provider !== "cloudflare") {
+          text = await callOpenAICompatible({
+            baseUrl: config.baseUrl,
+            apiKey: config.apiKey,
+            model: config.model,
+            messages: [
+              { role: "system", content: system },
+              { role: "user", content: toolPrompt },
+            ],
+            maxTokens: config.maxTokens,
+          });
+        } else {
+          text = await callCloudflareAI(aiBinding, config.model, [
             { role: "system", content: system },
             { role: "user", content: toolPrompt },
-          ],
-          maxTokens: config.maxTokens,
-        });
-      } else {
-        text = await callCloudflareAI(aiBinding, config.model, [
-          { role: "system", content: system },
-          { role: "user", content: toolPrompt },
-        ], config.maxTokens);
+          ], config.maxTokens);
+        }
       }
     }
 
