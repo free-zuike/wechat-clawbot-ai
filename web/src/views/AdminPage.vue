@@ -218,10 +218,10 @@ async function loadChatMessages() {
   } catch {}
 }
 
-// 保存聊天记录到后端 KV
+// 保存聊天记录到后端 D1
 async function saveChatMessages() {
   try {
-    await fetch("/api/chat-messages", {
+    const resp = await fetch("/api/chat-messages", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -229,15 +229,12 @@ async function saveChatMessages() {
       },
       body: JSON.stringify({ messages: chatMessages.value.slice(-100) }),
     });
-  } catch {}
+    if (!resp.ok) console.error("Save chat failed:", resp.status);
+  } catch (e) { console.error("Save chat error:", e); }
 }
 
-// 聊天记录自动保存到后端（防抖）
-let chatSaveTimer: number | null = null;
-watch(chatMessages, () => {
-  if (chatSaveTimer) clearTimeout(chatSaveTimer);
-  chatSaveTimer = window.setTimeout(() => saveChatMessages(), 1000);
-}, { deep: true });
+// 聊天记录自动保存到后端
+watch(chatMessages, () => { saveChatMessages(); }, { deep: true });
 
 // ===== QR =====
 const qrCode = ref(""); const qrImage = ref(""); const qrStatus = ref("");
