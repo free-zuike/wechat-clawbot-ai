@@ -78,80 +78,27 @@ export function tryQuickReply(text: string): string | null {
 async function executeWebSearch(query: string): Promise<string> {
   const images: string[] = [];
 
-  // 方法1: Bing 图片搜索 async API（更可靠的端点）
+  // 方法1: 百度图片搜索 JSON API（免费，无需 key，中文搜索最佳）
   try {
-    const resp = await fetch(`https://www.bing.com/images/async?q=${encodeURIComponent(query)}&first=0&mmasync=1`, {
+    const resp = await fetch(`https://image.baidu.com/search/acjson?tn=resultjson_com&word=${encodeURIComponent(query)}&pn=0&rn=5`, {
       headers: {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml",
-        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+        "Accept": "application/json",
+        "Referer": "https://image.baidu.com/",
       },
     });
-    const html = await resp.text();
-    Logger.info(`[ai] Bing async search`, { htmlLength: html.length, hasMurl: html.includes("murl"), sample: html.slice(0, 500) });
-    // 提取 murl（原图 URL）
-    const murlRegex = /murl&quot;:&quot;(https?:\/\/[^&]+)&quot;/g;
-    let match;
-    while ((match = murlRegex.exec(html)) !== null) {
-      const url = match[1];
-      if (!images.includes(url) && images.length < 5) {
-        images.push(url);
-      }
-    }
-    // 备用正则：直接匹配 murl
-    if (images.length === 0) {
-      const altRegex = /"murl":"(https?:\/\/[^"]+)"/g;
-      while ((match = altRegex.exec(html)) !== null) {
-        const url = match[1];
-        if (!images.includes(url) && images.length < 5) {
+    const data = await resp.json() as any;
+    if (data.data) {
+      for (const item of data.data) {
+        const url = item.thumbURL || item.middleURL || item.hoverURL;
+        if (url && !images.includes(url) && images.length < 5) {
           images.push(url);
         }
       }
     }
   } catch {}
 
-  // 方法2: Bing 标准搜索页
-  if (images.length === 0) {
-    try {
-      const resp = await fetch(`https://www.bing.com/images/search?q=${encodeURIComponent(query)}&form=HDRSC2&first=1`, {
-        headers: {
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-          "Accept": "text/html,application/xhtml+xml",
-          "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-        },
-      });
-      const html = await resp.text();
-      Logger.info(`[ai] Bing standard search`, { htmlLength: html.length, hasMurl: html.includes("murl"), sample: html.slice(0, 500) });
-      const murlRegex = /"murl":"(https?:\/\/[^"]+)"/g;
-      let match;
-      while ((match = murlRegex.exec(html)) !== null) {
-        const url = match[1];
-        if (!images.includes(url) && images.length < 5) {
-          images.push(url);
-        }
-      }
-    } catch {}
-  }
-
-  // 方法3: LoremFlickr 备用（过滤默认占位图）
-  if (images.length === 0) {
-    for (let i = 0; i < 3; i++) {
-      try {
-        const resp = await fetch(`https://loremflickr.com/400/300/${encodeURIComponent(query)}?lock=${Date.now() + i}`, {
-          redirect: "follow",
-        });
-        const url = resp.url;
-        if (resp.ok && url && !images.includes(url)
-          && !url.includes("defaultImage")
-          && !url.includes("noimage")
-          && !url.includes("placeholder")) {
-          images.push(url);
-        }
-      } catch {}
-    }
-  }
-
-  // 方法4: Wikipedia 缩略图
+  // 方法2: Wikipedia 缩略图
   if (images.length === 0) {
     for (const lang of ["zh", "en"]) {
       try {
