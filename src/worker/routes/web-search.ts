@@ -12,44 +12,49 @@ export async function handleWebSearch(request: Request, env: Env): Promise<Respo
     const query = url.searchParams.get("q");
     if (!query) return json({ error: "缺少搜索关键词" }, 400);
 
-    const type = url.searchParams.get("type") || "images"; // images | web
+    const type = url.searchParams.get("type") || "images";
 
     if (type === "images") {
-      // 使用 DuckDuckGo 图片搜索
-      const searchUrl = `https://duckduckgo.com/?q=${encodeURIComponent(query)}&iax=images&ia=images&format=json`;
+      // 使用 DuckDuckGo Lite HTML 搜索提取图片
+      const searchUrl = `https://lite.duckduckgo.com/lite/?q=${encodeURIComponent(query)}`;
       const resp = await fetch(searchUrl, {
-        headers: { "User-Agent": "Mozilla/5.0" },
+        headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
       });
-      const data = await resp.json() as any;
+      const html = await resp.text();
 
-      const images = (data?.RelatedTopics || [])
-        .filter((t: any) => t?.Image)
-        .slice(0, 10)
-        .map((t: any) => ({
-          url: t.Image,
-          title: t.Text || "",
-          source: t.FirstURL || "",
-        }));
+      const images: Array<{ url: string; title: string; source: string }> = [];
+
+      // 从搜索结果链接中提取
+      const linkRegex = /<a[^>]+rel="nofollow"[^>]+href="([^"]+)"[^>]*>([^<]*)<\/a>/gi;
+      let match;
+      while ((match = linkRegex.exec(html)) !== null) {
+        const href = match[1];
+        const title = match[2].trim();
+        if (href && title && !href.includes("duckduckgo") && images.length < 10) {
+          images.push({ url: href, title: title || query, source: "" });
+        }
+      }
 
       return json({ images, query });
     }
 
     // 文本搜索
-    const searchUrl = `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1`;
-    const resp = await fetch(searchUrl);
-    const data = await resp.json() as any;
+    const searchUrl = `https://lite.duckduckgo.com/lite/?q=${encodeURIComponent(query)}`;
+    const resp = await fetch(searchUrl, {
+      headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
+    });
+    const html = await resp.text();
 
-    const results = [];
-    if (data.AbstractText) {
-      results.push({ title: data.Heading, snippet: data.AbstractText, url: data.AbstractURL });
-    }
-    for (const t of (data.RelatedTopics || []).slice(0, 5)) {
-      if (t.Text && t.FirstURL) {
-        results.push({ title: t.Text.split(" - ")[0], snippet: t.Text, url: t.FirstURL });
+    const results: Array<{ title: string; snippet: string; url: string }> = [];
+    const resultRegex = /<a[^>]+rel="nofollow"[^>]+href="([^"]+)"[^>]*>([^<]*)<\/a>/gi;
+    let match;
+    while ((match = resultRegex.exec(html)) !== null) {
+      if (results.length < 10) {
+        results.push({ url: match[1], title: match[2].trim() || query, snippet: "" });
       }
     }
 
-    return json({ results: results.slice(0, 10), query });
+    return json({ results, query });
   } catch (e: any) {
     return json({ error: e.message }, 500);
   }
