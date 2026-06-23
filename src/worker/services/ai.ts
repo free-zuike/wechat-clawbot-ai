@@ -82,9 +82,12 @@ async function executeWebSearch(query: string): Promise<string> {
   const images: string[] = [];
 
   // 方法1: 360 图片搜索 JSON API（免费，无需 key，中文搜索最佳）
+  // 随机加修饰词获取不同图片
+  const suffixes = ["", " 写真", " 照片", " 壁纸", " 美照", " 高清", " 最新"];
+  const randomSuffix = suffixes[Math.floor(Math.random() * suffixes.length)];
+  const searchQuery = query + randomSuffix;
   try {
-    const offset = Math.floor(Math.random() * 6) * 5;
-    const resp = await fetch(`https://image.so.com/j?q=${encodeURIComponent(query)}&sn=5&pn=${offset}`, {
+    const resp = await fetch(`https://image.so.com/j?q=${encodeURIComponent(searchQuery)}&sn=5`, {
       headers: {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Accept": "application/json",
