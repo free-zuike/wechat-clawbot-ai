@@ -17,7 +17,13 @@ const DEFAULT_SYSTEM_PROMPT =
   "你的性格友好、简洁、幽默，回答要符合微信阅读习惯，段落清晰，语气亲切。" +
   "始终使用中文回答，不要使用英文。" +
   "如果用户问的问题你不知道，就直接说不知道。不要编造信息。" +
-  "回复长度控制在 200 字以内，除非用户明确要求更长。";
+  "回复长度控制在 200 字以内，除非用户明确要求更长。" +
+  "\n\n## 工具调用\n" +
+  "当你需要搜索互联网获取最新信息时，使用以下格式：\n" +
+  "[SEARCH:搜索关键词]\n" +
+  "例如：用户问\"今天天气怎么样\"，你可以回复：[SEARCH:今天天气 北京]\n" +
+  "搜索结果会自动返回给你，你可以基于结果回答用户。" +
+  "不要在回复中同时包含搜索标记和回答内容，先搜索再回答。";
 
 // 从 API baseUrl 中提取 base 和 version，用于构建其他端点
 // 例: "https://open.bigmodel.cn/api/paas/v4/chat/completions"
@@ -62,6 +68,46 @@ export function tryQuickReply(text: string): string | null {
   if (COMMANDS[clean]) return COMMANDS[clean];
   if (QUICK_REPLIES[clean]) return QUICK_REPLIES[clean];
   return null;
+}
+
+// ========== 联网搜索工具 ==========
+
+async function executeWebSearch(query: string): Promise<string> {
+  try {
+    const searchUrl = `https://lite.duckduckgo.com/lite/?q=${encodeURIComponent(query)}`;
+    const resp = await fetch(searchUrl, {
+      headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
+    });
+    const html = await resp.text();
+
+    const results: string[] = [];
+    // 提取搜索结果标题和链接
+    const resultRegex = /<a[^>]+rel="nofollow"[^>]+href="([^"]+)"[^>]*>([^<]*)<\/a>/gi;
+    let match;
+    while ((match = resultRegex.exec(html)) !== null) {
+      const title = match[2].trim();
+      if (title && !match[1].includes("duckduckgo") && results.length < 5) {
+        results.push(`- ${title}: ${match[1]}`);
+      }
+    }
+
+    // 提取页面摘要
+    const snippetRegex = /<td[^>]*class="result-snippet"[^>]*>([\s\S]*?)<\/td>/gi;
+    let snippetMatch;
+    let i = 0;
+    while ((snippetMatch = snippetRegex.exec(html)) !== null && i < 5) {
+      const snippet = snippetMatch[1].replace(/<[^>]+>/g, "").trim();
+      if (snippet && results[i]) {
+        results[i] = results[i].replace(/: https?:\/\/.+$/, `: ${snippet}`);
+      }
+      i++;
+    }
+
+    return results.length > 0 ? results.join("\n") : "未找到相关搜索结果";
+  } catch (e: any) {
+    Logger.error("[ai] Web search failed", { error: e?.message });
+    return "搜索请求失败";
+  }
 }
 
 // ========== OpenAI 兼容 API 调用 ==========
@@ -176,9 +222,31 @@ export async function callAIWithContext(
     } else {
       reply = await callCloudflareAI(aiBinding, config.model, messages, config.maxTokens);
     }
-  } catch (e: any) {
+    } catch (e: any) {
     Logger.error(`[ai] AI call failed for ${userId}`, { error: e?.message || String(e) });
     return `AI调用失败: ${e?.message || String(e)}`;
+  }
+
+  // 检查是否需要工具调用（搜索）
+  const searchMatch = reply.match(/\[SEARCH:(.+?)\]/);
+  if (searchMatch) {
+    const searchQuery = searchMatch[1].trim();
+    Logger.info(`[ai] Tool call: SEARCH`, { query: searchQuery });
+    const searchResults = await executeWebSearch(searchQuery);
+    const toolPrompt = `用户问: ${cleanMsg}\n\n搜索 "${searchQuery}" 的结果:\n${searchResults}\n\n请基于以上搜索结果回答用户的问题。不要使用搜索标记。`;
+    try {
+      const toolMessages = buildMessagesWithContext(system, toolPrompt, context);
+      if (config.provider !== "cloudflare") {
+        reply = await callOpenAICompatible({
+          baseUrl: config.baseUrl, apiKey: config.apiKey, model: config.model,
+          messages: toolMessages, maxTokens: config.maxTokens,
+        });
+      } else {
+        reply = await callCloudflareAI(aiBinding, config.model, toolMessages, config.maxTokens);
+      }
+    } catch (e: any) {
+      Logger.error(`[ai] Tool call AI failed`, { error: e?.message });
+    }
   }
 
   Logger.info(`[ai] AI reply for ${userId}`, { replyLength: reply.length, provider: config.provider });
@@ -247,6 +315,34 @@ export async function callAI(
         { role: "user", content: cleanMsg },
       ], config.maxTokens);
     }
+
+    // 检查是否需要工具调用（搜索）
+    const searchMatch = text.match(/\[SEARCH:(.+?)\]/);
+    if (searchMatch) {
+      const searchQuery = searchMatch[1].trim();
+      Logger.info(`[ai] Tool call: SEARCH`, { query: searchQuery });
+      const searchResults = await executeWebSearch(searchQuery);
+      // 把搜索结果喂回 AI 重新生成
+      const toolPrompt = `用户问: ${cleanMsg}\n\n搜索 "${searchQuery}" 的结果:\n${searchResults}\n\n请基于以上搜索结果回答用户的问题。不要使用搜索标记。`;
+      if (config.provider !== "cloudflare") {
+        text = await callOpenAICompatible({
+          baseUrl: config.baseUrl,
+          apiKey: config.apiKey,
+          model: config.model,
+          messages: [
+            { role: "system", content: system },
+            { role: "user", content: toolPrompt },
+          ],
+          maxTokens: config.maxTokens,
+        });
+      } else {
+        text = await callCloudflareAI(aiBinding, config.model, [
+          { role: "system", content: system },
+          { role: "user", content: toolPrompt },
+        ], config.maxTokens);
+      }
+    }
+
     return (text || "").slice(0, 700) || "（AI 没有返回内容）";
   } catch (e: any) {
     Logger.error(`[ai] AI call failed`, { error: e?.message || String(e) });
