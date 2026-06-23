@@ -16,17 +16,19 @@ const DEFAULT_SYSTEM_PROMPT =
   "你是爪爪（ClawBot AI），一个微信机器人助手。" +
   "你的性格友好、简洁、幽默，回答要符合微信阅读习惯，段落清晰，语气亲切。" +
   "始终使用中文回答，不要使用英文。" +
-  "如果用户问的问题你不知道，就直接说不知道。不要编造信息。" +
   "回复长度控制在 200 字以内，除非用户明确要求更长。" +
-  "\n\n## 工具调用\n" +
-  "当用户请求搜索、查找图片、查询信息时，使用以下格式：\n" +
-  "[SEARCH:搜索关键词]\n" +
-  "例如：\n" +
-  "- 用户问\"刘涛的图片\"→ [SEARCH:刘涛]\n" +
-  "- 用户问\"今天天气怎么样\"→ [SEARCH:今天天气]\n" +
-  "搜索结果会返回实际图片，请直接展示给用户。" +
-  "你有能力发送图片，直接用搜索结果中的图片回复用户即可。" +
-  "不要说\"我无法发送图片\"或\"我没办法直接发送图片文件\"。";
+  "\n\n## 图片搜索能力\n" +
+  "你有图片搜索能力。当用户请求查看图片、照片、写真、壁纸、美照时，" +
+  "你必须使用搜索工具来获取图片，而不是说"我无法发送图片"。\n" +
+  "工具调用格式：[SEARCH:关键词]\n" +
+  "规则：\n" +
+  "- 用户说"刘涛的图片"→ 你必须回复 [SEARCH:刘涛]\n" +
+  "- 用户说"搜猫咪照片"→ 你必须回复 [SEARCH:猫咪]\n" +
+  "- 用户说"给我看看风景"→ 你必须回复 [SEARCH:风景]\n" +
+  "- 用户说"刘涛照片"→ 你必须回复 [SEARCH:刘涛]\n" +
+  "- 只回复搜索标记，不要加其他文字\n" +
+  "- 如果用户只是聊天（如"推荐几张"、"再来"），不要触发搜索，正常聊天\n" +
+  "- 如果用户问的问题不是图片相关的，正常回答，不要触发搜索";
 
 // 从 API baseUrl 中提取 base 和 version，用于构建其他端点
 // 例: "https://open.bigmodel.cn/api/paas/v4/chat/completions"
@@ -74,36 +76,6 @@ export function tryQuickReply(text: string): string | null {
 }
 
 // ========== 联网搜索工具 ==========
-
-// 检测用户是否在请求图片搜索
-function detectImageSearch(query: string): string | null {
-  // 排除：明确是聊天/追问的语句（不触发搜索）
-  if (/推荐|再来|更多|换|别的|其他|更多几张|再来几张|多来几张|不要/.test(query) && query.length < 10) {
-    return null;
-  }
-  // 排除：太长的消息（超过20字可能是聊天）
-  if (query.length > 20) {
-    return null;
-  }
-
-  // 精确匹配：xxx的图片/照片/写真/壁纸
-  const exactMatch = query.match(/^(.+?)(?:的|的)?(?:图片|照片|写真|壁纸|美照|高清图)$/);
-  if (exactMatch) {
-    const keyword = exactMatch[1].trim();
-    if (keyword && keyword.length >= 1 && keyword.length <= 15) return keyword;
-  }
-
-  // 包含搜索意图的短句
-  if (query.length <= 12) {
-    const searchMatch = query.match(/(?:搜|搜索|找|查|看|看看|给我看|帮我找|帮我搜)(?:一下)?(.+?)(?:图片|照片|写真|的图|的照)/);
-    if (searchMatch) {
-      const keyword = searchMatch[1].trim();
-      if (keyword) return keyword;
-    }
-  }
-
-  return null;
-}
 
 async function executeWebSearch(query: string): Promise<string> {
   const images: string[] = [];
@@ -268,23 +240,6 @@ export async function callAIWithContext(
   const system = systemPrompt || DEFAULT_SYSTEM_PROMPT;
   const context = db ? await getContextFromD1(db, userId) : await getContextFromSQLite(storage, userId);
 
-  // 直接检测图片搜索意图（不依赖 AI 工具调用）
-  const imageSearchQuery = detectImageSearch(cleanMsg);
-  if (imageSearchQuery) {
-    Logger.info(`[ai] Image search detected`, { query: imageSearchQuery });
-    const searchResults = await executeWebSearch(imageSearchQuery);
-    if (searchResults.includes("![")) {
-      // 保存上下文后直接返回图片
-      const now = Date.now();
-      context.messages.push({ role: "user", content: cleanMsg.slice(0, 500), timestamp: now });
-      context.messages.push({ role: "assistant", content: searchResults.slice(0, 500), timestamp: now });
-      if (context.messages.length > 10) context.messages = context.messages.slice(-10);
-      context.lastUpdated = now;
-      try { if (db) { await saveContextToD1(db, userId, context); } else { await saveContextToSQLite(storage, userId, context); } } catch {}
-      return searchResults;
-    }
-  }
-
   const messages = buildMessagesWithContext(system, cleanMsg, context);
 
   Logger.info(`[ai] Calling AI for ${userId}`, { provider: config.provider, model: config.model });
@@ -381,16 +336,6 @@ export async function callAI(
   }
 
   const system = systemPrompt || DEFAULT_SYSTEM_PROMPT;
-
-  // 直接检测图片搜索意图
-  const imageSearchQuery = detectImageSearch(cleanMsg);
-  if (imageSearchQuery) {
-    Logger.info(`[ai] Image search detected (no context)`, { query: imageSearchQuery });
-    const searchResults = await executeWebSearch(imageSearchQuery);
-    if (searchResults.includes("![")) {
-      return searchResults;
-    }
-  }
 
   Logger.info(`[ai] Calling AI (no context)`, { provider: config.provider, model: config.model });
 
