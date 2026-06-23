@@ -50,8 +50,9 @@
           <span class="log-source" :class="log.source">{{ sourceLabel(log.source) }}</span>
         </div>
         <div v-if="log.error" class="log-error">❌ {{ log.error }}</div>
-        <div v-if="log.result && log.type === 'image' && log.result.startsWith('http')" class="log-preview">
-          <a :href="log.result" target="_blank"><img :src="log.result" loading="lazy" /></a>
+        <div v-if="log.result && log.type === 'image' && (log.result.startsWith('http') || log.result.startsWith('data:'))" class="log-preview">
+          <a v-if="log.result.startsWith('http')" :href="log.result" target="_blank"><img :src="log.result" loading="lazy" /></a>
+          <img v-else :src="log.result" loading="lazy" />
         </div>
         <div v-else-if="log.result && log.type === 'video' && log.result.startsWith('http')" class="log-preview">
           <video :src="log.result" controls style="max-width:400px;max-height:250px;border-radius:8px"></video>

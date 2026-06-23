@@ -136,7 +136,7 @@
         <TemplatesPanel @send="(content: string) => { activeSection = 'chat'; chatInput = content; }" />
       </section>
       <section v-if="activeSection === 'videos'">
-        <PendingVideosPanel />
+        <PendingVideosPanel :customProviders="config.aiCustomProviders" />
       </section>
       <section v-if="activeSection === 'logs'">
         <GenerationLogsPanel />

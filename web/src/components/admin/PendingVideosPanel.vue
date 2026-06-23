@@ -46,7 +46,7 @@
         <div class="task-body">
           <div class="task-prompt">{{ task.prompt || '(无描述)' }}</div>
           <div class="task-meta">
-            <span>🤖 {{ task.provider }} · {{ task.model }}</span>
+            <span>🤖 {{ resolveProviderName(task.provider) }} · {{ task.model }}</span>
             <span v-if="task.source"> · 📱 {{ task.source }}</span>
           </div>
           <div v-if="task.error_message" class="task-error">❌ {{ task.error_message }}</div>
@@ -64,6 +64,10 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted } from "vue";
 import { fetchPendingVideos, deletePendingVideo, deleteAllFailedPendingVideos, type PendingVideo } from "../../api";
+
+const props = defineProps<{
+  customProviders?: Array<{ id: string; name: string }>;
+}>();
 
 const tasks = ref<PendingVideo[]>([]);
 const loading = ref(false);
@@ -111,6 +115,13 @@ async function clearFailed() {
 
 function statusText(s: string) {
   return { queued: "⏳ 排队中", completed: "✅ 已完成", failed: "❌ 失败" }[s] || s;
+}
+
+function resolveProviderName(id: string) {
+  if (!id) return "未知";
+  if (id === "cloudflare") return "Cloudflare AI";
+  const p = (props.customProviders || []).find(x => x.id === id);
+  return p ? p.name : id;
 }
 
 function formatTime(ts: number) {
