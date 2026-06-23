@@ -335,7 +335,7 @@ async function handleLoadConfig() {
     config.version = d.version || 0;
     config.aiProvider = d.aiProvider || "cloudflare"; config.aiModel = d.aiModel || "";
     config.aiImageModel = d.aiImageModel || "@cf/black-forest-labs/flux-1-schnell";
-    config.aiVideoModel = d.aiVideoModel || "bytedance/seedance-2.0-fast";
+    config.aiVideoModel = d.aiVideoModel || "";
     config.aiBaseUrl = d.aiBaseUrl || ""; config.aiApiKey = d.aiApiKey || "";
     config.aiMaxTokens = d.aiMaxTokens || 1024;     config.aiSystemPrompt = d.aiSystemPrompt || "";
     config.aiMaxRetries = d.aiMaxRetries ?? 2;
