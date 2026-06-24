@@ -40,6 +40,7 @@ type Preset = {
   apiKey?: string;
   apiKeys?: string[];
   maxTokens?: number;
+  responseConfig?: Record<string, any>;
 };
 
 function maskKey(key: string): string {
@@ -97,6 +98,7 @@ function getConfigResponse(kvConfig: Record<string, unknown>) {
     apiKey: p.apiKey ? maskKey(p.apiKey) : "",
     apiKeys: (p.apiKeys || []).map(k => maskKey(k)),
     maxTokens: p.maxTokens || 1024,
+    responseConfig: p.responseConfig || undefined,
   }));
 
   return {
@@ -149,6 +151,7 @@ export function resolveAIConfig(kvConfig: Record<string, unknown>) {
       maxTokens: active.maxTokens || 1024,
       maxRetries,
       thinking: active.thinking || false,
+      responseConfig: active.responseConfig || {},
     };
   }
 

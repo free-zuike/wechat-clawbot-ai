@@ -49,6 +49,28 @@
           <div class="field"><label>AI 模型</label><input v-model="config.aiModel" class="input" placeholder="glm-4-flash" /></div>
           <div class="field"><label>图片生成模型</label><input v-model="config.aiImageModel" class="input" placeholder="如不支持可留空" /><div class="field-hint">用于"画一只猫"等图片生成指令</div></div>
           <div class="field"><label>视频生成模型</label><input v-model="config.aiVideoModel" class="input" placeholder="如不支持可留空" /><div class="field-hint">用于"生成视频"等视频生成指令</div></div>
+          <details class="config-details">
+            <summary style="cursor:pointer;color:#888;font-size:13px">⚙️ 响应格式配置（高级，默认自动适配）</summary>
+            <div style="margin-top:8px">
+              <div class="field-hint" style="margin-bottom:8px">配置 API 响应中的 JSON 路径，让系统自动提取图片/视频。标准 OpenAI 格式无需配置。</div>
+              <div class="field"><label>图片 URL 路径</label><input v-model="responseConfig.imageUrlPath" class="input" placeholder="data[0].url" /><div class="field-hint">从响应 JSON 提取图片 URL 的路径</div></div>
+              <div class="field"><label>图片 Base64 路径</label><input v-model="responseConfig.imageBase64Path" class="input" placeholder="data[0].b64_json" /></div>
+              <div class="field"><label>参考图参数名</label><input v-model="responseConfig.imageRefParam" class="input" placeholder="image" /></div>
+              <div class="field"><label>参考图参数位置</label>
+                <select v-model="responseConfig.imageRefLocation" class="input">
+                  <option value="extra_body">extra_body（默认）</option>
+                  <option value="top_level">顶层</option>
+                </select>
+              </div>
+              <div class="field"><label>视频任务 ID 路径</label><input v-model="responseConfig.videoSubmitIdPath" class="input" placeholder="task_id" /></div>
+              <div class="field"><label>视频提交路径</label><input v-model="responseConfig.videoSubmitPath" class="input" placeholder="/videos/generations" /></div>
+              <div class="field"><label>视频状态查询路径</label><input v-model="responseConfig.videoCheckPath" class="input" placeholder="/agnesapi?video_id={taskId}" /><div class="field-hint">用 {taskId} 占位符</div></div>
+              <div class="field"><label>视频 URL 路径</label><input v-model="responseConfig.videoCheckUrlPath" class="input" placeholder="data[0].url" /></div>
+              <div class="field"><label>视频状态路径</label><input v-model="responseConfig.videoCheckStatusPath" class="input" placeholder="status" /></div>
+              <div class="field"><label>完成状态值</label><input v-model="responseConfig.videoCheckCompleted" class="input" placeholder="SUCCESS" /></div>
+              <div class="field"><label>失败状态值</label><input v-model="responseConfig.videoCheckFailed" class="input" placeholder="FAIL" /></div>
+            </div>
+          </details>
           <div class="field"><label>API 地址</label><input v-model="config.aiBaseUrl" class="input" placeholder="https://api.example.com" /><div class="field-hint">不要加 /v1/chat/completions 后缀</div></div>
           <div class="field"><label>API 密钥</label><input v-model="config.aiApiKey" class="input" type="password" placeholder="sk-..." /></div>
           <div class="field">
@@ -121,6 +143,7 @@ interface Preset {
   apiKeys?: string[];
   maxTokens: number;
   thinking?: boolean;
+  responseConfig?: Record<string, string>;
 }
 
 interface CustomProvider {
@@ -218,10 +241,12 @@ function selectProvider(id: string) {
     props.config.aiApiKey = preset?.apiKey || "";
     backupKeys.value = [...(preset?.apiKeys || [])];
     props.config.aiMaxTokens = preset?.maxTokens || 1024;
+    responseConfig.value = { ...(preset?.responseConfig || {}) };
   }
 }
 
 const backupKeys = ref<string[]>([]);
+const responseConfig = ref<Record<string, string>>({});
 
 function addBackupKey() { backupKeys.value.push(""); }
 function removeBackupKey(idx: number) { backupKeys.value.splice(idx, 1); }
@@ -291,6 +316,11 @@ function handleSave() {
 function syncCurrentToPreset() {
   const id = props.config.aiProvider;
   if (!id) return;
+  // 过滤空值
+  const rc: Record<string, string> = {};
+  for (const [k, v] of Object.entries(responseConfig.value)) {
+    if (v && v.trim()) rc[k] = v.trim();
+  }
   upsertPreset(id, {
     model: props.config.aiModel,
     imageModel: props.config.aiImageModel || "",
@@ -300,6 +330,7 @@ function syncCurrentToPreset() {
     apiKeys: [...backupKeys.value],
     maxTokens: props.config.aiMaxTokens,
     thinking: props.config.aiThinking || false,
+    responseConfig: Object.keys(rc).length > 0 ? rc : undefined,
   });
 }
 

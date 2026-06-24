@@ -1,193 +1,252 @@
-// AI 提供商适配器 - 每个提供商的请求/响应格式定义
-// 新增提供商只需添加 adapter，不改已有代码
+// AI 提供商适配器 - 配置驱动，新增提供商只需在 UI 配置路径
+import { Logger } from "../utils/error";
 
-export interface ProviderAdapter {
-  id: string;
-  name: string;
+// JSON 路径提取工具：从对象中按路径提取值
+// "data[0].url" → obj.data[0].url
+function getByPath(obj: any, path: string): any {
+  if (!path || !obj) return undefined;
+  const parts = path.replace(/\[(\d+)\]/g, ".$1").split(".");
+  let current = obj;
+  for (const part of parts) {
+    if (current == null) return undefined;
+    current = current[part];
+  }
+  return current;
+}
 
+// ========== 提供商响应格式配置 ==========
+export interface ProviderResponseConfig {
   // 图片生成
-  image?: {
-    // 构建请求体
-    buildBody(prompt: string, model: string, size: string, refImages: string[]): any;
-    // 从响应中提取图片 URL
-    extractImageUrl(response: any): string | null;
-    // 从响应中提取 base64
-    extractImageBase64(response: any): string | null;
-  };
+  imageUrlPath?: string;      // 图片 URL 的 JSON 路径，如 "data[0].url"
+  imageBase64Path?: string;   // 图片 base64 的 JSON 路径，如 "data[0].b64_json"
+  imageRefParam?: string;     // 参考图参数名，如 "image"
+  imageRefLocation?: string;  // 参考图参数位置："top_level" 或 "extra_body"
+  imageExtraBody?: Record<string, any>;  // 额外的 extra_body 字段
 
   // 视频提交
-  video?: {
-    // 构建提交请求体
-    buildSubmitBody(prompt: string, model: string, params?: { numFrames?: number; frameRate?: number }): { url: string; body: any };
-    // 从提交响应中提取 taskId
-    extractTaskId(response: any): string | null;
-    // 从提交响应中提取 videoUrl（同步返回的情况）
-    extractVideoUrl(response: any): string | null;
-    // 构建状态查询请求
-    buildCheckRequest(taskId: string, baseUrl: string, apiKey: string): { url: string; headers?: Record<string, string> };
-    // 从状态响应中提取视频 URL
-    extractVideoFromStatus(response: any): string | null;
-    // 从状态响应中提取状态
-    extractStatus(response: any): "completed" | "processing" | "failed" | null;
+  videoSubmitIdPath?: string;    // 任务 ID 的 JSON 路径，如 "task_id"
+  videoSubmitUrlPath?: string;   // 同步视频 URL 的 JSON 路径
+  videoSubmitPath?: string;      // 视频提交 API 路径后缀（如 "/videos/generations"，空则用默认）
+  videoSubmitBody?: Record<string, any>;  // 额外的提交 body 字段
+
+  // 视频状态查询
+  videoCheckPath?: string;       // 状态查询路径模板，含 {taskId} 占位符，如 "/agnesapi?video_id={taskId}"
+  videoCheckUrlPath?: string;    // 视频 URL 的 JSON 路径
+  videoCheckStatusPath?: string; // 状态字段的 JSON 路径
+  videoCheckCompleted?: string;  // "已完成" 的状态值
+  videoCheckProcessing?: string; // "处理中" 的状态值
+  videoCheckFailed?: string;     // "失败" 的状态值
+}
+
+// ========== 通用可配置适配器 ==========
+function createGenericImageAdapter(config: ProviderResponseConfig) {
+  const imageUrlPath = config.imageUrlPath || "data[0].url";
+  const imageBase64Path = config.imageBase64Path || "data[0].b64_json";
+  const refParam = config.imageRefParam || "image";
+  const refLoc = config.imageRefLocation || "extra_body";
+
+  return {
+    buildBody(prompt: string, model: string, size: string, refImages: string[]): any {
+      const body: any = { model, prompt, size };
+      // extra_body 配置
+      if (!body.extra_body) body.extra_body = {};
+      body.extra_body.response_format = "url";
+      if (config.imageExtraBody) {
+        Object.assign(body.extra_body, config.imageExtraBody);
+      }
+      // 参考图
+      if (refImages.length > 0) {
+        if (refLoc === "extra_body") {
+          body.extra_body[refParam] = refImages;
+        } else {
+          body[refParam] = refImages.length === 1 ? refImages[0] : refImages;
+        }
+      }
+      return body;
+    },
+    extractImageUrl(response: any): string | null {
+      return getByPath(response, imageUrlPath) || null;
+    },
+    extractImageBase64(response: any): string | null {
+      return getByPath(response, imageBase64Path) || null;
+    },
   };
 }
 
-// ========== Agnes AI 适配器 ==========
-const agnesImage: ProviderAdapter["image"] = {
-  buildBody(prompt, model, size, refImages) {
+function createGenericVideoAdapter(config: ProviderResponseConfig) {
+  const submitIdPath = config.videoSubmitIdPath || "task_id";
+  const submitUrlPath = config.videoSubmitUrlPath || "data[0].url";
+  const checkPathTemplate = config.videoCheckPath || "";
+  const checkUrlPath = config.videoCheckUrlPath || "data[0].url";
+  const checkStatusPath = config.videoCheckStatusPath || "status";
+  const completedVal = config.videoCheckCompleted || "SUCCESS";
+  const processingVal = config.videoCheckProcessing || "PROCESSING";
+  const failedVal = config.videoCheckFailed || "FAIL";
+
+  return {
+    buildSubmitBody(prompt: string, model: string, params?: { numFrames?: number; frameRate?: number }) {
+      const body: any = { model, prompt };
+      if (config.videoSubmitBody) Object.assign(body, config.videoSubmitBody);
+      const pathSuffix = config.videoSubmitPath || "";
+      return { url: pathSuffix, body };
+    },
+    extractTaskId(response: any): string | null {
+      return getByPath(response, submitIdPath) || null;
+    },
+    extractVideoUrl(response: any): string | null {
+      return getByPath(response, submitUrlPath) || null;
+    },
+    buildCheckRequest(taskId: string, baseUrl: string, apiKey: string) {
+      const { base, version } = parseUrl(baseUrl);
+      let url: string;
+      if (checkPathTemplate) {
+        url = base + checkPathTemplate.replace("{taskId}", taskId);
+      } else {
+        url = `${base}/${version}/videos/${taskId}`;
+      }
+      return { url, headers: { Authorization: `Bearer ${apiKey}` } };
+    },
+    extractVideoFromStatus(response: any): string | null {
+      return getByPath(response, checkUrlPath) || null;
+    },
+    extractStatus(response: any): "completed" | "processing" | "failed" | null {
+      const val = getByPath(response, checkStatusPath);
+      if (val === completedVal || val === "completed") return "completed";
+      if (val === processingVal || val === "processing") return "processing";
+      if (val === failedVal || val === "failed") return "failed";
+      return null;
+    },
+  };
+}
+
+// ========== 预置适配器（特殊格式） ==========
+
+const agnesImage = {
+  buildBody(prompt: string, model: string, size: string, refImages: string[]) {
     const body: any = { model, prompt, size };
     body.extra_body = { response_format: "url" };
-    if (refImages.length > 0) {
-      body.extra_body.image = refImages;
-    }
+    if (refImages.length > 0) body.extra_body.image = refImages;
     return body;
   },
-  extractImageUrl(response) {
-    return response?.data?.[0]?.url || null;
-  },
-  extractImageBase64(response) {
-    return response?.data?.[0]?.b64_json || null;
-  },
+  extractImageUrl(response: any) { return response?.data?.[0]?.url || null; },
+  extractImageBase64(response: any) { return response?.data?.[0]?.b64_json || null; },
 };
 
-const agnesVideo: ProviderAdapter["video"] = {
-  buildSubmitBody(prompt, model) {
-    return { url: "", body: { model, prompt } };
-  },
-  extractTaskId(response) {
-    return response?.task_id || response?.data?.[0]?.task_id || null;
-  },
-  extractVideoUrl(response) {
-    return response?.data?.[0]?.url || null;
-  },
-  buildCheckRequest(taskId, baseUrl, apiKey) {
-    const { base } = parseUrl(baseUrl);
-    return { url: `${base}/agnesapi?video_id=${taskId}`, headers: { Authorization: `Bearer ${apiKey}` } };
-  },
-  extractVideoFromStatus(response) {
-    return response?.remixed_from_video_id?.url || response?.data?.[0]?.url || null;
-  },
-  extractStatus(response) {
-    const status = response?.status || response?.task_status;
-    if (status === "SUCCESS" || status === "completed") return "completed";
-    if (status === "PROCESSING" || status === "pending") return "processing";
-    if (status === "FAIL" || status === "failed") return "failed";
-    return null;
-  },
-};
+const zhipuImage = { ...agnesImage };
 
-// ========== 智谱 AI 适配器 ==========
-const zhipuImage: ProviderAdapter["image"] = {
-  buildBody(prompt, model, size, refImages) {
-    const body: any = { model, prompt, size };
-    body.extra_body = { response_format: "url" };
-    if (refImages.length > 0) {
-      body.extra_body.image = refImages;
-    }
-    return body;
+const zhipuVideo = {
+  buildSubmitBody(prompt: string, model: string) {
+    return { url: "/videos/generations", body: { model, prompt } };
   },
-  extractImageUrl(response) {
-    return response?.data?.[0]?.url || null;
-  },
-  extractImageBase64(response) {
-    return response?.data?.[0]?.b64_json || null;
-  },
-};
-
-const zhipuVideo: ProviderAdapter["video"] = {
-  buildSubmitBody(prompt, model) {
-    return { url: "", body: { model, prompt } };
-  },
-  extractTaskId(response) {
-    return response?.task_id || response?.id || null;
-  },
-  extractVideoUrl(response) {
-    return response?.video_result?.[0]?.url || null;
-  },
-  buildCheckRequest(taskId, baseUrl, apiKey) {
+  extractTaskId(response: any) { return response?.task_id || response?.id || null; },
+  extractVideoUrl(response: any) { return response?.video_result?.[0]?.url || null; },
+  buildCheckRequest(taskId: string, baseUrl: string, apiKey: string) {
     const { base, version } = parseUrl(baseUrl);
     return { url: `${base}/${version}/async-result/${taskId}`, headers: { Authorization: `Bearer ${apiKey}` } };
   },
-  extractVideoFromStatus(response) {
-    return response?.video_result?.[0]?.url || null;
-  },
-  extractStatus(response) {
-    const status = response?.task_status;
-    if (status === "SUCCESS") return "completed";
-    if (status === "PROCESSING") return "processing";
-    if (status === "FAIL") return "failed";
+  extractVideoFromStatus(response: any) { return response?.video_result?.[0]?.url || null; },
+  extractStatus(response: any) {
+    const s = response?.task_status;
+    if (s === "SUCCESS") return "completed";
+    if (s === "PROCESSING") return "processing";
+    if (s === "FAIL") return "failed";
     return null;
   },
 };
 
-// ========== 通用 OpenAI 兼容适器 ==========
-const openaiImage: ProviderAdapter["image"] = {
-  buildBody(prompt, model, size, refImages) {
-    const body: any = { model, prompt, size };
-    body.extra_body = { response_format: "url" };
-    if (refImages.length > 0) {
-      body.extra_body.image = refImages;
-    }
-    return body;
+const agnesVideo = {
+  buildSubmitBody(prompt: string, model: string) {
+    return { url: "", body: { model, prompt } };
   },
-  extractImageUrl(response) {
-    return response?.data?.[0]?.url || null;
+  extractTaskId(response: any) { return response?.task_id || response?.data?.[0]?.task_id || null; },
+  extractVideoUrl(response: any) { return response?.data?.[0]?.url || null; },
+  buildCheckRequest(taskId: string, baseUrl: string, apiKey: string) {
+    const { base } = parseUrl(baseUrl);
+    return { url: `${base}/agnesapi?video_id=${taskId}`, headers: { Authorization: `Bearer ${apiKey}` } };
   },
-  extractImageBase64(response) {
-    return response?.data?.[0]?.b64_json || null;
+  extractVideoFromStatus(response: any) { return response?.remixed_from_video_id?.url || response?.data?.[0]?.url || null; },
+  extractStatus(response: any) {
+    const s = response?.status || response?.task_status;
+    if (s === "SUCCESS" || s === "completed") return "completed";
+    if (s === "PROCESSING" || s === "pending") return "processing";
+    if (s === "FAIL" || s === "failed") return "failed";
+    return null;
   },
 };
 
-// ========== Cloudflare Workers AI 适配器 ==========
-const cloudflareImage: ProviderAdapter["image"] = {
-  buildBody(prompt, model, _size, _refImages) {
-    return { prompt };
-  },
-  extractImageUrl(_response) {
-    return null;
-  },
-  extractImageBase64(response) {
-    return response?.image || null;
-  },
+const cloudflareImage = {
+  buildBody(prompt: string) { return { prompt }; },
+  extractImageUrl(_r: any) { return null; },
+  extractImageBase64(response: any) { return response?.image || null; },
 };
 
 // ========== 工具函数 ==========
 function parseUrl(baseUrl: string): { base: string; version: string } {
-  // "https://api.xxx.com/v4/chat/completions" → { base: "https://api.xxx.com", version: "v4" }
   const url = baseUrl.trim().replace(/\/+$/, "");
   const versionMatch = url.match(/\/(v\d+)\//);
   const version = versionMatch ? versionMatch[1] : "v1";
-  // 移除 /v\d+/ 部分和后续路径
   const base = url.replace(/\/(v\d+)(\/.*)?$/, "");
   return { base, version };
 }
 
-// ========== 适配器注册表 ==========
-const adapters: Record<string, ProviderAdapter> = {
-  agnes: { id: "agnes", name: "Agnes AI", image: agnesImage, video: agnesVideo },
-  zhipu: { id: "zhipu", name: "智谱 AI", image: zhipuImage, video: zhipuVideo },
-  openai: { id: "openai", name: "OpenAI 兼容", image: openaiImage },
-  cloudflare: { id: "cloudflare", name: "Cloudflare Workers AI", image: cloudflareImage },
-};
-
-// 根据 baseUrl 自动检测提供商类型
 function detectProvider(baseUrl: string): string {
   if (baseUrl.includes("bigmodel.cn")) return "zhipu";
   if (baseUrl.includes("agnes-ai.com") || baseUrl.includes("agnes")) return "agnes";
-  if (baseUrl.includes("openai.com")) return "openai";
-  return "openai"; // 默认 OpenAI 兼容
+  return "generic";
 }
 
-export function getAdapter(providerId: string, baseUrl?: string): ProviderAdapter {
-  // 1. 直接按 ID 查找
-  if (adapters[providerId]) return adapters[providerId];
-  // 2. 根据 baseUrl 自动检测
+// ========== 适配器获取 ==========
+export type ProviderAdapter = {
+  id: string;
+  image?: {
+    buildBody(prompt: string, model: string, size: string, refImages: string[]): any;
+    extractImageUrl(response: any): string | null;
+    extractImageBase64(response: any): string | null;
+  };
+  video?: {
+    buildSubmitBody(prompt: string, model: string, params?: any): { url: string; body: any };
+    extractTaskId(response: any): string | null;
+    extractVideoUrl(response: any): string | null;
+    buildCheckRequest(taskId: string, baseUrl: string, apiKey: string): { url: string; headers?: Record<string, string> };
+    extractVideoFromStatus(response: any): string | null;
+    extractStatus(response: any): "completed" | "processing" | "failed" | null;
+  };
+};
+
+// 预置适配器注册表
+const builtinAdapters: Record<string, Partial<ProviderAdapter>> = {
+  agnes: { image: agnesImage, video: agnesVideo },
+  zhipu: { image: zhipuImage, video: zhipuVideo },
+  cloudflare: { image: cloudflareImage },
+};
+
+// 获取适配器：预置 > 配置 > 通用
+export function getAdapter(providerId: string, baseUrl?: string, responseConfig?: ProviderResponseConfig): ProviderAdapter {
+  // 1. 预置适配器（Agnes、智谱等特殊格式）
+  if (builtinAdapters[providerId]) {
+    return { id: providerId, ...builtinAdapters[providerId] };
+  }
+  // 2. 用户配置的响应格式（从 UI 配置读取）
+  if (responseConfig && (responseConfig.imageUrlPath || responseConfig.videoSubmitIdPath)) {
+    return {
+      id: providerId,
+      image: responseConfig.imageUrlPath ? createGenericImageAdapter(responseConfig) : undefined,
+      video: responseConfig.videoSubmitIdPath ? createGenericVideoAdapter(responseConfig) : undefined,
+    };
+  }
+  // 3. 根据 baseUrl 自动检测
   if (baseUrl) {
     const detected = detectProvider(baseUrl);
-    if (adapters[detected]) return adapters[detected];
+    if (builtinAdapters[detected]) {
+      return { id: detected, ...builtinAdapters[detected] };
+    }
   }
-  // 3. 回退到通用 OpenAI 兼容
-  return adapters.openai;
+  // 4. 通用 OpenAI 兼容
+  return {
+    id: providerId,
+    image: createGenericImageAdapter({ imageUrlPath: "data[0].url", imageBase64Path: "data[0].b64_json" }),
+    video: undefined,
+  };
 }
 
 export { parseUrl as parseApiUrl };

@@ -498,7 +498,7 @@ async function fetchImageUrl(url: string): Promise<Uint8Array | null> {
 
 // ========== 图片生成 ==========
 
-import { getAdapter, type ProviderAdapter, parseApiUrl } from "./adapters";
+import { getAdapter, type ProviderAdapter, parseApiUrl, type ProviderResponseConfig } from "./adapters";
 
 export async function generateImage(
   aiBinding: any,
@@ -512,13 +512,14 @@ export async function generateImage(
   allKeys?: string[],
   maxRetries?: number,
   imageUrls?: string[],
+  responseConfig?: ProviderResponseConfig,
 ): Promise<{ data: Uint8Array | string | null; keyIndex: number }> {
   const imageModel = model || DEFAULT_IMAGE_MODEL;
   const imageSize = size || DEFAULT_IMAGE_SIZE;
   const keys = (allKeys && allKeys.length > 0) ? allKeys : (apiKey ? [apiKey] : []);
   const retries = maxRetries ?? 2;
   const refImages = imageUrls && imageUrls.length > 0 ? imageUrls : (imageUrl ? [imageUrl] : []);
-  const adapter = getAdapter(provider || "openai", baseUrl);
+  const adapter = getAdapter(provider || "openai", baseUrl, responseConfig);
   Logger.info("[ai] Generating image", { prompt: prompt.slice(0, 80), model: imageModel, adapter: adapter.id, refImageCount: refImages.length, size: imageSize, keyCount: keys.length });
 
   if (provider && provider !== "cloudflare" && baseUrl && keys.length > 0 && adapter.image) {
