@@ -1993,14 +1993,17 @@ export class ILinkConnectionDO implements DurableObject {
                 try {
                   const searchKeywords = mediaPrompt.replace(/搜索|搜|查找|找|的图|的照片|照片|生成图片|生成|图片/g, "").trim();
                   if (searchKeywords) {
-                    const searchResp = await fetch(`https://image.so.com/j?q=${encodeURIComponent(searchKeywords)}&sn=3`, {
+                    const searchResp = await fetch(`https://image.so.com/j?q=${encodeURIComponent(searchKeywords)}&sn=5`, {
                       headers: { "User-Agent": "Mozilla/5.0", "Accept": "application/json", "Referer": "https://image.so.com/" },
                     });
                     const searchData = await searchResp.json() as any;
                     if (searchData.list && searchData.list.length > 0) {
-                      const searchImages = searchData.list.filter((item: any) => item.img).map((item: any) => item.img).slice(0, 3);
-                      imageUrl = searchImages[0];
-                      Logger.info("[DO] Found reference images via search for generation", { keyword: searchKeywords, count: searchImages.length });
+                      const validItems = searchData.list.filter((item: any) => item.img);
+                      const randomItem = validItems[Math.floor(Math.random() * Math.min(validItems.length, 5))];
+                      if (randomItem) {
+                        imageUrl = randomItem.img;
+                        Logger.info("[DO] Found reference image via search for generation", { keyword: searchKeywords });
+                      }
                     }
                   }
                 } catch {}

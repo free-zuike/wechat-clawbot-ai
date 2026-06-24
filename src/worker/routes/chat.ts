@@ -125,7 +125,7 @@ export async function handleChat(request: Request, env: Env): Promise<Response> 
           try {
             const searchKeywords = prompt.replace(/搜索|搜|查找|找|的图|的照片|照片|生成图片|生成|图片/g, "").trim();
             if (searchKeywords) {
-              const searchResp = await fetch(`https://image.so.com/j?q=${encodeURIComponent(searchKeywords)}&sn=3`, {
+              const searchResp = await fetch(`https://image.so.com/j?q=${encodeURIComponent(searchKeywords)}&sn=5`, {
                 headers: {
                   "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
                   "Accept": "application/json",
@@ -134,10 +134,15 @@ export async function handleChat(request: Request, env: Env): Promise<Response> 
               });
               const searchData = await searchResp.json() as any;
               if (searchData.list && searchData.list.length > 0) {
-                imageUrls = searchData.list.filter((item: any) => item.img).map((item: any) => item.img).slice(0, 3);
-                imageUrl = imageUrls[0];
-                finalPrompt = searchKeywords;
-                Logger.info(`[chat][${requestId}] Found reference images for generation`, { count: imageUrls.length, prompt: finalPrompt });
+                // 随机选一张图作为参考（避免每次都用第一张）
+                const validItems = searchData.list.filter((item: any) => item.img);
+                const randomItem = validItems[Math.floor(Math.random() * Math.min(validItems.length, 5))];
+                if (randomItem) {
+                  imageUrl = randomItem.img;
+                  imageUrls = [imageUrl];
+                  finalPrompt = `基于参考图，${searchKeywords}风格`;
+                  Logger.info(`[chat][${requestId}] Found reference image for generation`, { prompt: finalPrompt });
+                }
               }
             }
           } catch (e: any) {
