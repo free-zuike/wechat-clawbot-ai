@@ -496,6 +496,50 @@ async function fetchImageUrl(url: string): Promise<Uint8Array | null> {
   return null;
 }
 
+// ========== 提供商能力适配器 ==========
+
+export type ProviderCapabilities = {
+  img2img?: boolean;
+  imageParam?: string;
+  imageLocation?: string;
+  urlOutput?: boolean;
+  urlOutputLocation?: string;
+};
+
+function buildImageRequestBody(
+  prompt: string,
+  model: string,
+  size: string,
+  refImages: string[],
+  caps: ProviderCapabilities = {},
+): any {
+  const body: any = { model, prompt, size };
+  const imageParam = caps.imageParam || "image";
+  const imageLoc = caps.imageLocation || "extra_body";
+  const urlLoc = caps.urlOutputLocation || "extra_body";
+
+  if (caps.urlOutput !== false) {
+    if (urlLoc === "extra_body") {
+      body.extra_body = { response_format: "url" };
+    } else {
+      body.response_format = "url";
+    }
+  }
+
+  if (refImages.length > 0 && caps.img2img !== false) {
+    if (imageLoc === "extra_body") {
+      if (!body.extra_body) body.extra_body = {};
+      body.extra_body[imageParam] = refImages;
+    } else {
+      body[imageParam] = refImages.length === 1 ? refImages[0] : refImages;
+    }
+  }
+
+  return body;
+}
+
+// ========== 图片生成 ==========
+
 export async function generateImage(
   aiBinding: any,
   prompt: string,
@@ -508,6 +552,7 @@ export async function generateImage(
   allKeys?: string[],
   maxRetries?: number,
   imageUrls?: string[],
+  caps?: ProviderCapabilities,
 ): Promise<{ data: Uint8Array | string | null; keyIndex: number }> {
   const imageModel = model || DEFAULT_IMAGE_MODEL;
   const imageSize = size || DEFAULT_IMAGE_SIZE;
@@ -522,19 +567,7 @@ export async function generateImage(
       try {
         const { base, version } = parseApiUrl(baseUrl);
         const url = `${base}/${version}/images/generations`;
-        const body: any = {
-          model: imageModel,
-          prompt,
-          size: imageSize,
-        };
-        if (refImages.length > 0) {
-          body.extra_body = {
-            image: refImages,
-            response_format: "url",
-          };
-        } else {
-          body.extra_body = { response_format: "url" };
-        }
+        const body = buildImageRequestBody(prompt, imageModel, imageSize, refImages, caps || {});
         const resp = await fetch(url, {
           method: "POST",
           headers: { "Content-Type": "application/json", "Authorization": `Bearer ${currentKey}` },
