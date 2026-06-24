@@ -16,20 +16,8 @@ const DEFAULT_SYSTEM_PROMPT =
   "你是爪爪（ClawBot AI），一个微信机器人助手。" +
   "你的性格友好、简洁、幽默，回答要符合微信阅读习惯，段落清晰，语气亲切。" +
   "始终使用中文回答，不要使用英文。" +
-  "回复长度控制在 200 字以内，除非用户明确要求更长。" +
-  "\n\n## 图片搜索能力\n" +
-  "你有图片搜索能力。当用户请求查看图片、照片、写真、壁纸、美照时，" +
-  "你必须使用搜索工具来获取图片，而不是说我无法发送图片。\n" +
-  "工具调用格式：[SEARCH:关键词]\n" +
-  "规则：\n" +
-  "- 用户说刘涛的图片或刘涛照片→ 回复 [SEARCH:刘涛]\n" +
-  "- 用户说搜猫咪照片→ 回复 [SEARCH:猫咪]\n" +
-  "- 用户说给我看看风景→ 回复 [SEARCH:风景]\n" +
-  "- 用户说推荐几张、再来、换一批、更多、再找几张 → 根据上文最近一次搜索的关键词再次搜索\n" +
-  "  例如：上文搜了刘涛，用户说推荐几张 → 回复 [SEARCH:刘涛]\n" +
-  "  例如：上文搜了猫咪，用户说再来 → 回复 [SEARCH:猫咪]\n" +
-  "- 只回复搜索标记，不要加其他文字\n" +
-  "- 如果用户问的问题完全和图片无关，正常回答，不要触发搜索";
+  "如果用户问的问题你不知道，就直接说不知道。不要编造信息。" +
+  "回复长度控制在 200 字以内，除非用户明确要求更长。";
 
 // 从 API baseUrl 中提取 base 和 version，用于构建其他端点
 // 例: "https://open.bigmodel.cn/api/paas/v4/chat/completions"
@@ -74,68 +62,6 @@ export function tryQuickReply(text: string): string | null {
   if (COMMANDS[clean]) return COMMANDS[clean];
   if (QUICK_REPLIES[clean]) return QUICK_REPLIES[clean];
   return null;
-}
-
-// ========== 联网搜索工具 ==========
-
-async function executeWebSearch(query: string): Promise<string> {
-  const images: string[] = [];
-
-  // 方法1: 360 图片搜索 JSON API（免费，无需 key，中文搜索最佳）
-  // 随机加修饰词获取不同图片
-  const suffixes = ["", " 写真", " 照片", " 壁纸", " 美照", " 高清", " 最新"];
-  const randomSuffix = suffixes[Math.floor(Math.random() * suffixes.length)];
-  const searchQuery = query + randomSuffix;
-  try {
-    const resp = await fetch(`https://image.so.com/j?q=${encodeURIComponent(searchQuery)}&sn=5`, {
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "application/json",
-        "Referer": "https://image.so.com/",
-      },
-    });
-    const data = await resp.json() as any;
-    if (data.list) {
-      for (const item of data.list) {
-        const url = item.img || item.thumb;
-        if (url && !images.includes(url) && images.length < 5) {
-          images.push(url);
-        }
-      }
-    }
-  } catch {}
-
-  // 方法2: 百度图片搜索（备用）
-  if (images.length === 0) {
-    try {
-      const resp = await fetch(`https://image.baidu.com/search/acjson?tn=resultjson_com&word=${encodeURIComponent(query)}&pn=0&rn=5`, {
-        headers: {
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-          "Accept": "application/json",
-          "Referer": "https://image.baidu.com/",
-        },
-      });
-      const data = await resp.json() as any;
-      if (data.data) {
-        for (const item of data.data) {
-          const url = item.thumbURL || item.middleURL || item.hoverURL;
-          if (url && !images.includes(url) && images.length < 5) {
-            images.push(url);
-          }
-        }
-      }
-    } catch {}
-  }
-
-  if (images.length > 0) {
-    let result = `找到 ${images.length} 张 "${query}" 的图片：\n`;
-    for (let i = 0; i < images.length; i++) {
-      result += `![${query} 图片${i + 1}](${images[i]})\n`;
-    }
-    return result;
-  }
-
-  return `未找到图片，请点击搜索：https://www.bing.com/images/search?q=${encodeURIComponent(query)}`;
 }
 
 // ========== OpenAI 兼容 API 调用 ==========
@@ -267,34 +193,6 @@ export async function callAIWithContext(
     return `AI调用失败: ${e?.message || String(e)}`;
   }
 
-  // 检查是否需要工具调用（搜索）
-  const searchMatch = reply.match(/\[SEARCH:(.+?)\]/);
-  if (searchMatch) {
-    const searchQuery = searchMatch[1].trim();
-    Logger.info(`[ai] Tool call: SEARCH`, { query: searchQuery });
-    const searchResults = await executeWebSearch(searchQuery);
-
-    // 如果搜索直接返回了图片（markdown格式），直接展示，不再调第二次AI（避免超时）
-    if (searchResults.includes("![")) {
-      reply = searchResults;
-    } else {
-      const toolPrompt = `用户问: ${cleanMsg}\n\n搜索 "${searchQuery}" 的结果:\n${searchResults}\n\n请基于以上结果回答用户。`;
-      try {
-        const toolMessages = buildMessagesWithContext(system, toolPrompt, context);
-        if (config.provider !== "cloudflare") {
-          reply = await callOpenAICompatible({
-            baseUrl: config.baseUrl, apiKey: config.apiKey, model: config.model,
-            messages: toolMessages, maxTokens: config.maxTokens, thinking: config.thinking,
-          });
-        } else {
-          reply = await callCloudflareAI(aiBinding, config.model, toolMessages, config.maxTokens);
-        }
-      } catch (e: any) {
-        Logger.error(`[ai] Tool call AI failed`, { error: e?.message });
-      }
-    }
-  }
-
   Logger.info(`[ai] AI reply for ${userId}`, { replyLength: reply.length, provider: config.provider });
 
   // 始终保存上下文
@@ -362,37 +260,6 @@ export async function callAI(
         { role: "system", content: system },
         { role: "user", content: cleanMsg },
       ], config.maxTokens);
-    }
-
-    // 检查是否需要工具调用（搜索）
-    const searchMatch = text.match(/\[SEARCH:(.+?)\]/);
-    if (searchMatch) {
-      const searchQuery = searchMatch[1].trim();
-      Logger.info(`[ai] Tool call: SEARCH`, { query: searchQuery });
-      const searchResults = await executeWebSearch(searchQuery);
-      // 如果搜索直接返回了图片，直接展示，避免第二次AI调用超时
-      if (searchResults.includes("![")) {
-        text = searchResults;
-      } else {
-        const toolPrompt = `用户问: ${cleanMsg}\n\n搜索 "${searchQuery}" 的结果:\n${searchResults}\n\n请基于以上结果回答用户。`;
-        if (config.provider !== "cloudflare") {
-          text = await callOpenAICompatible({
-            baseUrl: config.baseUrl,
-            apiKey: config.apiKey,
-            model: config.model,
-            messages: [
-              { role: "system", content: system },
-              { role: "user", content: toolPrompt },
-            ],
-            maxTokens: config.maxTokens,
-          });
-        } else {
-          text = await callCloudflareAI(aiBinding, config.model, [
-            { role: "system", content: system },
-            { role: "user", content: toolPrompt },
-          ], config.maxTokens);
-        }
-      }
     }
 
     return (text || "").slice(0, 700) || "（AI 没有返回内容）";

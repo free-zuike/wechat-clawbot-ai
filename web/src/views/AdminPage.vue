@@ -114,7 +114,6 @@
           @clear-quote="chatQuoteText = ''"
           @clear-chat="chatMessages = []"
           @delete-msg="(idx: number) => chatMessages.splice(idx, 1)"
-          @search="handleWebSearch"
         />
       </section>
 
@@ -395,32 +394,6 @@ async function handleSendChat() {
   } catch (e: any) {
     if (e instanceof ApiError && e.isCancelled) { chatLoading.value = false; return; }
     chatMessages.value.push({ role: "b", text: "错误: " + handleApiError(e, "AI 回复失败") });
-  } finally { chatLoading.value = false; }
-}
-
-// ===== 联网搜索 =====
-async function handleWebSearch() {
-  const query = chatInput.value.trim();
-  if (!query) { chatInput.value = "搜索"; }
-  const q = query || "猫咪图片";
-  chatMessages.value.push({ role: "u", text: `🔍 搜索: ${q}` });
-  chatLoading.value = true;
-  try {
-    const resp = await fetch(`/api/web-search?q=${encodeURIComponent(q)}&type=images`, {
-      headers: { Authorization: `Bearer ${localStorage.getItem("clawbot_auth") || ""}` },
-    });
-    const data = await resp.json();
-    if (data.images && data.images.length > 0) {
-      const results = data.images.map((img: any) => `![${img.title || "图片"}](${img.url})`).join("\n\n");
-      chatMessages.value.push({ role: "b", text: `🔍 搜索到 ${data.images.length} 张图片：\n\n${results}` });
-    } else if (data.links && data.links.length > 0) {
-      const links = data.links.map((l: any) => `- [${l.name}](${l.url})`).join("\n");
-      chatMessages.value.push({ role: "b", text: `🔍 搜索 "${data.query}"：\n\n${links}` });
-    } else {
-      chatMessages.value.push({ role: "b", text: `🔍 未找到相关结果` });
-    }
-  } catch (e: any) {
-    chatMessages.value.push({ role: "b", text: "搜索失败: " + (e.message || "未知错误") });
   } finally { chatLoading.value = false; }
 }
 

@@ -66,7 +66,6 @@
           :disabled="loading"
           @keyup.enter="$emit('send')"
         />
-        <button class="btn secondary small" @click="$emit('search')" title="联网搜索">🔍</button>
         <button class="btn" :disabled="loading || !input.trim()" @click="$emit('send')">
           {{ loading ? "发送中..." : "发送" }}
         </button>
@@ -79,7 +78,6 @@
 
     <div class="notice" style="margin-top: 16px">
       💬 <strong>提示：</strong>常见问候语使用本地快捷回复（零 Token 消耗），其他消息走 AI 模型。
-      <br>🔍 <strong>搜索：</strong>点击搜索按钮可联网搜索图片，搜索结果可作为以图生图的参考。
     </div>
   </div>
 </template>
