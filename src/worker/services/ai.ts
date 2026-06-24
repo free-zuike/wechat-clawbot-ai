@@ -496,34 +496,93 @@ async function fetchImageUrl(url: string): Promise<Uint8Array | null> {
   return null;
 }
 
-// ========== 提供商能力适配器 ==========
+// ========== 图片生成 ==========
 
-export type ProviderCapabilities = {
-  img2img?: boolean;
-  imageParam?: string;
-  imageLocation?: string;
-  urlOutput?: boolean;
-  urlOutputLocation?: string;
-};
+import { getAdapter, type ProviderAdapter, parseApiUrl } from "./adapters";
 
-function buildImageRequestBody(
+export async function generateImage(
+  aiBinding: any,
   prompt: string,
-  model: string,
-  size: string,
-  refImages: string[],
-  caps: ProviderCapabilities = {},
-): any {
-  const body: any = { model, prompt, size };
-  const imageParam = caps.imageParam || "image";
-  const imageLoc = caps.imageLocation || "extra_body";
-  const urlLoc = caps.urlOutputLocation || "extra_body";
+  model?: string,
+  provider?: string,
+  baseUrl?: string,
+  apiKey?: string,
+  imageUrl?: string,
+  size?: string,
+  allKeys?: string[],
+  maxRetries?: number,
+  imageUrls?: string[],
+): Promise<{ data: Uint8Array | string | null; keyIndex: number }> {
+  const imageModel = model || DEFAULT_IMAGE_MODEL;
+  const imageSize = size || DEFAULT_IMAGE_SIZE;
+  const keys = (allKeys && allKeys.length > 0) ? allKeys : (apiKey ? [apiKey] : []);
+  const retries = maxRetries ?? 2;
+  const refImages = imageUrls && imageUrls.length > 0 ? imageUrls : (imageUrl ? [imageUrl] : []);
+  const adapter = getAdapter(provider || "openai", baseUrl);
+  Logger.info("[ai] Generating image", { prompt: prompt.slice(0, 80), model: imageModel, adapter: adapter.id, refImageCount: refImages.length, size: imageSize, keyCount: keys.length });
 
-  if (caps.urlOutput !== false) {
-    if (urlLoc === "extra_body") {
-      body.extra_body = { response_format: "url" };
-    } else {
-      body.response_format = "url";
+  if (provider && provider !== "cloudflare" && baseUrl && keys.length > 0 && adapter.image) {
+    for (let attempt = 0; attempt <= retries && attempt < keys.length; attempt++) {
+      const currentKey = keys[attempt] || keys[0];
+      try {
+        const { base, version } = parseApiUrl(baseUrl);
+        const url = `${base}/${version}/images/generations`;
+        const body = adapter.image.buildBody(prompt, imageModel, imageSize, refImages);
+        const resp = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${currentKey}` },
+          body: JSON.stringify(body),
+        });
+        if (!resp.ok) {
+          const errBody = await resp.text().catch(() => "");
+          Logger.error("[ai] Image API error", { status: resp.status, body: errBody.slice(0, 200), url, attempt });
+          if (attempt < retries && attempt < keys.length - 1) continue;
+          let errMsg = `图片生成失败 (HTTP ${resp.status})`;
+          try {
+            const parsed = JSON.parse(errBody);
+            errMsg = parsed?.error?.message || errMsg;
+          } catch { errMsg = errBody.slice(0, 100) || errMsg; }
+          throw new Error(errMsg);
+        }
+        const data = await resp.json() as any;
+        // 用适配器提取图片
+        const imageUrl = adapter.image.extractImageUrl(data);
+        if (imageUrl) return { data: imageUrl, keyIndex: attempt };
+        const base64 = adapter.image.extractImageBase64(data);
+        if (base64) {
+          const binary = atob(base64);
+          const bytes = new Uint8Array(binary.length);
+          for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+          return { data: bytes, keyIndex: attempt };
+        }
+        Logger.warn("[ai] Unexpected image response", { keys: Object.keys(data || {}), dataKeys: data?.data ? Object.keys(data.data) : [] });
+        return { data: null, keyIndex: attempt };
+      } catch (e: any) {
+        Logger.error("[ai] Image generation failed", { error: e?.message, attempt });
+        if (attempt === Math.min(retries, keys.length - 1)) return { data: null, keyIndex: attempt };
+      }
     }
+    return { data: null, keyIndex: 0 };
+  }
+
+  // Cloudflare Workers AI（无 baseUrl）
+  if (!aiBinding) {
+    return { data: null, keyIndex: 0 };
+  }
+
+  try {
+    const cfAdapter = getAdapter("cloudflare");
+    const response = await aiBinding.run(imageModel, { prompt });
+    Logger.info("[ai] Cloudflare AI response", { type: typeof response, constructor: response?.constructor?.name, keys: Object.keys(response || {}).slice(0, 10) });
+    const extracted = await extractImageFromAny(response);
+    if (extracted) return { data: extracted, keyIndex: 0 };
+    Logger.warn("[ai] Could not extract image from response", { response: JSON.stringify(response).slice(0, 300) });
+    return { data: null, keyIndex: 0 };
+  } catch (e: any) {
+    Logger.error("[ai] Image generation failed", { error: e?.message, model: imageModel, prompt: prompt.slice(0, 50) });
+    return { data: null, keyIndex: 0 };
+  }
+}
   }
 
   if (refImages.length > 0 && caps.img2img !== false) {

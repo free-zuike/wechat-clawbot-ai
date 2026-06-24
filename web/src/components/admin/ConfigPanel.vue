@@ -49,28 +49,6 @@
           <div class="field"><label>AI 模型</label><input v-model="config.aiModel" class="input" placeholder="glm-4-flash" /></div>
           <div class="field"><label>图片生成模型</label><input v-model="config.aiImageModel" class="input" placeholder="如不支持可留空" /><div class="field-hint">用于"画一只猫"等图片生成指令</div></div>
           <div class="field"><label>视频生成模型</label><input v-model="config.aiVideoModel" class="input" placeholder="如不支持可留空" /><div class="field-hint">用于"生成视频"等视频生成指令</div></div>
-          <div class="field"><label>图片模型能力</label>
-            <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:4px">
-              <label style="display:flex;align-items:center;gap:4px;cursor:pointer">
-                <input type="checkbox" v-model="currentCapabilities.img2img" /> 图生图
-              </label>
-              <label style="display:flex;align-items:center;gap:4px;cursor:pointer">
-                <input type="checkbox" v-model="currentCapabilities.urlOutput" /> URL 输出
-              </label>
-            </div>
-            <div v-if="currentCapabilities.img2img" style="display:flex;gap:12px;margin-top:8px">
-              <div class="field" style="margin:0"><label style="font-size:12px">图片参数位置</label>
-                <select v-model="currentCapabilities.imageLocation" class="input" style="padding:4px 8px">
-                  <option value="extra_body">extra_body（默认）</option>
-                  <option value="top_level">顶层</option>
-                </select>
-              </div>
-              <div class="field" style="margin:0"><label style="font-size:12px">图片参数名</label>
-                <input v-model="currentCapabilities.imageParam" class="input" placeholder="image" style="padding:4px 8px" />
-              </div>
-            </div>
-            <div class="field-hint">配置图片模型的 API 能力，适配不同提供商的请求格式</div>
-          </div>
           <div class="field"><label>API 地址</label><input v-model="config.aiBaseUrl" class="input" placeholder="https://api.example.com" /><div class="field-hint">不要加 /v1/chat/completions 后缀</div></div>
           <div class="field"><label>API 密钥</label><input v-model="config.aiApiKey" class="input" type="password" placeholder="sk-..." /></div>
           <div class="field">
@@ -143,13 +121,6 @@ interface Preset {
   apiKeys?: string[];
   maxTokens: number;
   thinking?: boolean;
-  capabilities?: {
-    img2img?: boolean;
-    imageParam?: string;
-    imageLocation?: string;
-    urlOutput?: boolean;
-    urlOutputLocation?: string;
-  };
 }
 
 interface CustomProvider {
@@ -247,12 +218,10 @@ function selectProvider(id: string) {
     props.config.aiApiKey = preset?.apiKey || "";
     backupKeys.value = [...(preset?.apiKeys || [])];
     props.config.aiMaxTokens = preset?.maxTokens || 1024;
-    currentCapabilities.value = { img2img: false, imageParam: "image", imageLocation: "extra_body", urlOutput: true, urlOutputLocation: "extra_body", ...(preset?.capabilities || {}) };
   }
 }
 
 const backupKeys = ref<string[]>([]);
-const currentCapabilities = ref<{ img2img?: boolean; imageParam?: string; imageLocation?: string; urlOutput?: boolean; urlOutputLocation?: string }>({ img2img: false, imageParam: "image", imageLocation: "extra_body", urlOutput: true, urlOutputLocation: "extra_body" });
 
 function addBackupKey() { backupKeys.value.push(""); }
 function removeBackupKey(idx: number) { backupKeys.value.splice(idx, 1); }
@@ -331,7 +300,6 @@ function syncCurrentToPreset() {
     apiKeys: [...backupKeys.value],
     maxTokens: props.config.aiMaxTokens,
     thinking: props.config.aiThinking || false,
-    capabilities: { ...currentCapabilities.value },
   });
 }
 

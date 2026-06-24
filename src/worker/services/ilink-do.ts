@@ -1788,8 +1788,7 @@ export class ILinkConnectionDO implements DurableObject {
     const allKeys = [aiApiKey, ...backupKeys].filter(Boolean);
     const aiMaxRetries = (kvConfig.aiMaxRetries as number) || 2;
 
-    const capabilities = (activePreset?.capabilities as any) || {};
-    const cfg = { aiSystemPrompt, aiModel, aiProvider, aiBaseUrl, aiApiKey, aiMaxTokens, aiImageModel, aiVideoModel, allKeys, aiMaxRetries, capabilities, aiCustomProviders: (kvConfig.aiCustomProviders as any[]) || [], webhook: { enabled: webhookEnabled, url: webhookUrl, title: webhookTitle, apiKey: webhookApiKey, channels: webhookChannels } };
+    const cfg = { aiSystemPrompt, aiModel, aiProvider, aiBaseUrl, aiApiKey, aiMaxTokens, aiImageModel, aiVideoModel, allKeys, aiMaxRetries, aiCustomProviders: (kvConfig.aiCustomProviders as any[]) || [], webhook: { enabled: webhookEnabled, url: webhookUrl, title: webhookTitle, apiKey: webhookApiKey, channels: webhookChannels } };
     this.cache.config = cfg;
     this.cache.configLoadedAt = now;
     return cfg;
@@ -2009,7 +2008,7 @@ export class ILinkConnectionDO implements DurableObject {
                   }
                 } catch {}
               }
-              const imageDataResult = await generateImage(this.env.AI, mediaPrompt, cfg.aiImageModel, cfg.aiProvider, cfg.aiBaseUrl, cfg.aiApiKey, imageUrl, imageSize, cfg.allKeys, cfg.aiMaxRetries, undefined, cfg.capabilities);
+              const imageDataResult = await generateImage(this.env.AI, mediaPrompt, cfg.aiImageModel, cfg.aiProvider, cfg.aiBaseUrl, cfg.aiApiKey, imageUrl, imageSize, cfg.allKeys, cfg.aiMaxRetries);
               const imageData = imageDataResult.data;
               const modelInfo = `🤖 ${providerName} · ${cfg.aiImageModel}`;
               Logger.info("[DO] Image generation result", { success: !!imageData, type: typeof imageData });

@@ -31,14 +31,6 @@ function fixMaskedKeys(kvConfig: Record<string, unknown>): void {
   }
 }
 
-type ProviderCapabilities = {
-  img2img?: boolean;        // 支持图生图
-  imageParam?: string;      // 图片参数名（默认 "image"）
-  imageLocation?: string;   // 参数位置（"top_level" 或 "extra_body"，默认 "extra_body"）
-  urlOutput?: boolean;      // 支持 URL 输出
-  urlOutputLocation?: string; // URL 输出参数位置（默认 "extra_body"）
-};
-
 type Preset = {
   id: string;
   model?: string;
@@ -48,7 +40,6 @@ type Preset = {
   apiKey?: string;
   apiKeys?: string[];
   maxTokens?: number;
-  capabilities?: ProviderCapabilities;
 };
 
 function maskKey(key: string): string {
@@ -158,7 +149,6 @@ export function resolveAIConfig(kvConfig: Record<string, unknown>) {
       maxTokens: active.maxTokens || 1024,
       maxRetries,
       thinking: active.thinking || false,
-      capabilities: active.capabilities || {},
     };
   }
 
@@ -171,7 +161,6 @@ export function resolveAIConfig(kvConfig: Record<string, unknown>) {
     maxTokens: (kvConfig.aiMaxTokens as number) || 1024,
     maxRetries,
     thinking: (kvConfig.aiThinking as boolean) || false,
-    capabilities: {},
   };
 }
 

@@ -162,7 +162,6 @@ export async function handleChat(request: Request, env: Env): Promise<Response> 
             maxRetries,
             imageUrl,
             imageUrls,
-            capabilities: (aiConfig as any).capabilities || {},
           }, { delaySeconds: 0 });
           Logger.info(`[chat][${requestId}] Image task queued`);
         } catch (e: any) {
