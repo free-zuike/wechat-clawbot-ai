@@ -61,11 +61,10 @@ class_name = "ILinkConnectionDO"
 tag = "v2"
 new_sqlite_classes = [ "ILinkConnectionDO" ]
 
-# ===== 开启日志 =====
+# ===== 关闭自动追踪日志 =====
 [observability.logs]
-enabled = true
-invocation_logs = true
+enabled = false
 
 [observability.traces]
-enabled = true
+enabled = false
 
