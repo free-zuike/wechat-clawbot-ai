@@ -498,7 +498,7 @@ async function fetchImageUrl(url: string): Promise<Uint8Array | null> {
 
 // ========== 图片生成 ==========
 
-import { getAdapter, type ProviderAdapter, parseApiUrl, type ProviderResponseConfig } from "./adapters";
+import { getAdapter, type ProviderResponseConfig } from "./adapters";
 
 export async function generateImage(
   aiBinding: any,
@@ -583,19 +583,6 @@ export async function generateImage(
     Logger.error("[ai] Image generation failed", { error: e?.message, model: imageModel, prompt: prompt.slice(0, 50) });
     return { data: null, keyIndex: 0 };
   }
-}
-  }
-
-  if (refImages.length > 0 && caps.img2img !== false) {
-    if (imageLoc === "extra_body") {
-      if (!body.extra_body) body.extra_body = {};
-      body.extra_body[imageParam] = refImages;
-    } else {
-      body[imageParam] = refImages.length === 1 ? refImages[0] : refImages;
-    }
-  }
-
-  return body;
 }
 
 // ========== 图片生成 ==========
