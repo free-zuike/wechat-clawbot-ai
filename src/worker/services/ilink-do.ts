@@ -1988,6 +1988,22 @@ export class ILinkConnectionDO implements DurableObject {
             } else {
               startTypingKeepAlive();
               const imageSize = extractImageSize(text);
+              // 如果没有图片参考，且 prompt 包含搜索意图，先搜索获取参考图
+              if (!imageUrl && /搜索|搜|查找|找|的图|的照片|照片/.test(text)) {
+                try {
+                  const searchKeywords = mediaPrompt.replace(/搜索|搜|查找|找|的图|的照片|照片|生成图片|生成|图片/g, "").trim();
+                  if (searchKeywords) {
+                    const searchResp = await fetch(`https://image.so.com/j?q=${encodeURIComponent(searchKeywords)}&sn=1`, {
+                      headers: { "User-Agent": "Mozilla/5.0", "Accept": "application/json", "Referer": "https://image.so.com/" },
+                    });
+                    const searchData = await searchResp.json() as any;
+                    if (searchData.list?.[0]?.img) {
+                      imageUrl = searchData.list[0].img;
+                      Logger.info("[DO] Found reference image via search for generation", { keyword: searchKeywords, url: imageUrl.slice(0, 80) });
+                    }
+                  }
+                } catch {}
+              }
               const imageDataResult = await generateImage(this.env.AI, mediaPrompt, cfg.aiImageModel, cfg.aiProvider, cfg.aiBaseUrl, cfg.aiApiKey, imageUrl, imageSize, cfg.allKeys, cfg.aiMaxRetries);
               const imageData = imageDataResult.data;
               const modelInfo = `🤖 ${providerName} · ${cfg.aiImageModel}`;

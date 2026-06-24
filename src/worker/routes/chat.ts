@@ -117,6 +117,29 @@ export async function handleChat(request: Request, env: Env): Promise<Response> 
         return json({ reply: `🎬 ${modelInfo}${videoModel}\n\n视频已加入生成队列（约 1-2 分钟），生成完成后会自动推送。`, source: "ai" } satisfies ChatResponse);
       } else {
         // 图片也走 Queue 异步处理，避免 Worker 超时
+        // 如果 prompt 包含搜索意图，先搜图片获取参考 URL
+        let imageUrl: string | undefined;
+        if (/搜索|搜|查找|找|的图|的照片|照片/.test(prompt)) {
+          try {
+            const searchKeywords = prompt.replace(/搜索|搜|查找|找|的图|的照片|照片|生成图片|生成|图片/g, "").trim();
+            if (searchKeywords) {
+              const searchResp = await fetch(`https://image.so.com/j?q=${encodeURIComponent(searchKeywords)}&sn=1`, {
+                headers: {
+                  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                  "Accept": "application/json",
+                  "Referer": "https://image.so.com/",
+                },
+              });
+              const searchData = await searchResp.json() as any;
+              if (searchData.list?.[0]?.img) {
+                imageUrl = searchData.list[0].img;
+                Logger.info(`[chat][${requestId}] Found reference image for generation`, { imageUrl: imageUrl.slice(0, 100) });
+              }
+            }
+          } catch (e: any) {
+            Logger.error(`[chat][${requestId}] Image search failed`, { error: e?.message });
+          }
+        }
         try {
           await env.CLAWBOT_QUEUE.send({
             type: "image_generation",
@@ -128,6 +151,7 @@ export async function handleChat(request: Request, env: Env): Promise<Response> 
             source: "chat",
             allKeys,
             maxRetries,
+            imageUrl,
           }, { delaySeconds: 0 });
           Logger.info(`[chat][${requestId}] Image task queued`);
         } catch (e: any) {

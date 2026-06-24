@@ -69,7 +69,7 @@ export default {
   // 队列消费者：处理图片/视频生成任务
   async queue(batch: MessageBatch<any>, env: Env): Promise<void> {
     for (const msg of batch.messages) {
-      const { type, prompt, model, provider, baseUrl, apiKey, source, allKeys, maxRetries } = msg.body;
+      const { type, prompt, model, provider, baseUrl, apiKey, source, allKeys, maxRetries, imageUrl: refImageUrl } = msg.body;
       const isFromChat = source === "chat";
       Logger.info("[queue] Task received", { type, prompt: prompt?.slice(0, 50), model, provider, source });
 
@@ -86,7 +86,7 @@ export default {
       try {
         if (type === "image_generation") {
           const { generateImage } = await import("./services/ai");
-          const imageDataResult = await generateImage(env.AI, prompt, model, provider, baseUrl, apiKey, undefined, undefined, allKeys, maxRetries);
+          const imageDataResult = await generateImage(env.AI, prompt, model, provider, baseUrl, apiKey, refImageUrl, undefined, allKeys, maxRetries);
           const imageData = imageDataResult.data;
             if (imageData) {
               const dataLen = imageData instanceof Uint8Array ? imageData.length : (typeof imageData === "string" ? imageData.length : 0);
