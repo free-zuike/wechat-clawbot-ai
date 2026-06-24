@@ -140,8 +140,8 @@ export async function handleChat(request: Request, env: Env): Promise<Response> 
                 if (randomItem) {
                   imageUrl = randomItem.img;
                   imageUrls = [imageUrl];
-                  finalPrompt = `基于参考图，${searchKeywords}风格`;
-                  Logger.info(`[chat][${requestId}] Found reference image for generation`, { prompt: finalPrompt });
+                  finalPrompt = prompt;
+                  Logger.info(`[chat][${requestId}] Found reference image for generation`, { prompt: finalPrompt.slice(0, 50) });
                 }
               }
             }
