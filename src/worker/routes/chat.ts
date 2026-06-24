@@ -119,12 +119,13 @@ export async function handleChat(request: Request, env: Env): Promise<Response> 
         // 图片也走 Queue 异步处理，避免 Worker 超时
         // 如果 prompt 包含搜索意图，先搜图片获取参考 URL
         let imageUrl: string | undefined;
+        let imageUrls: string[] | undefined;
         let finalPrompt = prompt;
         if (/搜索|搜|查找|找|的图|的照片|照片/.test(prompt)) {
           try {
             const searchKeywords = prompt.replace(/搜索|搜|查找|找|的图|的照片|照片|生成图片|生成|图片/g, "").trim();
             if (searchKeywords) {
-              const searchResp = await fetch(`https://image.so.com/j?q=${encodeURIComponent(searchKeywords)}&sn=1`, {
+              const searchResp = await fetch(`https://image.so.com/j?q=${encodeURIComponent(searchKeywords)}&sn=3`, {
                 headers: {
                   "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
                   "Accept": "application/json",
@@ -132,10 +133,11 @@ export async function handleChat(request: Request, env: Env): Promise<Response> 
                 },
               });
               const searchData = await searchResp.json() as any;
-              if (searchData.list?.[0]?.img) {
-                imageUrl = searchData.list[0].img;
+              if (searchData.list && searchData.list.length > 0) {
+                imageUrls = searchData.list.filter((item: any) => item.img).map((item: any) => item.img).slice(0, 3);
+                imageUrl = imageUrls[0];
                 finalPrompt = searchKeywords;
-                Logger.info(`[chat][${requestId}] Found reference image for generation`, { imageUrl: imageUrl.slice(0, 100), prompt: finalPrompt });
+                Logger.info(`[chat][${requestId}] Found reference images for generation`, { count: imageUrls.length, prompt: finalPrompt });
               }
             }
           } catch (e: any) {
@@ -154,6 +156,7 @@ export async function handleChat(request: Request, env: Env): Promise<Response> 
             allKeys,
             maxRetries,
             imageUrl,
+            imageUrls,
           }, { delaySeconds: 0 });
           Logger.info(`[chat][${requestId}] Image task queued`);
         } catch (e: any) {

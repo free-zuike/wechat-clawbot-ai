@@ -640,12 +640,14 @@ export async function generateImage(
   size?: string,
   allKeys?: string[],
   maxRetries?: number,
+  imageUrls?: string[],
 ): Promise<{ data: Uint8Array | string | null; keyIndex: number }> {
   const imageModel = model || DEFAULT_IMAGE_MODEL;
   const imageSize = size || DEFAULT_IMAGE_SIZE;
   const keys = (allKeys && allKeys.length > 0) ? allKeys : (apiKey ? [apiKey] : []);
   const retries = maxRetries ?? 2;
-  Logger.info("[ai] Generating image", { prompt: prompt.slice(0, 80), model: imageModel, provider: provider || "cloudflare", hasImageRef: !!imageUrl, size: imageSize, keyCount: keys.length });
+  const refImages = imageUrls && imageUrls.length > 0 ? imageUrls : (imageUrl ? [imageUrl] : []);
+  Logger.info("[ai] Generating image", { prompt: prompt.slice(0, 80), model: imageModel, provider: provider || "cloudflare", refImageCount: refImages.length, size: imageSize, keyCount: keys.length });
 
   if (provider && provider !== "cloudflare" && baseUrl && keys.length > 0) {
     for (let attempt = 0; attempt <= retries && attempt < keys.length; attempt++) {
@@ -658,9 +660,9 @@ export async function generateImage(
           prompt,
           size: imageSize,
         };
-        if (imageUrl) {
+        if (refImages.length > 0) {
           body.extra_body = {
-            image: [imageUrl],
+            image: refImages,
             response_format: "url",
           };
         } else {
