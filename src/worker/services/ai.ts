@@ -657,10 +657,14 @@ export async function generateImage(
           model: imageModel,
           prompt,
           size: imageSize,
-          watermark_enabled: false,
         };
         if (imageUrl) {
-          body.image_url = imageUrl;
+          body.extra_body = {
+            image: [imageUrl],
+            response_format: "url",
+          };
+        } else {
+          body.extra_body = { response_format: "url" };
         }
         const resp = await fetch(url, {
           method: "POST",
