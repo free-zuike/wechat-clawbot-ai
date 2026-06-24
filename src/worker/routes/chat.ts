@@ -119,6 +119,7 @@ export async function handleChat(request: Request, env: Env): Promise<Response> 
         // 图片也走 Queue 异步处理，避免 Worker 超时
         // 如果 prompt 包含搜索意图，先搜图片获取参考 URL
         let imageUrl: string | undefined;
+        let finalPrompt = prompt;
         if (/搜索|搜|查找|找|的图|的照片|照片/.test(prompt)) {
           try {
             const searchKeywords = prompt.replace(/搜索|搜|查找|找|的图|的照片|照片|生成图片|生成|图片/g, "").trim();
@@ -133,7 +134,8 @@ export async function handleChat(request: Request, env: Env): Promise<Response> 
               const searchData = await searchResp.json() as any;
               if (searchData.list?.[0]?.img) {
                 imageUrl = searchData.list[0].img;
-                Logger.info(`[chat][${requestId}] Found reference image for generation`, { imageUrl: imageUrl.slice(0, 100) });
+                finalPrompt = searchKeywords;
+                Logger.info(`[chat][${requestId}] Found reference image for generation`, { imageUrl: imageUrl.slice(0, 100), prompt: finalPrompt });
               }
             }
           } catch (e: any) {
@@ -143,7 +145,7 @@ export async function handleChat(request: Request, env: Env): Promise<Response> 
         try {
           await env.CLAWBOT_QUEUE.send({
             type: "image_generation",
-            prompt,
+            prompt: finalPrompt,
             model: imageModel,
             provider: aiConfig.provider,
             baseUrl: aiConfig.baseUrl,
