@@ -10,3 +10,4 @@ tmp-config.json
 tmp_upload.json
 tmp_vid.json
 *.tmp
+.mimocode/
