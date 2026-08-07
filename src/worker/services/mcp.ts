@@ -545,7 +545,10 @@ export async function getAllMCPTools(db: D1Database | null, autoFetch = false): 
 
     const prefix = server.toolPrefix || `mcp_${server.id}`;
     for (const tool of (tools || [])) {
-      allTools.push({ ...tool, name: `${prefix}_${tool.name}`, rawName: tool.name, serverId: server.id });
+      const serverTag = `[${server.name}] `;
+      // 描述前面加服务名标签，帮助 AI 区分不同 MCP 服务器的工具归属
+      const taggedDesc = tool.description ? `${serverTag}${tool.description}` : `${serverTag}...`;
+      allTools.push({ ...tool, name: `${prefix}_${tool.name}`, description: taggedDesc, rawName: tool.name, serverId: server.id });
     }
   }
 
