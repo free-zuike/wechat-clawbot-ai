@@ -2,7 +2,7 @@
   <div class="app-layout">
     <aside class="sidebar">
       <h1>🦞 ClawBot AI</h1>
-      <div class="version">v2.0 · bee-swarm arch</div>
+      <div class="version">v2.0</div>
       <nav>
         <div
           v-for="item in navItems"
