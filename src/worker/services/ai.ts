@@ -130,7 +130,9 @@ async function callOpenAICompatible(params: {
   }
 
   // 如果有 MCP 工具，附加到请求（加上内置时间工具）
-  const allTools = [...BUILTIN_TOOLS, ...(params.tools || [])];
+  // 仅当有 MCP 工具时才添加内置工具，避免无工具场景下 AI 只调用时间工具而不回复
+  const hasMcpTools = !!(params.tools && params.tools.length > 0);
+  const allTools = hasMcpTools ? [...BUILTIN_TOOLS, ...params.tools!] : [];
   const hasTools = allTools.length > 0;
   if (hasTools) {
     body.tools = allTools;
@@ -293,7 +295,7 @@ export async function callAIWithContext(
 
   // 提示 AI 可用 get_current_datetime 工具获取当前日期，用于换算相对时间
   const messages = buildMessagesWithContext(
-    `当用户询问"今天/昨天/明天/上个月/本月/上周/下周"等相对时间时，必须调用 get_current_datetime 工具获取准确日期后再回答。\n\n${system}`,
+    `当用户询问"今天/昨天/明天/上个月/本月/上周/下周"等相对时间时，若需要准确日期，可调用 get_current_datetime 工具获取。\n\n${system}`,
     cleanMsg,
     context
   );
@@ -399,7 +401,7 @@ export async function callAI(
         apiKey: config.apiKey,
         model: config.model,
         messages: [
-          { role: "system", content: `当用户询问"今天/昨天/明天/上个月/本月/上周/下周"等相对时间时，必须调用 get_current_datetime 工具获取准确日期后再回答。\n\n${system}` },
+          { role: "system", content: `当用户询问"今天/昨天/明天/上个月/本月/上周/下周"等相对时间时，若需要准确日期，可调用 get_current_datetime 工具获取。\n\n${system}` },
           { role: "user", content: cleanMsg },
         ],
         maxTokens: config.maxTokens,
@@ -411,7 +413,7 @@ export async function callAI(
       });
     } else {
       text = await callCloudflareAI(aiBinding, config.model, [
-        { role: "system", content: `当用户询问"今天/昨天/明天/上个月/本月/上周/下周"等相对时间时，必须获取当前准确日期后回答。\n\n${system}` },
+        { role: "system", content: `当用户询问"今天/昨天/明天/上个月/本月/上周/下周"等相对时间时，获取准确日期后再回答。\n\n${system}` },
         { role: "user", content: cleanMsg },
       ], config.maxTokens);
     }
