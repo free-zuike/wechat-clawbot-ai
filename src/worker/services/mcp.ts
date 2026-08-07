@@ -567,7 +567,8 @@ function buildToolDesc(tool: MCPToolDefinition): string {
     const type = prop.type || "string";
     const required = tool.inputSchema?.required?.includes(key) ? "必填" : "可选";
     const enum_ = prop.enum ? `(${prop.enum.join("/")})` : "";
-    hints.push(`${key}( ${type} ${required} ${enum_})`.trim());
+    const desc = prop.description ? `- ${prop.description}` : "";
+    hints.push(`${key}(${type} ${required}${enum_ ? " " + enum_ : ""})${desc}`.trim());
   }
   if (hints.length === 0) return tool.description;
   return `${tool.description}\n\n参数: ${hints.join(", ")}`;
