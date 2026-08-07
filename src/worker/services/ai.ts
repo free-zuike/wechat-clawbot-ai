@@ -28,18 +28,13 @@ const DEFAULT_SYSTEM_PROMPT =
   "如果用户问的问题你不知道，就直接说不知道。不要编造信息。" +
   "回复长度控制在 200 字以内，除非用户明确要求更长。";
 
-// 生成当前日期/时间上下文，注入系统提示词，让 AI 能正确理解"今天/上个月/上周"等相对时间
-function buildSystemPrompt(basePrompt: string): string {
+// 生成当前日期/时间字符串，注入到用户消息中（放在系统提示词中模型可能忽略）
+function getCurrentDateTag(): string {
   const now = new Date();
   const dateStr = `${now.getFullYear()}年${now.getMonth() + 1}月${now.getDate()}日`;
   const weekdays = ["日", "一", "二", "三", "四", "五", "六"];
   const weekdayStr = weekdays[now.getDay()];
-  const timeStr = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
-  return (
-    `今天是 ${dateStr}（星期${weekdayStr}），当前时间 ${timeStr}。` +
-    `当用户提到"今天/昨天/上个月/上周/本月"等相对时间时，请基于以上日期准确换算成具体年月日。\n\n` +
-    basePrompt
-  );
+  return `[当前日期: ${dateStr}（星期${weekdayStr}）]`;
 }
 
 // 从 API baseUrl 中提取 base 和 version，用于构建其他端点
@@ -256,10 +251,17 @@ export async function callAIWithContext(
     return "AI调用失败: 未配置模型名称，请在管理后台设置 AI 模型";
   }
 
-  const system = buildSystemPrompt(systemPrompt || DEFAULT_SYSTEM_PROMPT);
+  const system = systemPrompt || DEFAULT_SYSTEM_PROMPT;
   const context = db ? await getContextFromD1(db, userId) : await getContextFromSQLite(storage, userId);
 
-  const messages = buildMessagesWithContext(system, cleanMsg, context);
+  // 将当前日期直接注入用户消息，确保模型能正确换算相对时间
+  const dateTaggedMsg = `${getCurrentDateTag()}${cleanMsg}`;
+
+  const messages = buildMessagesWithContext(
+    `请牢记当前日期: ${getCurrentDateTag()}\n\n${system}`,
+    dateTaggedMsg,
+    context
+  );
 
   Logger.info(`[ai] Calling AI for ${userId}`, { provider: config.provider, model: config.model });
 
@@ -341,7 +343,8 @@ export async function callAI(
     return "AI调用失败: 未配置模型名称，请在管理后台设置 AI 模型";
   }
 
-  const system = buildSystemPrompt(systemPrompt || DEFAULT_SYSTEM_PROMPT);
+  const system = systemPrompt || DEFAULT_SYSTEM_PROMPT;
+  const dateTaggedMsg = `${getCurrentDateTag()}${cleanMsg}`;
 
   Logger.info(`[ai] Calling AI (no context)`, { provider: config.provider, model: config.model });
 
@@ -362,8 +365,8 @@ export async function callAI(
         apiKey: config.apiKey,
         model: config.model,
         messages: [
-          { role: "system", content: system },
-          { role: "user", content: cleanMsg },
+          { role: "system", content: `请牢记当前日期: ${getCurrentDateTag()}\n\n${system}` },
+          { role: "user", content: dateTaggedMsg },
         ],
         maxTokens: config.maxTokens,
         thinking: config.thinking,
@@ -374,8 +377,8 @@ export async function callAI(
       });
     } else {
       text = await callCloudflareAI(aiBinding, config.model, [
-        { role: "system", content: system },
-        { role: "user", content: cleanMsg },
+        { role: "system", content: `请牢记当前日期: ${getCurrentDateTag()}\n\n${system}` },
+        { role: "user", content: dateTaggedMsg },
       ], config.maxTokens);
     }
 
