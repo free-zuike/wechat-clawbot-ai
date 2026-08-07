@@ -188,6 +188,8 @@ async function callOpenAICompatible(params: {
   const mcpTools = params.mcpTools || [];
   const mcpServers = params.mcpServers || [];
   const db = params.db || null;
+  // 记录所有工具调用结果，用于兜底回复
+  const allToolTexts: string[] = [];
 
   for (let round = 0; round < maxRounds; round++) {
     const resp = await fetch(url, {
@@ -246,11 +248,16 @@ async function callOpenAICompatible(params: {
 
     // 将工具结果格式化后添加到消息列表（JSON 转自然语言，防止 AI 编造数字）
     for (const result of results) {
+      const formatted = formatToolContent(result.content);
       params.messages.push({
         role: "tool",
         tool_call_id: result.callId,
-        content: formatToolContent(result.content),
+        content: formatted,
       } as any);
+      // 收集所有非当前时间工具的结果，用于兜底回复
+      if (result.name !== "get_current_datetime" && result.content) {
+        allToolTexts.push(formatted);
+      }
     }
 
     // 记录工具返回的原始数据，用于诊断
@@ -267,9 +274,17 @@ async function callOpenAICompatible(params: {
     body.messages = params.messages;
   }
 
-  // 达到最大轮次限制，返回最后一条助手消息
+  // 达到最大轮次限制，返回最后一条助手消息；若为空则用工具结果兜底
   const lastAssistant = [...params.messages].reverse().find(m => m.role === "assistant");
-  return (lastAssistant?.content as string) || "";
+  const lastContent = lastAssistant?.content as string | undefined;
+  if (lastContent && lastContent.trim()) {
+    return lastContent;
+  }
+  // 兜底：AI 一直调用工具没生成文本，把工具返回的数据整理成回复
+  if (allToolTexts.length > 0) {
+    return `根据工具返回的数据：\n${allToolTexts.slice(-3).join("\n")}`;
+  }
+  return "";
 }
 
 // ========== Cloudflare Workers AI 调用 ==========
