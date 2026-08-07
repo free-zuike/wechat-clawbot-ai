@@ -28,6 +28,20 @@ const DEFAULT_SYSTEM_PROMPT =
   "如果用户问的问题你不知道，就直接说不知道。不要编造信息。" +
   "回复长度控制在 200 字以内，除非用户明确要求更长。";
 
+// 生成当前日期/时间上下文，注入系统提示词，让 AI 能正确理解"今天/上个月/上周"等相对时间
+function buildSystemPrompt(basePrompt: string): string {
+  const now = new Date();
+  const dateStr = `${now.getFullYear()}年${now.getMonth() + 1}月${now.getDate()}日`;
+  const weekdays = ["日", "一", "二", "三", "四", "五", "六"];
+  const weekdayStr = weekdays[now.getDay()];
+  const timeStr = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+  return (
+    `今天是 ${dateStr}（星期${weekdayStr}），当前时间 ${timeStr}。` +
+    `当用户提到"今天/昨天/上个月/上周/本月"等相对时间时，请基于以上日期准确换算成具体年月日。\n\n` +
+    basePrompt
+  );
+}
+
 // 从 API baseUrl 中提取 base 和 version，用于构建其他端点
 // 例: "https://open.bigmodel.cn/api/paas/v4/chat/completions"
 //   → { base: "https://open.bigmodel.cn/api/paas", version: "v4" }
@@ -242,7 +256,7 @@ export async function callAIWithContext(
     return "AI调用失败: 未配置模型名称，请在管理后台设置 AI 模型";
   }
 
-  const system = systemPrompt || DEFAULT_SYSTEM_PROMPT;
+  const system = buildSystemPrompt(systemPrompt || DEFAULT_SYSTEM_PROMPT);
   const context = db ? await getContextFromD1(db, userId) : await getContextFromSQLite(storage, userId);
 
   const messages = buildMessagesWithContext(system, cleanMsg, context);
@@ -327,7 +341,7 @@ export async function callAI(
     return "AI调用失败: 未配置模型名称，请在管理后台设置 AI 模型";
   }
 
-  const system = systemPrompt || DEFAULT_SYSTEM_PROMPT;
+  const system = buildSystemPrompt(systemPrompt || DEFAULT_SYSTEM_PROMPT);
 
   Logger.info(`[ai] Calling AI (no context)`, { provider: config.provider, model: config.model });
 
