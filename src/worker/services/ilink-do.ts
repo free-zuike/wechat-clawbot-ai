@@ -10,6 +10,14 @@ import { sendWebhook } from "./webhook";
 import { clearContextSQLite, clearContextD1 } from "./context";
 import type { ILinkCredentials, WeixinMessage } from "../types";
 import { initSQLite, initD1Tables, ensurePendingVideosColumns, ensureGenerationLogsColumns, loadCredentials, saveCredentials, clearCredentials, loadAllCredentials } from "./ilink-db";
+import {
+  handleLongPoll, handleWebSocket, handleSaveSession, handleCheckSession,
+  handleSaveCreds, handleClearCreds, handleQRPoll, handleSend, handleSendVideo,
+  handleBroadcastImage, handleStoreImage, handleGetImage, handleStorePendingVideo,
+  handlePendingVideos, handleLogGeneration, handleGenerationLogs,
+  handleGetCreds, handleStatus, handleSQLiteContexts, handleFlush,
+  type DOContext,
+} from "./ilink-handlers";
 
 export interface ILINKSessionState {
   syncBuf: string;
@@ -147,6 +155,29 @@ export class ILinkConnectionDO implements DurableObject {
 
   // ========== HTTP 处理（长轮询入口）==========
 
+  // 构建 handler 上下文（传递 DO 内部状态引用）
+  private getCtx(): DOContext {
+    return {
+      env: this.env,
+      doState: this.doState,
+      websockets: this.websockets,
+      accounts: this.accounts,
+      ilinkCreds: this.ilinkCreds,
+      state: this.state,
+      cache: this.cache,
+      runtimeStats: this.runtimeStats,
+      kv: this.kv,
+      sqliteInitialized: this.sqliteInitialized,
+      broadcastToWebSockets: (data) => this.broadcastToWebSockets(data),
+      logGeneration: (...args) => this.logGeneration(...args),
+      getConfigCached: () => this.getConfigCached(),
+      initSQLite: () => this.initSQLite(),
+      saveAccounts: () => this.saveAccounts(),
+      triggerImmediatePoll: () => this.triggerImmediatePoll(),
+      detectImageMime: (data) => this.detectImageMime(data),
+    };
+  }
+
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
 
@@ -169,63 +200,31 @@ export class ILinkConnectionDO implements DurableObject {
       }
     }
 
+    const ctx = this.getCtx();
+
     // WebSocket 升级
     if (url.pathname === "/ws" || url.pathname === "/api/ws") {
-      return this.handleWebSocket(request);
+      return handleWebSocket(ctx, request);
     }
 
     // /status、/sqlite/contexts 等路径不检查凭证
-    if (url.pathname === "/status") {
-      return this.handleStatus();
-    }
-    if (url.pathname === "/sqlite/contexts") {
-      return this.handleSQLiteContexts();
-    }
-    if (url.pathname === "/qr-poll") {
-      return this.handleQRPoll(url);
-    }
-    if (url.pathname === "/check-session") {
-      return this.handleCheckSession(url);
-    }
-    if (url.pathname === "/save-session") {
-      return this.handleSaveSession(request);
-    }
-    if (url.pathname === "/save-creds") {
-      return this.handleSaveCreds(request);
-    }
-    if (url.pathname === "/send-video") {
-      return this.handleSendVideo(request);
-    }
-    if (url.pathname === "/broadcast-image") {
-      return this.handleBroadcastImage(request);
-    }
-    if (url.pathname === "/store-image") {
-      return this.handleStoreImage(request);
-    }
-    if (url.pathname.startsWith("/get-image/")) {
-      return this.handleGetImage(url);
-    }
-    if (url.pathname === "/store-pending-video") {
-      return this.handleStorePendingVideo(request);
-    }
-    if (url.pathname === "/check-pending-videos") {
-      return this.checkPendingVideos().then(() => new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } }));
-    }
-    if (url.pathname === "/pending-videos") {
-      return this.handlePendingVideos(request);
-    }
-    if (url.pathname === "/generation-logs") {
-      return this.handleGenerationLogs(request);
-    }
-    if (url.pathname === "/log-generation") {
-      return this.handleLogGeneration(request);
-    }
-    if (url.pathname === "/get-creds") {
-      return this.handleGetCreds();
-    }
-    if (url.pathname === "/clear-creds") {
-      return this.handleClearCreds();
-    }
+    if (url.pathname === "/status") return handleStatus(ctx);
+    if (url.pathname === "/sqlite/contexts") return handleSQLiteContexts(ctx);
+    if (url.pathname === "/qr-poll") return handleQRPoll(ctx, url);
+    if (url.pathname === "/check-session") return handleCheckSession(ctx, url);
+    if (url.pathname === "/save-session") return handleSaveSession(ctx, request);
+    if (url.pathname === "/save-creds") return handleSaveCreds(ctx, request);
+    if (url.pathname === "/send-video") return handleSendVideo(ctx, request);
+    if (url.pathname === "/broadcast-image") return handleBroadcastImage(ctx, request);
+    if (url.pathname === "/store-image") return handleStoreImage(ctx, request);
+    if (url.pathname.startsWith("/get-image/")) return handleGetImage(ctx, url);
+    if (url.pathname === "/store-pending-video") return handleStorePendingVideo(ctx, request);
+    if (url.pathname === "/check-pending-videos") return this.checkPendingVideos().then(() => new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } }));
+    if (url.pathname === "/pending-videos") return handlePendingVideos(ctx, request);
+    if (url.pathname === "/generation-logs") return handleGenerationLogs(ctx, request);
+    if (url.pathname === "/log-generation") return handleLogGeneration(ctx, request);
+    if (url.pathname === "/get-creds") return handleGetCreds(ctx);
+    if (url.pathname === "/clear-creds") return handleClearCreds(ctx, request);
 
     // 其它路径：必须已登录
     if (!this.ilinkCreds) {
@@ -238,19 +237,19 @@ export class ILinkConnectionDO implements DurableObject {
     // 路由分发
     switch (url.pathname) {
       case "/poll":
-        return this.handleLongPoll();
+        return handleLongPoll(ctx);
       case "/send":
-        return this.handleSend(request);
+        return handleSend(ctx, request);
       case "/status":
-        return this.handleStatus();
+        return handleStatus(ctx);
       case "/sqlite/contexts":
-        return this.handleSQLiteContexts();
+        return handleSQLiteContexts(ctx);
       case "/flush":
-        return this.handleFlush();
+        return handleFlush(ctx);
       case "/qr-poll":
-        return this.handleQRPoll(url);
+        return handleQRPoll(ctx, url);
       case "/save-creds":
-        return this.handleSaveCreds(request);
+        return handleSaveCreds(ctx, request);
       default:
         return new Response(JSON.stringify({ error: "Unknown endpoint" }), {
           status: 404,
@@ -260,72 +259,6 @@ export class ILinkConnectionDO implements DurableObject {
   }
 
   // ========== 拉取消息（立即返回，不长轮询）==========
-
-  private async handleLongPoll(): Promise<Response> {
-    // 确保轮询循环在运行
-    if (!this.ilinkCreds) {
-      return new Response(JSON.stringify({
-        success: true,
-        pulled: 0,
-        handled: 0,
-        skipped: 0,
-        error: "未登录",
-        latencyMs: 0,
-      }), { headers: { "Content-Type": "application/json" } });
-    }
-
-    const anyRunning = Array.from(this.accounts.values()).some(a => a.pollLoopRunning);
-    if (!anyRunning) {
-      this.triggerImmediatePoll();
-    }
-
-    // 等最多5秒让当前轮询完成，立即返回
-    const deadline = Date.now() + 5000;
-    while (Date.now() < deadline) {
-      if (this.state.pendingMessages.length > 0) {
-        const msg = this.state.pendingMessages.shift()!;
-        return new Response(JSON.stringify({
-          success: true,
-          pulled: 1,
-          handled: 1,
-          skipped: 0,
-          message: msg,
-          latencyMs: Date.now() - deadline + 5000,
-        }), { headers: { "Content-Type": "application/json" } });
-      }
-      await new Promise((r) => setTimeout(r, 200));
-    }
-
-    return new Response(JSON.stringify({
-      success: true,
-      pulled: 0,
-      handled: 0,
-      skipped: 0,
-      latencyMs: 5000,
-    }), { headers: { "Content-Type": "application/json" } });
-  }
-
-  // ========== WebSocket 实时推送 ==========
-
-  private handleWebSocket(request: Request): Response {
-    const pair = new WebSocketPair();
-    const [client, server] = [pair[0], pair[1]];
-
-    this.websockets.add(server);
-
-    server.accept();
-    server.addEventListener("close", () => {
-      this.websockets.delete(server);
-    });
-    server.addEventListener("error", () => {
-      this.websockets.delete(server);
-    });
-
-    // 发送欢迎消息
-    server.send(JSON.stringify({ type: "connected", message: "实时消息连接已建立" }));
-
-    return new Response(null, { status: 101, webSocket: client });
-  }
 
   private broadcastToWebSockets(data: Record<string, unknown>): void {
     const msg = JSON.stringify(data);
@@ -347,81 +280,6 @@ export class ILinkConnectionDO implements DurableObject {
 
   // ========== 保存 session（admin登录时调用）==========
 
-  private async handleSaveSession(request: Request): Promise<Response> {
-    try {
-      const body = await request.json() as { token?: string; ttl?: number };
-      const { token } = body;
-      if (!token) {
-        return new Response(JSON.stringify({ error: "缺少 token" }), {
-          status: 400,
-          headers: { "Content-Type": "application/json" },
-        });
-      }
-
-      await this.doState.storage.put(`session:${token}`, JSON.stringify({ valid: true, createdAt: Date.now() }));
-      Logger.info("[DO] Session saved", { token: token.slice(0, 8) + "..." });
-      return new Response(JSON.stringify({ ok: true }), {
-        headers: { "Content-Type": "application/json" },
-      });
-    } catch (e: any) {
-      Logger.error("[DO] /save-session error", { error: e.message });
-      return new Response(JSON.stringify({ error: e.message }), {
-        status: 500,
-        headers: { "Content-Type": "application/json" },
-      });
-    }
-  }
-
-  // ========== 检查 session 是否有效（DO SQLite）==========
-
-  private async handleCheckSession(url: URL): Promise<Response> {
-    const token = url.searchParams.get("token");
-    if (!token) {
-      return new Response(JSON.stringify({ valid: false }), {
-        headers: { "Content-Type": "application/json" },
-      });
-    }
-
-    try {
-      const sessionData = await this.doState.storage.get<string>(`session:${token}`);
-      const valid = !!sessionData;
-      return new Response(JSON.stringify({ valid }), {
-        headers: { "Content-Type": "application/json" },
-      });
-    } catch {
-      return new Response(JSON.stringify({ valid: false }), {
-        headers: { "Content-Type": "application/json" },
-      });
-    }
-  }
-
-  // ========== 清除凭证（解绑微信）==========
-
-  // ========== 获取凭证详情（诊断用）==========
-
-  private async handleGetCreds(): Promise<Response> {
-    // 从 DO storage 读取凭证
-    let credsRaw: string | null = null;
-    try {
-      credsRaw = await this.doState.storage.get<string>("credentials");
-    } catch (_e) {}
-
-    // 如果内存中有凭证，优先用内存的
-    if (!credsRaw && this.ilinkCreds) {
-      credsRaw = JSON.stringify(this.ilinkCreds);
-    }
-
-    if (!credsRaw) {
-      return new Response(JSON.stringify({ error: "未登录" }), {
-        headers: { "Content-Type": "application/json" },
-      });
-    }
-
-    return new Response(JSON.stringify({ creds: credsRaw }), {
-      headers: { "Content-Type": "application/json" },
-    });
-  }
-
   // ========== 持久化所有账号 ==========
   private async saveAccounts(): Promise<void> {
     const arr = Array.from(this.accounts.entries()).map(([accountId, a]) => ({
@@ -430,275 +288,6 @@ export class ILinkConnectionDO implements DurableObject {
       syncBuf: a.syncBuf,
     }));
     await this.doState.storage.put("accounts", arr);
-  }
-
-  // ========== 清除凭证（解绑微信）==========
-
-  private async handleClearCreds(request?: Request): Promise<Response> {
-    try {
-      let targetAccountId: string | null = null;
-
-      // 支持指定 accountId 解绑
-      if (request) {
-        try {
-          const body = await request.json() as { accountId?: string };
-          targetAccountId = body.accountId || null;
-        } catch {}
-      }
-
-      if (targetAccountId) {
-        // 解绑指定账号
-        this.accounts.delete(targetAccountId);
-        Logger.info("[DO] Account unbound", { accountId: targetAccountId, remaining: this.accounts.size });
-      } else {
-        // 兼容：解绑全部
-        this.accounts.clear();
-        this.ilinkCreds = null;
-        Logger.info("[DO] All accounts unbound");
-      }
-
-      // 更新 ilinkCreds 为第一个剩余账号
-      const first = this.accounts.values().next().value;
-      this.ilinkCreds = first ? first.creds : null;
-
-      await this.saveAccounts();
-    } catch (e: any) {
-      Logger.error("[DO] /clear-creds error", { error: e.message });
-    }
-    return new Response(JSON.stringify({ ok: true, remaining: this.accounts.size }), {
-      headers: { "Content-Type": "application/json" },
-    });
-  }
-
-  // ========== 保存凭证（登录确认时调用，绕过KV）==========
-
-  private async handleSaveCreds(request: Request): Promise<Response> {
-    try {
-      const body = await request.json() as { botToken?: string; accountId?: string; userId?: string; baseUrl?: string; syncBuf?: string; createdAt?: number };
-      const { botToken, accountId, userId, baseUrl, syncBuf } = body;
-      if (!botToken || !accountId) {
-        return new Response(JSON.stringify({ error: "缺少凭证" }), {
-          status: 400,
-          headers: { "Content-Type": "application/json" },
-        });
-      }
-
-      const creds: ILinkCredentials = {
-        botToken, accountId,
-        baseUrl: baseUrl || "https://ilinkai.weixin.qq.com",
-        userId: userId || "",
-      };
-
-      // 添加到多账号 Map
-      this.accounts.set(accountId, {
-        creds,
-        syncBuf: syncBuf || "",
-        consecutiveErrors: 0,
-        lastPollAt: "",
-        pollLoopRunning: false,
-      });
-
-      // 保持兼容：设 ilinkCreds
-      this.ilinkCreds = creds;
-
-      // 持久化所有账号
-      await this.saveAccounts();
-
-      const sessionToken = generateSessionToken();
-
-      // 自动发送欢迎消息和命令说明
-      try {
-        const welcomeMsg = `👋 欢迎使用爪爪 AI 助手！
-
-📝 可用命令：
-• /图片 <描述> - 生成图片
-• /image <描述> - 生成图片
-• /视频 <描述> - 生成视频
-• /video <描述> - 生成视频
-• /reset - 重置对话
-
-💡 示例：
-/图片 赛博朋克城市
-/video 10秒 海浪拍岸
-
-🎨 以图生图（仅 Agnes Image 2.1 Flash）：
-先发一张图片，60秒内发送 /图片 <描述> 即可基于图片生成`;
-        await sendTextMessage(creds, userId, syncBuf || "", welcomeMsg);
-      Logger.info("[DO] Welcome message sent", { userId });
-      } catch (e: any) {
-        Logger.warn("[DO] Failed to send welcome message", { error: e?.message });
-      }
-
-      Logger.info("[DO] Account saved", { accountId, totalAccounts: this.accounts.size });
-      return new Response(JSON.stringify({ ok: true, sessionToken, accountId, totalAccounts: this.accounts.size }), {
-        headers: { "Content-Type": "application/json" },
-      });
-    } catch (e: any) {
-      Logger.error("[DO] /save-creds error", { error: e.message });
-      return new Response(JSON.stringify({ error: e.message }), {
-        status: 500,
-        headers: { "Content-Type": "application/json" },
-      });
-    }
-  }
-
-  // ========== QR码状态轮询 ==========
-
-  private async handleQRPoll(url: URL): Promise<Response> {
-    const qrcodeKey = url.searchParams.get("qrcode");
-    if (!qrcodeKey) {
-      return new Response(JSON.stringify({ error: "缺少 qrcode 参数" }), {
-        status: 400,
-        headers: { "Content-Type": "application/json" },
-      });
-    }
-
-    Logger.info("[DO] QR poll started", { qrcode: qrcodeKey.slice(0, 8) + "..." });
-
-    // 轮询 iLink API（最多30次，每次间隔3秒 = 90秒）
-    for (let i = 0; i < 30; i++) {
-      try {
-        const status = await getQRCodeStatus(qrcodeKey);
-        Logger.info("[DO] QR poll check", { status: status.status, attempt: i + 1 });
-
-        if (status.status === "confirmed" && status.bot_token && status.ilink_bot_id) {
-          const creds = {
-            botToken: status.bot_token,
-            accountId: status.ilink_bot_id,
-            userId: status.ilink_user_id,
-            baseUrl: status.baseurl || "https://ilinkai.weixin.qq.com",
-            syncBuf: "",
-            rawLoginResponse: status.raw,
-            createdAt: Date.now(),
-          };
-          // KV写入失败不阻塞
-          try { await this.kv!.put("credentials", JSON.stringify(creds)); } catch {}
-
-          const sessionToken = generateSessionToken();
-          try {
-            await this.kv!.put(`clawbot:session:${sessionToken}`, "valid", { expirationTtl: 24 * 60 * 60 });
-          } catch {}
-
-          Logger.info("[DO] QR login confirmed", { accountId: status.ilink_bot_id });
-          return new Response(JSON.stringify({ status: "confirmed", ok: true }), {
-            headers: {
-              "Content-Type": "application/json",
-              "Set-Cookie": `clawbot_session=${sessionToken}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${24 * 60 * 60}`,
-            },
-          });
-        }
-
-        if (status.status === "expired") {
-          return new Response(JSON.stringify({ status: "expired" }), {
-            headers: { "Content-Type": "application/json" },
-          });
-        }
-
-        // 等待3秒再轮询
-        await new Promise((r) => setTimeout(r, 3000));
-      } catch (e: any) {
-        Logger.error("[DO] QR poll error", { error: e.message });
-        await new Promise((r) => setTimeout(r, 3000));
-      }
-    }
-
-    return new Response(JSON.stringify({ status: "timeout" }), {
-      headers: { "Content-Type": "application/json" },
-    });
-  }
-
-  // ========== 发送消息 ==========
-
-  private async handleSend(request: Request): Promise<Response> {
-    if (!this.ilinkCreds) {
-      return new Response(JSON.stringify({ error: "未登录" }), {
-        status: 401,
-        headers: { "Content-Type": "application/json" },
-      });
-    }
-
-    try {
-      const body = await request.json() as { toUserId?: string; contextToken?: string; text?: string };
-      const { toUserId, contextToken, text } = body;
-
-      if (!toUserId || !text) {
-        return new Response(JSON.stringify({ error: "缺少参数" }), {
-          status: 400,
-          headers: { "Content-Type": "application/json" },
-        });
-      }
-
-      await sendTextMessage(this.ilinkCreds, toUserId, contextToken || "", text);
-
-      // 立即触发一次轮询，检测是否有新消息
-      this.triggerImmediatePoll();
-
-      return new Response(JSON.stringify({ success: true }), {
-        headers: { "Content-Type": "application/json" },
-      });
-    } catch (e: any) {
-      Logger.error("[DO] Send error", { error: e.message, stack: e.stack?.slice(0, 500) });
-      return new Response(JSON.stringify({ error: e.message }), {
-        status: 500,
-        headers: { "Content-Type": "application/json" },
-      });
-    }
-  }
-
-  // ========== 发送视频消息（由 Queue 消费者调用）==========
-
-  private async handleSendVideo(request: Request): Promise<Response> {
-    try {
-      const body = await request.json() as { videoUrl: string; toUserId: string; contextToken: string; accountId?: string; model?: string; provider?: string; prompt?: string };
-      const { videoUrl, toUserId, contextToken, model, provider } = body;
-
-      if (!videoUrl || !toUserId) {
-        return new Response(JSON.stringify({ error: "缺少参数" }), {
-          status: 400, headers: { "Content-Type": "application/json" },
-        });
-      }
-
-      // 找到对应账号的凭证
-      const accountId = body.accountId;
-      let creds = this.ilinkCreds;
-      if (accountId && this.accounts.has(accountId)) {
-        creds = this.accounts.get(accountId)!.creds;
-      }
-
-      if (!creds) {
-        return new Response(JSON.stringify({ error: "未登录" }), {
-          status: 401, headers: { "Content-Type": "application/json" },
-        });
-      }
-
-      const videoCfg = await this.getConfigCached();
-      const videoProviderName = ((videoCfg as any).aiCustomProviders || []).find((p: any) => p.id === provider)?.name || provider || "unknown";
-      const modelInfo = `🤖 ${videoProviderName} · ${model || "unknown"}`;
-      try {
-        await sendVideoMessage(creds, toUserId, contextToken, videoUrl);
-      } catch {
-        await sendTextMessage(creds, toUserId, contextToken, `🎬 ${modelInfo}\n\n视频已生成：\n${videoUrl}`);
-      }
-
-      // 通过 WebSocket 广播到管理后台
-      this.broadcastToWebSockets({
-        type: "media_generated",
-        mediaType: "video",
-        url: videoUrl,
-        model: model,
-        provider: provider,
-        prompt: body.prompt || "",
-      });
-
-      return new Response(JSON.stringify({ success: true }), {
-        headers: { "Content-Type": "application/json" },
-      });
-    } catch (e: any) {
-      Logger.error("[DO] Send video error", { error: e.message });
-      return new Response(JSON.stringify({ error: e.message }), {
-        status: 500, headers: { "Content-Type": "application/json" },
-      });
-    }
   }
 
   // ========== 存储待处理的视频任务 ==========
