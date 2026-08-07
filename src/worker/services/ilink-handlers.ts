@@ -328,25 +328,71 @@ export async function handleGenerationLogs(ctx: DOContext, request: Request): Pr
 }
 
 export async function handleGetCreds(ctx: DOContext): Promise<Response> {
-  const accounts = Array.from(ctx.accounts.entries()).map(([id, acct]) => ({
-    accountId: id, baseUrl: acct.creds.baseUrl, lastPollAt: acct.lastPollAt, pollLoopRunning: acct.pollLoopRunning,
-  }));
-  return jsonResponse({ ok: true, accounts, current: ctx.ilinkCreds?.accountId || null });
+  let credsRaw: string | null = null;
+  try {
+    credsRaw = await ctx.doState.storage.get<string>("credentials");
+  } catch (_e) {}
+  if (!credsRaw && ctx.ilinkCreds) {
+    credsRaw = JSON.stringify(ctx.ilinkCreds);
+  }
+  if (!credsRaw) return jsonResponse({ error: "未登录" });
+  return jsonResponse({ creds: credsRaw });
 }
 
 export async function handleStatus(ctx: DOContext): Promise<Response> {
-  const { polls, handled, aiCalls, aiFails, lastLatencyMs } = ctx.runtimeStats;
-  const accounts = Array.from(ctx.accounts.entries()).map(([id, acct]) => ({
-    accountId: id, baseUrl: acct.creds.baseUrl, lastPollAt: acct.lastPollAt, pollLoopRunning: acct.pollLoopRunning,
+  const accountsList = Array.from(ctx.accounts.entries()).map(([id, a]) => ({
+    accountId: id,
+    baseUrl: a.creds.baseUrl,
+    userId: a.creds.userId,
+    lastPollAt: a.lastPollAt,
+    consecutiveErrors: a.consecutiveErrors,
+    pollLoopRunning: a.pollLoopRunning,
   }));
-  const hasCredentials = ctx.accounts.size > 0 || !!ctx.ilinkCreds;
+
+  // 兼容：如果没有 accounts 但有 ilinkCreds，构造一个
+  if (accountsList.length === 0 && ctx.ilinkCreds) {
+    accountsList.push({
+      accountId: ctx.ilinkCreds.accountId,
+      baseUrl: ctx.ilinkCreds.baseUrl,
+      userId: ctx.ilinkCreds.userId || "",
+      lastPollAt: ctx.state.lastPollAt,
+      consecutiveErrors: ctx.state.consecutiveErrors,
+      pollLoopRunning: false,
+    });
+  }
+
+  // 兜底：如果还是空，尝试直接从 DO storage 读旧格式
+  if (accountsList.length === 0) {
+    try {
+      const oldCreds = await ctx.doState.storage.get<string>("credentials");
+      if (oldCreds) {
+        const c = JSON.parse(oldCreds);
+        if (c.botToken && c.accountId) {
+          accountsList.push({
+            accountId: c.accountId,
+            baseUrl: c.baseUrl || "https://ilinkai.weixin.qq.com",
+            userId: c.userId || "",
+            lastPollAt: "",
+            consecutiveErrors: 0,
+            pollLoopRunning: false,
+          });
+        }
+      }
+    } catch {}
+  }
+
   return jsonResponse({
-    loggedIn: hasCredentials, status: hasCredentials ? "logged_in" : "not_logged_in",
-    accountId: ctx.ilinkCreds?.accountId || null, baseUrl: ctx.ilinkCreds?.baseUrl || null,
-    userId: ctx.ilinkCreds?.userId || null, accounts,
-    stats: { polls, handled, aiCalls, aiFails, lastPollAt: ctx.state.lastPollAt || "从未", lastLatencyMs },
-    websocketConnections: ctx.websockets.size, pendingMessages: ctx.state.pendingMessages.length,
-    hasBotCredentials: hasCredentials,
+    success: true,
+    isRunning: Array.from(ctx.accounts.values()).some(a => a.pollLoopRunning),
+    lastPollAt: ctx.state.lastPollAt,
+    consecutiveErrors: ctx.state.consecutiveErrors,
+    pendingMessages: ctx.state.pendingMessages.length,
+    hasCredentials: !!ctx.ilinkCreds || ctx.accounts.size > 0,
+    accountId: ctx.ilinkCreds?.accountId,
+    needsReLogin: !ctx.ilinkCreds && ctx.accounts.size === 0,
+    stats: ctx.runtimeStats,
+    accounts: accountsList,
+    totalAccounts: ctx.accounts.size,
   });
 }
 

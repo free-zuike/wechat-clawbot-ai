@@ -157,12 +157,14 @@ export class ILinkConnectionDO implements DurableObject {
 
   // 构建 handler 上下文（传递 DO 内部状态引用）
   private getCtx(): DOContext {
+    const self = this;
     return {
       env: this.env,
       doState: this.doState,
       websockets: this.websockets,
       accounts: this.accounts,
-      ilinkCreds: this.ilinkCreds,
+      get ilinkCreds() { return self.ilinkCreds; },
+      set ilinkCreds(v) { self.ilinkCreds = v; },
       state: this.state,
       cache: this.cache,
       runtimeStats: this.runtimeStats,
