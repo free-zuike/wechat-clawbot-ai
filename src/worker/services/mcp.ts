@@ -27,6 +27,7 @@ export interface MCPToolDefinition {
   description: string;
   inputSchema: Record<string, any>;
   serverId: string;
+  rawName?: string;
 }
 
 export interface MCPToolCall {
@@ -544,7 +545,7 @@ export async function getAllMCPTools(db: D1Database | null, autoFetch = false): 
 
     const prefix = server.toolPrefix || `mcp_${server.id}`;
     for (const tool of (tools || [])) {
-      allTools.push({ ...tool, name: `${prefix}_${tool.name}`, serverId: server.id });
+      allTools.push({ ...tool, name: `${prefix}_${tool.name}`, rawName: tool.name, serverId: server.id });
     }
   }
 
@@ -577,7 +578,7 @@ export function parseToolCalls(
       name: tc.function.name,
       arguments: args,
       callId: tc.id,
-      rawName: toolDef ? tc.function.name.replace(/^mcp_[^_]+_/, "") : tc.function.name,
+      rawName: toolDef?.rawName || tc.function.name,
       serverId: toolDef?.serverId || "",
     };
   });
