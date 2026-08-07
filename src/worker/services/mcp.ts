@@ -562,13 +562,21 @@ function buildToolDesc(tool: MCPToolDefinition): string {
   const schema = tool.inputSchema?.properties;
   if (!schema || typeof schema !== "object") return tool.description;
 
+  // 对常见参数名自动推断格式提示（通用，不针对特定 MCP）
+  const FORMAT_HINTS: Record<string, string> = {
+    period: "格式: YYYY-MM(月) / YYYY(年) / YYYY-MM-DD(日)",
+    date_from: "格式: YYYY-MM-DD，开始日期",
+    date_to: "格式: YYYY-MM-DD，结束日期",
+    happened_at: "格式: YYYY-MM-DD，交易发生时间",
+  };
+
   const hints: string[] = [];
   for (const [key, prop] of Object.entries(schema) as [string, any][]) {
     const type = prop.type || "string";
     const required = tool.inputSchema?.required?.includes(key) ? "必填" : "可选";
     const enum_ = prop.enum ? `(${prop.enum.join("/")})` : "";
-    const desc = prop.description ? `- ${prop.description}` : "";
-    hints.push(`${key}(${type} ${required}${enum_ ? " " + enum_ : ""})${desc}`.trim());
+    const desc = prop.description || FORMAT_HINTS[key] || "";
+    hints.push(`${key}(${type} ${required}${enum_ ? " " + enum_ : ""})${desc ? " - " + desc : ""}`.trim());
   }
   if (hints.length === 0) return tool.description;
   return `${tool.description}\n\n参数: ${hints.join(", ")}`;
