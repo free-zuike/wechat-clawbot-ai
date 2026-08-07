@@ -81,20 +81,18 @@ export async function handleSaveSession(ctx: DOContext, request: Request): Promi
 
 export async function handleCheckSession(ctx: DOContext, url: URL): Promise<Response> {
   const token = url.searchParams.get("token");
-  if (!token) return jsonResponse({ error: "缺少 token" }, 400);
+  if (!token) return jsonResponse({ valid: false });
   const sessionRaw = await ctx.doState.storage.get<string>(`session:${token}`);
-  if (!sessionRaw) return jsonResponse({ loggedIn: false, status: "not_logged_in" });
+  if (!sessionRaw) return jsonResponse({ valid: false });
   try {
     const session = JSON.parse(sessionRaw);
-    const createdAt = session.createdAt || 0;
-    const ageMs = Date.now() - createdAt;
-    if (ageMs > 24 * 60 * 60 * 1000) {
+    if (Date.now() - (session.createdAt || 0) > 24 * 60 * 60 * 1000) {
       await ctx.doState.storage.delete(`session:${token}`);
-      return jsonResponse({ loggedIn: false, status: "expired" });
+      return jsonResponse({ valid: false });
     }
-    return jsonResponse({ loggedIn: true, status: "logged_in", created_at: createdAt, age_ms: ageMs });
+    return jsonResponse({ valid: true, created_at: session.createdAt || 0, age_ms: Date.now() - (session.createdAt || 0) });
   } catch {
-    return jsonResponse({ loggedIn: false, status: "not_logged_in" });
+    return jsonResponse({ valid: false });
   }
 }
 
