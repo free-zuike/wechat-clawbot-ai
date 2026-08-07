@@ -109,7 +109,7 @@ async function apiFetch(
       }
 
       if (!response.ok) {
-        const message = json?.error || json?.message || `请求失败 (${response.status})`;
+        const message = json?.message || json?.error || `请求失败 (${response.status})`;
         const code = json?.error || "HTTP_ERROR";
 
         if (response.status === 401) {

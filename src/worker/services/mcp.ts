@@ -391,7 +391,10 @@ export async function loadAllMCPServers(db: D1Database | null): Promise<MCPServe
 
 export async function saveMCPServers(db: D1Database | null, servers: MCPServerConfig[]): Promise<void> {
   if (!db) return;
+  // 确保表存在
+  await ensureMCPServersTable(db);
   try {
+    if (servers.length === 0) return;
     await db.batch(
       servers.map((s) =>
         db.prepare(
@@ -410,8 +413,28 @@ export async function saveMCPServers(db: D1Database | null, servers: MCPServerCo
       )
     );
   } catch (e: any) {
-    Logger.warn("[mcp] Failed to save MCP servers", { error: e?.message });
-    throw e;
+    Logger.warn("[mcp] Failed to save MCP servers (batch), trying individual inserts", { error: e?.message });
+    // batch 失败时逐个插入
+    for (const s of servers) {
+      try {
+        await db.prepare(
+          `INSERT INTO mcp_servers (id, name, url, api_key, enabled, tool_prefix, tools, tools_fetched_at, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(id) DO UPDATE SET
+             name = excluded.name, url = excluded.url, api_key = excluded.api_key,
+             enabled = excluded.enabled, tool_prefix = excluded.tool_prefix,
+             tools = excluded.tools, tools_fetched_at = excluded.tools_fetched_at,
+             updated_at = excluded.updated_at`
+        ).bind(
+          s.id, s.name, s.url, s.apiKey || "", s.enabled ? 1 : 0,
+          s.toolPrefix || "", s.tools ? JSON.stringify(s.tools) : "[]",
+          s.toolsFetchedAt || null, new Date().toISOString(), new Date().toISOString()
+        ).run();
+      } catch (e2: any) {
+        Logger.error("[mcp] Failed to save individual server", { error: e2?.message, serverId: s.id });
+        throw e2;
+      }
+    }
   }
 }
 
