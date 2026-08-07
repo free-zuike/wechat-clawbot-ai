@@ -78,6 +78,14 @@ export function tryQuickReply(text: string): string | null {
 
 // ========== OpenAI 兼容 API 调用 ==========
 
+// 获取当前日期字符串（中国时区），通用辅助函数
+function getTodayStr(): string {
+  const now = new Date();
+  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(now);
+  const get = (t: string) => parts.find(p => p.type === t)?.value || "";
+  return `${get("year")}年${get("month")}月${get("day")}日`;
+}
+
 // 内置工具：获取当前日期时间（中国时区 Asia/Shanghai）
 const BUILTIN_TOOLS = [{
   type: "function",
@@ -354,9 +362,9 @@ export async function callAIWithContext(
   const system = systemPrompt || DEFAULT_SYSTEM_PROMPT;
   const context = db ? await getContextFromD1(db, userId) : await getContextFromSQLite(storage, userId);
 
-  // 提示 AI 可用 get_current_datetime 工具获取当前日期，用于换算相对时间
+  // 注入当前日期（通用，不针对特定 MCP），让 AI 正确换算"今天/上个月/本月"等相对时间
   const messages = buildMessagesWithContext(
-    `当用户询问"今天/昨天/明天/上个月/本月/上周/下周"等相对时间时，若需要准确日期，可调用 get_current_datetime 工具获取。\n\n${system}`,
+    `当前日期: ${getTodayStr()}（中国时区）。当用户提到"今天/昨天/明天/上个月/本月/下周"等相对时间时，基于以上日期和 get_current_datetime 工具返回的日期来准确换算。\n\n${system}`,
     cleanMsg,
     context
   );
@@ -462,7 +470,7 @@ export async function callAI(
         apiKey: config.apiKey,
         model: config.model,
         messages: [
-          { role: "system", content: `当用户询问"今天/昨天/明天/上个月/本月/上周/下周"等相对时间时，若需要准确日期，可调用 get_current_datetime 工具获取。\n\n${system}` },
+          { role: "system", content: `当前日期: ${getTodayStr()}（中国时区）。当用户提到"今天/昨天/明天/上个月/本月/下周"等相对时间时，基于以上日期和 get_current_datetime 工具返回的日期来准确换算。\n\n${system}` },
           { role: "user", content: cleanMsg },
         ],
         maxTokens: config.maxTokens,
@@ -474,7 +482,7 @@ export async function callAI(
       });
     } else {
       text = await callCloudflareAI(aiBinding, config.model, [
-        { role: "system", content: `当用户询问"今天/昨天/明天/上个月/本月/上周/下周"等相对时间时，获取准确日期后再回答。\n\n${system}` },
+        { role: "system", content: `当前日期: ${getTodayStr()}（中国时区）。当用户提到"今天/昨天/明天/上个月/本月/下周"等相对时间时，基于以上日期来准确换算。\n\n${system}` },
         { role: "user", content: cleanMsg },
       ], config.maxTokens);
     }
