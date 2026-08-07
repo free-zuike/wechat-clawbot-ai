@@ -121,45 +121,52 @@ export async function loadAllMCPServers(db: D1Database | null): Promise<MCPServe
   }
 }
 
-// 保存单个 MCP Server 配置
-async function saveServerRow(db: D1Database, server: MCPServerConfig): Promise<void> {
-  const now = new Date().toISOString();
-  await db.prepare(
-    `INSERT INTO mcp_servers (id, name, url, api_key, enabled, tool_prefix, tools, tools_fetched_at, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(id) DO UPDATE SET
-       name = excluded.name,
-       url = excluded.url,
-       api_key = excluded.api_key,
-       enabled = excluded.enabled,
-       tool_prefix = excluded.tool_prefix,
-       tools = excluded.tools,
-       tools_fetched_at = excluded.tools_fetched_at,
-       updated_at = excluded.updated_at`
-  ).bind(
-    server.id,
-    server.name,
-    server.url,
-    server.apiKey || "",
-    server.enabled ? 1 : 0,
-    server.toolPrefix || "",
-    server.tools ? JSON.stringify(server.tools) : "[]",
-    server.toolsFetchedAt || null,
-    now,
-    now
-  ).run();
-}
-
-// 保存全部 MCP Server 配置（全量替换）
+// 保存全部 MCP Server 配置（逐条 upsert，避免删全表导致数据丢失）
 export async function saveMCPServers(db: D1Database | null, servers: MCPServerConfig[]): Promise<void> {
   if (!db) return;
   try {
-    await db.exec(`DELETE FROM mcp_servers`);
-    for (const s of servers) {
-      await saveServerRow(db, s);
-    }
+    await db.batch(
+      servers.map((s) =>
+        db.prepare(
+          `INSERT INTO mcp_servers (id, name, url, api_key, enabled, tool_prefix, tools, tools_fetched_at, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(id) DO UPDATE SET
+             name = excluded.name,
+             url = excluded.url,
+             api_key = excluded.api_key,
+             enabled = excluded.enabled,
+             tool_prefix = excluded.tool_prefix,
+             tools = excluded.tools,
+             tools_fetched_at = excluded.tools_fetched_at,
+             updated_at = excluded.updated_at`
+        ).bind(
+          s.id,
+          s.name,
+          s.url,
+          s.apiKey || "",
+          s.enabled ? 1 : 0,
+          s.toolPrefix || "",
+          s.tools ? JSON.stringify(s.tools) : "[]",
+          s.toolsFetchedAt || null,
+          new Date().toISOString(),
+          new Date().toISOString()
+        )
+      )
+    );
   } catch (e: any) {
     Logger.warn("[mcp] Failed to save MCP servers", { error: e?.message });
+    throw e;
+  }
+}
+
+// 删除单个 MCP Server
+export async function deleteMCPServer(db: D1Database | null, serverId: string): Promise<void> {
+  if (!db) return;
+  try {
+    await db.prepare(`DELETE FROM mcp_servers WHERE id = ?`).bind(serverId).run();
+  } catch (e: any) {
+    Logger.warn("[mcp] Failed to delete MCP server", { error: e?.message });
+    throw e;
   }
 }
 
@@ -176,7 +183,7 @@ export async function updateServerTools(db: D1Database | null, serverId: string,
 }
 
 // 从 MCP Server 获取工具列表（通过 MCP 协议规范端点）
-async function fetchToolsFromServer(server: MCPServerConfig): Promise<MCPToolDefinition[]> {
+export async function fetchToolsFromServer(server: MCPServerConfig): Promise<MCPToolDefinition[]> {
   try {
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
@@ -214,19 +221,21 @@ async function fetchToolsFromServer(server: MCPServerConfig): Promise<MCPToolDef
   }
 }
 
-// 获取所有 MCP 工具定义（含前缀）
-export async function getAllMCPTools(db: D1Database | null): Promise<MCPToolDefinition[]> {
+// 获取所有 MCP 工具定义（含前缀），可选是否自动拉取
+export async function getAllMCPTools(db: D1Database | null, autoFetch = true): Promise<MCPToolDefinition[]> {
   const servers = await loadMCPServers(db);
   const allTools: MCPToolDefinition[] = [];
 
   for (const server of servers) {
     let tools = server.tools;
 
-    // 如果还没有工具定义，尝试从 MCP Server 拉取
-    if (!tools || tools.length === 0) {
+    // 如果还没有工具定义且允许自动拉取，尝试从 MCP Server 获取
+    if ((!tools || tools.length === 0) && autoFetch) {
       tools = await fetchToolsFromServer(server);
-      // 缓存工具定义到 D1
-      await updateServerTools(db, server.id, tools);
+      // 异步缓存工具定义到 D1（不阻塞返回）
+      if (tools.length > 0) {
+        updateServerTools(db, server.id, tools).catch(() => {});
+      }
     }
 
     const prefix = server.toolPrefix || `mcp_${server.id}`;

@@ -9,8 +9,10 @@ import {
   ensureMCPServersTable,
   loadAllMCPServers,
   saveMCPServers,
+  deleteMCPServer,
   updateServerTools,
   getAllMCPTools,
+  fetchToolsFromServer,
   type MCPServerConfig,
 } from "../services/mcp";
 
@@ -30,14 +32,6 @@ function unmaskMCPKey(newVal: unknown, oldVal: unknown): string {
   return (newVal as string) || "";
 }
 
-// 提供给前端的响应（API Key 掩码化）
-function maskServersResponse(servers: MCPServerConfig[]): any[] {
-  return servers.map(s => ({
-    ...s,
-    apiKey: s.apiKey ? maskKey(s.apiKey) : "",
-  }));
-}
-
 export async function handleMCP(request: Request, env: Env): Promise<Response> {
   const v = await verifyAdmin(request, env);
   if (!v.ok) return json({ error: v.error }, 401);
@@ -48,22 +42,16 @@ export async function handleMCP(request: Request, env: Env): Promise<Response> {
   // 确保表存在
   await ensureMCPServersTable(env.DB);
 
-  // 获取已存储的原始配置
-  const stored = await loadAllMCPServers(env.DB);
-
   if (method === "GET") {
-    // 列表 + 工具列表
-    const withTools = await Promise.all(
-      stored.map(async (s) => {
-        const tools = await getAllMCPTools(env.DB);
-        return {
-          ...s,
-          apiKey: s.apiKey ? maskKey(s.apiKey) : "",
-          tools: tools.filter(t => t.serverId === s.id),
-        };
-      })
-    );
-    return json({ ok: true, servers: withTools });
+    // 列表：只读缓存数据，不自动联网拉取工具
+    const stored = await loadAllMCPServers(env.DB);
+    const tools = await getAllMCPTools(env.DB, false);
+    const servers = stored.map(s => ({
+      ...s,
+      apiKey: s.apiKey ? maskKey(s.apiKey) : "",
+      tools: tools.filter(t => t.serverId === s.id),
+    }));
+    return json({ ok: true, servers });
   }
 
   if (method === "POST") {
@@ -80,6 +68,8 @@ export async function handleMCP(request: Request, env: Env): Promise<Response> {
       return json({ error: "VALIDATION_ERROR", message: "名称和 URL 为必填" }, 400);
     }
 
+    // 编辑时恢复原始 stored 数据，用于 unmask apiKey
+    const stored = await loadAllMCPServers(env.DB);
     const serverId = id || `mcp_${Date.now().toString(36)}`;
     const existing = stored.find(s => s.id === serverId);
 
@@ -94,38 +84,52 @@ export async function handleMCP(request: Request, env: Env): Promise<Response> {
       toolsFetchedAt: existing?.toolsFetchedAt,
     };
 
-    const idx = stored.findIndex(s => s.id === serverId);
-    if (idx >= 0) stored[idx] = server;
-    else stored.push(server);
-
-    await saveMCPServers(env.DB, stored);
-    Logger.info("[mcp] server saved", { id: serverId, name: server.name });
-    return json({ ok: true, serverId, server: maskServersResponse([server])[0] });
+    // 只保存这一个 server（逐条 upsert，不涉及其他 server）
+    try {
+      await saveMCPServers(env.DB, [server]);
+      Logger.info("[mcp] server saved", { id: serverId, name: server.name });
+      return json({
+        ok: true,
+        serverId,
+        server: {
+          ...server,
+          apiKey: server.apiKey ? maskKey(server.apiKey) : "",
+        },
+      });
+    } catch (e: any) {
+      Logger.error("[mcp] save failed", { error: e?.message });
+      return json({ error: "SAVE_FAILED", message: `保存失败: ${e?.message}` }, 500);
+    }
   }
 
   if (method === "DELETE") {
-    // 删除
     const id = url.searchParams.get("id");
     if (!id) return json({ error: "VALIDATION_ERROR", message: "缺少 id" }, 400);
-    const remaining = stored.filter(s => s.id !== id);
-    await saveMCPServers(env.DB, remaining);
-    Logger.info("[mcp] server deleted", { id });
-    return json({ ok: true });
+    try {
+      await deleteMCPServer(env.DB, id);
+      Logger.info("[mcp] server deleted", { id });
+      return json({ ok: true });
+    } catch (e: any) {
+      return json({ error: "DELETE_FAILED", message: `删除失败: ${e?.message}` }, 500);
+    }
   }
 
   if (method === "PUT") {
-    // 刷新工具列表
+    // 刷新工具列表：主动拉取 MCP Server 的工具
     const id = url.searchParams.get("id");
     if (!id) return json({ error: "VALIDATION_ERROR", message: "缺少 id" }, 400);
+
+    const stored = await loadAllMCPServers(env.DB);
     const server = stored.find(s => s.id === id);
     if (!server) return json({ error: "NOT_FOUND", message: "MCP Server 不存在" }, 404);
 
-    // 清空缓存后重新拉取
-    await updateServerTools(env.DB, id, []);
-    const tools = await getAllMCPTools(env.DB);
-    const serverTools = tools.filter(t => t.serverId === id);
-
-    return json({ ok: true, tools: serverTools });
+    try {
+      const tools = await fetchToolsFromServer(server);
+      await updateServerTools(env.DB, id, tools);
+      return json({ ok: true, tools });
+    } catch (e: any) {
+      return json({ error: "FETCH_FAILED", message: `获取工具失败: ${e?.message}` }, 500);
+    }
   }
 
   return json({ error: "Method Not Allowed" }, 405);
