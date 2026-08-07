@@ -176,6 +176,14 @@ async function callOpenAICompatible(params: {
       } as any);
     }
 
+    // 记录工具返回的原始数据，用于诊断
+    for (const result of results) {
+      Logger.info(`[ai] MCP tool result: ${result.name}`, {
+        contentPreview: result.content.slice(0, 800),
+        isError: result.isError,
+      });
+    }
+
     Logger.info(`[ai] MCP tool round ${round + 1}: ${toolCalls.length} tools called`);
 
     // 更新 body 中的 messages 以包含新的消息
