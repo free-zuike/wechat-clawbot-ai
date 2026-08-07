@@ -49,18 +49,19 @@ export interface MCPToolResult {
 // 确保 mcp_sessions 表存在
 export async function ensureMCPSessionsTable(db: D1Database): Promise<void> {
   try {
-    await db.exec(`
-      CREATE TABLE IF NOT EXISTS mcp_sessions (
+    await db.prepare(
+      `CREATE TABLE IF NOT EXISTS mcp_sessions (
         server_id TEXT PRIMARY KEY,
         session_id TEXT,
         protocol_version TEXT,
         server_capabilities TEXT,
         expires_at INTEGER,
         updated_at TEXT NOT NULL
-      )
-    `);
+      )`
+    ).run();
   } catch (e: any) {
     Logger.warn("[mcp] Failed to ensure mcp_sessions table", { error: e?.message });
+    throw e;
   }
 }
 
@@ -324,8 +325,8 @@ async function ensureSession(db: D1Database, server: MCPServerConfig): Promise<b
 
 export async function ensureMCPServersTable(db: D1Database): Promise<void> {
   try {
-    await db.exec(`
-      CREATE TABLE IF NOT EXISTS mcp_servers (
+    await db.prepare(
+      `CREATE TABLE IF NOT EXISTS mcp_servers (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
         url TEXT NOT NULL,
@@ -336,10 +337,11 @@ export async function ensureMCPServersTable(db: D1Database): Promise<void> {
         tools_fetched_at INTEGER,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
-      )
-    `);
+      )`
+    ).run();
   } catch (e: any) {
     Logger.warn("[mcp] Failed to ensure mcp_servers table", { error: e?.message });
+    throw e;
   }
 }
 
