@@ -31,12 +31,17 @@ const DEFAULT_SYSTEM_PROMPT =
   "如果工具返回的数据中包含总金额、交易笔数、分类等统计信息，直接引用原文，不要自己计算或推断。";
 
 // 生成当前日期/时间字符串，注入到用户消息中（放在系统提示词中模型可能忽略）
+// 使用 China 时区（Asia/Shanghai, UTC+8），避免 Cloudflare Workers UTC 时区导致日期偏差
 function getCurrentDateTag(): string {
   const now = new Date();
-  const dateStr = `${now.getFullYear()}年${now.getMonth() + 1}月${now.getDate()}日`;
-  const weekdays = ["日", "一", "二", "三", "四", "五", "六"];
-  const weekdayStr = weekdays[now.getDay()];
-  return `[当前日期: ${dateStr}（星期${weekdayStr}）]`;
+  const tz = "Asia/Shanghai";
+  // 用 Intl 拆分年月日和星期，时区正确
+  const dateParts = new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit", weekday: "long" }).formatToParts(now);
+  const get = (t: string) => dateParts.find(p => p.type === t)?.value || "";
+  const year = get("year"), month = get("month"), day = get("day");
+  const weekdayMap: Record<string, string> = { "Sunday": "日", "Monday": "一", "Tuesday": "二", "Wednesday": "三", "Thursday": "四", "Friday": "五", "Saturday": "六" };
+  const weekdayStr = weekdayMap[get("weekday")] || get("weekday");
+  return `[当前日期: ${year}年${month}月${day}日（星期${weekdayStr}）]`;
 }
 
 // 从 API baseUrl 中提取 base 和 version，用于构建其他端点
