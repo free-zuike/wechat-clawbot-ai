@@ -341,7 +341,9 @@ export async function callAIWithContext(
 
   // 提示 AI 可用 get_current_datetime 工具获取当前日期，用于换算相对时间
   const messages = buildMessagesWithContext(
-    `当用户询问"今天/昨天/明天/上个月/本月/上周/下周"等相对时间时，若需要准确日期，可调用 get_current_datetime 工具获取。\n\n${system}`,
+    `当用户询问"今天/昨天/明天/上个月/本月/上周/下周"等相对时间时，若需要准确日期，可调用 get_current_datetime 工具获取。\n` +
+    `查询消费数据时，若用户问"上个月/本月/某月"的消费，必须使用月维度(scope=month)并用正确年月(period=YYYY-MM)查询，不得查询全年或全部数据。\n\n` +
+    system,
     cleanMsg,
     context
   );
@@ -447,7 +449,7 @@ export async function callAI(
         apiKey: config.apiKey,
         model: config.model,
         messages: [
-          { role: "system", content: `当用户询问"今天/昨天/明天/上个月/本月/上周/下周"等相对时间时，若需要准确日期，可调用 get_current_datetime 工具获取。\n\n${system}` },
+          { role: "system", content: `当用户询问"今天/昨天/明天/上个月/本月/上周/下周"等相对时间时，若需要准确日期，可调用 get_current_datetime 工具获取。\n查询消费数据时，若用户问"上个月/本月/某月"的消费，必须使用月维度(scope=month)并用正确年月(period=YYYY-MM)查询，不得查询全年或全部数据。\n\n${system}` },
           { role: "user", content: cleanMsg },
         ],
         maxTokens: config.maxTokens,

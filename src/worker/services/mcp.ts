@@ -557,10 +557,26 @@ export async function getAllMCPTools(db: D1Database | null, autoFetch = false): 
 
 // ========== OpenAI 工具格式转换 ==========
 
+// 从 inputSchema 提取参数说明，追加到描述中，帮助 AI 正确传参
+function buildToolDesc(tool: MCPToolDefinition): string {
+  const schema = tool.inputSchema?.properties;
+  if (!schema || typeof schema !== "object") return tool.description;
+
+  const hints: string[] = [];
+  for (const [key, prop] of Object.entries(schema) as [string, any][]) {
+    const type = prop.type || "string";
+    const required = tool.inputSchema?.required?.includes(key) ? "必填" : "可选";
+    const enum_ = prop.enum ? `(${prop.enum.join("/")})` : "";
+    hints.push(`${key}( ${type} ${required} ${enum_})`.trim());
+  }
+  if (hints.length === 0) return tool.description;
+  return `${tool.description}\n\n参数: ${hints.join(", ")}`;
+}
+
 export function mcpToolsToOpenAI(tools: MCPToolDefinition[]): any[] {
   return tools.map(t => ({
     type: "function",
-    function: { name: t.name, description: t.description, parameters: t.inputSchema },
+    function: { name: t.name, description: buildToolDesc(t), parameters: t.inputSchema },
   }));
 }
 
