@@ -33,6 +33,9 @@ export async function handleChat(request: Request, env: Env): Promise<Response> 
   const requestId = crypto.randomUUID().slice(0, 8);
   Logger.info(`[chat][${requestId}] handleChat called`);
 
+  let trimmed = "";
+  let aiConfig: ReturnType<typeof resolveAIConfig>;
+
   try {
     let body: Record<string, unknown>;
     try {
@@ -46,7 +49,7 @@ export async function handleChat(request: Request, env: Env): Promise<Response> 
       return json({ error: "VALIDATION_ERROR", message: "请输入消息内容" }, 400);
     }
 
-    const trimmed = rawMessage.trim();
+    trimmed = rawMessage.trim();
     Logger.info(`[chat][${requestId}] message`, { length: trimmed.length });
 
     const quick = tryQuickReply(trimmed);
@@ -73,7 +76,7 @@ export async function handleChat(request: Request, env: Env): Promise<Response> 
       }
     } catch (_) {}
 
-    const aiConfig = resolveAIConfig(kv);
+    aiConfig = resolveAIConfig(kv);
     const systemPrompt = (kv.aiSystemPrompt as string) || "";
 
     // 从预设中读取图片/视频模型
@@ -175,6 +178,13 @@ export async function handleChat(request: Request, env: Env): Promise<Response> 
 
     Logger.info(`[chat][${requestId}] provider`, { provider: aiConfig.provider, model: aiConfig.model || "default" });
 
+    // 加载 MCP 服务器配置
+    let mcpServers: any[] = [];
+    try {
+      const { loadAllMCPServers } = await import("../services/mcp");
+      mcpServers = (await loadAllMCPServers(env.DB)).filter((s: any) => s.enabled);
+    } catch (_e) {}
+
     const reply = await callAI(env.AI, trimmed, systemPrompt, {
       provider: aiConfig.provider,
       model: aiConfig.model,
@@ -182,6 +192,8 @@ export async function handleChat(request: Request, env: Env): Promise<Response> 
       apiKey: aiConfig.apiKey,
       maxTokens: aiConfig.maxTokens,
       thinking: aiConfig.thinking,
+      mcpServers,
+      db: env.DB,
     });
 
     Logger.info(`[chat][${requestId}] reply`, { length: reply.length });

@@ -11,6 +11,15 @@ import {
   buildMessagesWithContext,
   shouldClearContext,
 } from "./context";
+import {
+  loadMCPServers,
+  getAllMCPTools,
+  mcpToolsToOpenAI,
+  parseToolCalls,
+  executeToolCalls,
+  type MCPServerConfig,
+  type MCPToolDefinition,
+} from "./mcp";
 
 const DEFAULT_SYSTEM_PROMPT =
   "你是爪爪（ClawBot AI），一个微信机器人助手。" +
@@ -74,6 +83,11 @@ async function callOpenAICompatible(params: {
   maxTokens: number;
   temperature?: number;
   thinking?: boolean;
+  tools?: any[];            // MCP 工具定义（OpenAI 格式）
+  mcpServers?: MCPServerConfig[];
+  mcpTools?: MCPToolDefinition[];
+  db?: D1Database | null;
+  maxToolRounds?: number;
 }): Promise<string> {
   const url = params.baseUrl.trim().replace(/\/+$/, "");
 
@@ -89,22 +103,79 @@ async function callOpenAICompatible(params: {
     body.chat_template_kwargs = { enable_thinking: true };
   }
 
-  const resp = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${params.apiKey}`,
-    },
-    body: JSON.stringify(body),
-  });
-
-  if (!resp.ok) {
-    const errBody = await resp.text().catch(() => "");
-    throw new Error(`API ${resp.status}: ${errBody.slice(0, 200)}`);
+  // 如果有 MCP 工具，附加到请求
+  const hasTools = params.tools && params.tools.length > 0;
+  if (hasTools) {
+    body.tools = params.tools;
   }
 
-  const data = await resp.json() as { choices?: Array<{ message?: { content?: string } }> };
-  return data.choices?.[0]?.message?.content || "";
+  const maxRounds = params.maxToolRounds ?? 5;
+  const mcpTools = params.mcpTools || [];
+  const mcpServers = params.mcpServers || [];
+  const db = params.db || null;
+
+  for (let round = 0; round < maxRounds; round++) {
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${params.apiKey}`,
+      },
+      body: JSON.stringify(body),
+    });
+
+    if (!resp.ok) {
+      const errBody = await resp.text().catch(() => "");
+      throw new Error(`API ${resp.status}: ${errBody.slice(0, 200)}`);
+    }
+
+    const data = await resp.json() as { choices?: Array<{ message?: { content?: string; tool_calls?: any[] } }> };
+    const choice = data.choices?.[0];
+    const message = choice?.message;
+
+    if (!message) {
+      throw new Error("API 响应格式异常");
+    }
+
+    // 将 AI 回复加入消息列表
+    params.messages.push({
+      role: "assistant",
+      content: message.content || "",
+      ...(message.tool_calls ? { tool_calls: message.tool_calls } : {}),
+    } as any);
+
+    // 检查是否有 tool_calls
+    const toolCalls = message.tool_calls;
+    if (!toolCalls || toolCalls.length === 0 || !hasTools) {
+      // 没有工具调用，返回最终回复
+      return message.content || "";
+    }
+
+    // 解析并执行 MCP 工具调用
+    const parsedCalls = parseToolCalls(
+      toolCalls as Array<{ id: string; function: { name: string; arguments: string } }>,
+      mcpTools
+    );
+    const results = await executeToolCalls(parsedCalls, db);
+
+    // 将工具结果添加到消息列表（用于下一轮）
+    for (const result of results) {
+      params.messages.push({
+        role: "tool",
+        tool_call_id: result.callId,
+        content: result.content,
+      } as any);
+    }
+
+    Logger.info(`[ai] MCP tool round ${round + 1}: ${toolCalls.length} tools called`);
+
+    // 更新 body 中的 messages 以包含新的消息
+    body.messages = params.messages;
+  }
+
+  // 达到最大轮次限制，返回最后一条助手消息
+  const lastAssistant = [...params.messages].reverse().find(m => m.role === "assistant");
+  return (lastAssistant?.content as string) || "";
 }
 
 // ========== Cloudflare Workers AI 调用 ==========
@@ -129,6 +200,8 @@ interface AIConfig {
   apiKey: string;
   maxTokens: number;
   thinking?: boolean;
+  mcpServers?: MCPServerConfig[];
+  db?: D1Database | null;
 }
 
 // ========== 带上下文的 AI 调用（微信消息处理）==========
@@ -161,6 +234,8 @@ export async function callAIWithContext(
     apiKey: aiConfig?.apiKey || "",
     maxTokens: aiConfig?.maxTokens || 1024,
     thinking: aiConfig?.thinking || false,
+    mcpServers: aiConfig?.mcpServers || [],
+    db: aiConfig?.db || null,
   };
 
   if (config.provider !== "cloudflare" && !config.model) {
@@ -177,6 +252,15 @@ export async function callAIWithContext(
   let reply = "";
   try {
     if (config.provider !== "cloudflare") {
+      // 加载 MCP 工具
+      let mcpTools: MCPToolDefinition[] = [];
+      let openAITools: any[] = [];
+      if (config.mcpServers && config.mcpServers.length > 0 && config.db) {
+        mcpTools = await getAllMCPTools(config.db);
+        openAITools = mcpToolsToOpenAI(mcpTools);
+        Logger.info(`[ai] Loaded ${mcpTools.length} MCP tools for ${userId}`);
+      }
+
       reply = await callOpenAICompatible({
         baseUrl: config.baseUrl,
         apiKey: config.apiKey,
@@ -184,6 +268,10 @@ export async function callAIWithContext(
         messages,
         maxTokens: config.maxTokens,
         thinking: config.thinking,
+        tools: openAITools.length > 0 ? openAITools : undefined,
+        mcpServers: config.mcpServers,
+        mcpTools,
+        db: config.db,
       });
     } else {
       reply = await callCloudflareAI(aiBinding, config.model, messages, config.maxTokens);
@@ -231,6 +319,8 @@ export async function callAI(
     apiKey: aiConfig?.apiKey || "",
     maxTokens: aiConfig?.maxTokens || 1024,
     thinking: aiConfig?.thinking || false,
+    mcpServers: aiConfig?.mcpServers || [],
+    db: aiConfig?.db || null,
   };
 
   if (config.provider !== "cloudflare" && !config.model) {
@@ -244,6 +334,15 @@ export async function callAI(
   try {
     let text = "";
     if (config.provider !== "cloudflare") {
+      // 加载 MCP 工具
+      let mcpTools: MCPToolDefinition[] = [];
+      let openAITools: any[] = [];
+      if (config.mcpServers && config.mcpServers.length > 0 && config.db) {
+        mcpTools = await getAllMCPTools(config.db);
+        openAITools = mcpToolsToOpenAI(mcpTools);
+        Logger.info(`[ai] Loaded ${mcpTools.length} MCP tools (no context)`);
+      }
+
       text = await callOpenAICompatible({
         baseUrl: config.baseUrl,
         apiKey: config.apiKey,
@@ -254,6 +353,10 @@ export async function callAI(
         ],
         maxTokens: config.maxTokens,
         thinking: config.thinking,
+        tools: openAITools.length > 0 ? openAITools : undefined,
+        mcpServers: config.mcpServers,
+        mcpTools,
+        db: config.db,
       });
     } else {
       text = await callCloudflareAI(aiBinding, config.model, [

@@ -215,6 +215,25 @@ export interface DBStats {
   updated_at: string;
 }
 
+// ========== MCP (Model Context Protocol) 相关类型 ==========
+export interface MCPServer {
+  id: string;
+  name: string;
+  url: string;
+  apiKey?: string;
+  enabled: boolean;
+  toolPrefix?: string;
+  tools?: MCPToolDef[];
+  toolsFetchedAt?: number;
+}
+
+export interface MCPToolDef {
+  name: string;
+  description: string;
+  inputSchema: Record<string, any>;
+  serverId: string;
+}
+
 // ========== 调试相关类型 ==========
 export interface DebugResult {
   ok: boolean;

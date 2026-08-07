@@ -126,6 +126,9 @@
       <section v-if="activeSection === 'logs'">
         <GenerationLogsPanel />
       </section>
+      <section v-if="activeSection === 'mcp'">
+        <MCPServerPanel />
+      </section>
     </main>
   </div>
 </template>
@@ -146,6 +149,7 @@ import TemplatesPanel from "../components/admin/TemplatesPanel.vue";
 import TaskPanel from "../components/admin/TaskPanel.vue";
 import PendingVideosPanel from "../components/admin/PendingVideosPanel.vue";
 import GenerationLogsPanel from "../components/admin/GenerationLogsPanel.vue";
+import MCPServerPanel from "../components/admin/MCPServerPanel.vue";
 
 const router = useRouter();
 
@@ -164,6 +168,7 @@ const navItems = [
   { key: "templates", label: "消息模板", icon: "📋" },
   { key: "videos", label: "视频任务", icon: "🎬" },
   { key: "logs", label: "生成记录", icon: "📝" },
+  { key: "mcp", label: "MCP 服务", icon: "🔌" },
 ];
 const activeSection = ref("status");
 let isFirstRefresh = true;

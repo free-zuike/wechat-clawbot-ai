@@ -54,3 +54,17 @@ CREATE TABLE IF NOT EXISTS stats (
 );
 
 CREATE INDEX IF NOT EXISTS idx_stats_date ON stats(date);
+
+-- MCP Server 配置表（存储 MCP 服务器地址、密钥、工具列表）
+CREATE TABLE IF NOT EXISTS mcp_servers (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  url TEXT NOT NULL,
+  api_key TEXT,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  tool_prefix TEXT,
+  tools TEXT,
+  tools_fetched_at INTEGER,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);

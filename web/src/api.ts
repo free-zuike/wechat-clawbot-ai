@@ -421,3 +421,42 @@ export async function clearAllGenerationLogs(): Promise<{ ok: boolean }> {
   return apiFetch(`/api/admin/generation-logs?all=true`, { method: "DELETE" });
 }
 
+// ===== MCP Server 管理 =====
+export interface MCPServer {
+  id: string;
+  name: string;
+  url: string;
+  apiKey?: string;
+  enabled: boolean;
+  toolPrefix?: string;
+  tools?: Array<{ name: string; description: string; inputSchema: Record<string, any> }>;
+  toolsFetchedAt?: number;
+}
+
+export async function fetchMCPServers(): Promise<{ ok: boolean; servers: MCPServer[] }> {
+  return apiFetch("/api/mcp", { cancelable: "mcp-servers" });
+}
+
+export async function saveMCPServer(data: {
+  id?: string;
+  name: string;
+  url: string;
+  apiKey?: string;
+  enabled?: boolean;
+  toolPrefix?: string;
+}): Promise<{ ok: boolean; serverId: string; server: MCPServer }> {
+  return apiFetch("/api/mcp", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteMCPServer(id: string): Promise<{ ok: boolean }> {
+  return apiFetch(`/api/mcp?id=${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+export async function refreshMCPTools(id: string): Promise<{ ok: boolean; tools: any[] }> {
+  return apiFetch(`/api/mcp?id=${encodeURIComponent(id)}`, { method: "PUT" });
+}
+

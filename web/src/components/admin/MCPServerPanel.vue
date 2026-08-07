@@ -1,0 +1,203 @@
+<template>
+  <div class="card">
+    <div class="section-header">
+      <h2>🔌 MCP Server 管理</h2>
+      <button class="btn secondary" :disabled="loading" @click="loadServers">🔄 刷新</button>
+    </div>
+    <div class="desc">配置 MCP (Model Context Protocol) 服务器，AI 可在对话中调用其提供的工具</div>
+
+    <!-- 服务器列表 -->
+    <div v-if="servers.length === 0 && !loading" class="empty-state">
+      暂无 MCP 服务器配置
+    </div>
+    <div v-for="s in servers" :key="s.id" class="mcp-server-item">
+      <div class="server-header">
+        <span class="server-name">{{ s.name }}</span>
+        <span :class="['server-status', s.enabled ? 'enabled' : 'disabled']">
+          {{ s.enabled ? '已启用' : '已禁用' }}
+        </span>
+        <div class="server-actions">
+          <button class="btn tiny secondary" @click="editServer(s)">✏️</button>
+          <button class="btn tiny danger" @click="deleteServer(s.id)">🗑️</button>
+        </div>
+      </div>
+      <div class="server-url">{{ s.url }}</div>
+      <div class="server-tools">
+        <span class="tool-count">{{ (s.tools || []).length }} 个工具</span>
+        <button v-if="s.enabled" class="btn tiny secondary" @click="refreshTools(s.id)">🔄 获取工具</button>
+      </div>
+      <div v-if="s.tools && s.tools.length > 0" class="tool-list">
+        <div v-for="t in s.tools" :key="t.name" class="tool-item">
+          <span class="tool-name">{{ t.name }}</span>
+          <span class="tool-desc">{{ t.description || '无描述' }}</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- 添加按钮 -->
+    <button class="btn secondary" style="margin-top: 12px" @click="showForm(null)">+ 添加 MCP Server</button>
+
+    <!-- 编辑/新增表单弹窗 -->
+    <Teleport to="body">
+      <div v-if="formVisible" class="modal-overlay" @click.self="formVisible = false">
+        <div class="modal">
+          <div class="modal-header">
+            <h3>{{ editingId ? '编辑 MCP Server' : '添加 MCP Server' }}</h3>
+            <button class="modal-close" @click="formVisible = false">&times;</button>
+          </div>
+          <div class="modal-body">
+            <div class="field"><label>名称 *</label><input v-model="form.name" class="input" placeholder="如：天气查询服务" /></div>
+            <div class="field"><label>URL *</label><input v-model="form.url" class="input" placeholder="https://mcp.example.com" /><div class="field-hint">MCP Server 的 HTTP 端点地址，末尾不要加 /</div></div>
+            <div class="field"><label>API Key（可选）</label><input v-model="form.apiKey" class="input" type="password" placeholder="可选" /></div>
+            <div class="field"><label class="checkbox-label"><input type="checkbox" v-model="form.enabled" /> 启用</label></div>
+            <div class="field"><label>工具前缀</label><input v-model="form.toolPrefix" class="input" placeholder="默认：mcp_服务ID" /><div class="field-hint">工具名称前缀，避免名称冲突。留空自动生成</div></div>
+          </div>
+          <div class="modal-footer">
+            <button class="btn secondary" @click="formVisible = false">取消</button>
+            <button class="btn" :disabled="saving" @click="saveServer">{{ saving ? '保存中...' : '保存' }}</button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <div v-if="result" :class="['result-box', result.includes('✅') ? 'success' : '']">{{ result }}</div>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref, onMounted } from "vue";
+import { fetchMCPServers, saveMCPServer, deleteMCPServer, refreshMCPTools, type MCPServer } from "../../api";
+
+const servers = ref<MCPServer[]>([]);
+const loading = ref(false);
+const saving = ref(false);
+const result = ref("");
+const formVisible = ref(false);
+const editingId = ref<string | null>(null);
+const form = ref({ name: "", url: "", apiKey: "", enabled: true, toolPrefix: "" });
+
+async function loadServers() {
+  loading.value = true;
+  try {
+    const data = await fetchMCPServers();
+    if (data && data.servers) servers.value = data.servers;
+  } catch (e: any) {
+    result.value = "❌ 加载失败: " + (e.message || "未知错误");
+  } finally {
+    loading.value = false;
+  }
+}
+
+function showForm(server: MCPServer | null) {
+  if (server) {
+    editingId.value = server.id;
+    form.value = {
+      name: server.name,
+      url: server.url,
+      apiKey: server.apiKey || "",
+      enabled: server.enabled,
+      toolPrefix: server.toolPrefix || "",
+    };
+  } else {
+    editingId.value = null;
+    form.value = { name: "", url: "", apiKey: "", enabled: true, toolPrefix: "" };
+  }
+  formVisible.value = true;
+}
+
+function editServer(server: MCPServer) {
+  showForm(server);
+}
+
+async function saveServer() {
+  if (!form.value.name.trim() || !form.value.url.trim()) {
+    result.value = "⚠️ 名称和 URL 为必填";
+    return;
+  }
+  saving.value = true;
+  try {
+    const data = await saveMCPServer({
+      id: editingId.value || undefined,
+      name: form.value.name.trim(),
+      url: form.value.url.trim(),
+      apiKey: form.value.apiKey || undefined,
+      enabled: form.value.enabled,
+      toolPrefix: form.value.toolPrefix.trim() || undefined,
+    });
+    if (data.ok) {
+      result.value = "✅ 保存成功";
+      formVisible.value = false;
+      await loadServers();
+    }
+  } catch (e: any) {
+    result.value = "❌ 保存失败: " + (e.message || "未知错误");
+  } finally {
+    saving.value = false;
+  }
+}
+
+async function deleteServer(id: string) {
+  if (!confirm("确定删除此 MCP Server？")) return;
+  try {
+    const data = await deleteMCPServer(id);
+    if (data.ok) {
+      result.value = "✅ 已删除";
+      await loadServers();
+    }
+  } catch (e: any) {
+    result.value = "❌ 删除失败: " + (e.message || "未知错误");
+  }
+}
+
+async function refreshTools(id: string) {
+  try {
+    const data = await refreshMCPTools(id);
+    if (data.ok) {
+      result.value = `✅ 已获取 ${data.tools.length} 个工具`;
+      await loadServers();
+    }
+  } catch (e: any) {
+    result.value = "❌ 获取工具失败: " + (e.message || "未知错误");
+  }
+}
+
+onMounted(() => {
+  loadServers();
+});
+</script>
+
+<style scoped>
+.section-header { display: flex; justify-content: space-between; align-items: center; }
+.section-header h2 { margin: 0; }
+.mcp-server-item { border: 1px solid var(--border-light); border-radius: 8px; padding: 12px; margin-top: 10px; background: var(--bg-card); }
+.server-header { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+.server-name { font-weight: 600; font-size: 14px; flex: 1; }
+.server-status { font-size: 11px; padding: 2px 8px; border-radius: 4px; font-weight: 600; }
+.server-status.enabled { background: var(--alert-success-bg); color: var(--alert-success-text); }
+.server-status.disabled { background: var(--bg-skeleton-1); color: var(--text-muted); }
+.server-actions { display: flex; gap: 4px; }
+.server-url { font-size: 12px; color: var(--text-muted); font-family: monospace; margin-bottom: 6px; word-break: break-all; }
+.server-tools { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+.tool-count { font-size: 12px; color: var(--text-secondary); }
+.tool-list { margin-top: 6px; border-top: 1px solid var(--border-light); padding-top: 6px; max-height: 200px; overflow-y: auto; }
+.tool-item { display: flex; flex-direction: column; gap: 2px; padding: 6px 8px; border-radius: 4px; font-size: 12px; }
+.tool-item:hover { background: var(--bg-skeleton-1); }
+.tool-name { font-weight: 600; color: var(--link); font-family: monospace; }
+.tool-desc { color: var(--text-muted); font-size: 11px; }
+.modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 1000; }
+.modal { background: var(--bg-card); border-radius: 12px; width: 480px; max-height: 80vh; overflow-y: auto; box-shadow: 0 8px 32px rgba(0,0,0,0.3); }
+.modal-header { display: flex; justify-content: space-between; align-items: center; padding: 16px 20px; border-bottom: 1px solid var(--border-light); }
+.modal-header h3 { margin: 0; font-size: 16px; }
+.modal-close { background: none; border: none; font-size: 20px; cursor: pointer; color: var(--text-secondary); }
+.modal-body { padding: 16px 20px; }
+.modal-footer { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 20px; border-top: 1px solid var(--border-light); }
+.btn.tiny { padding: 4px 10px; font-size: 12px; }
+.btn.danger { color: var(--error); border-color: var(--error); }
+.empty-state { text-align: center; padding: 40px; color: var(--text-dim); }
+.result-box { margin-top: 12px; padding: 10px; border-radius: 6px; border: 1px solid var(--border-light); font-size: 13px; }
+.result-box.success { background: var(--alert-success-bg); color: var(--alert-success-text); border-color: var(--alert-success-text); }
+.field { margin-bottom: 12px; }
+.field label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 4px; }
+.field-hint { font-size: 12px; color: var(--text-secondary); margin-top: 4px; }
+.checkbox-label { display: flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; }
+</style>
