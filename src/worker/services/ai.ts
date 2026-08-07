@@ -19,6 +19,7 @@ import {
   executeToolCalls,
   type MCPServerConfig,
   type MCPToolDefinition,
+  type MCPToolResult,
 } from "./mcp";
 
 const DEFAULT_SYSTEM_PROMPT =
@@ -29,20 +30,6 @@ const DEFAULT_SYSTEM_PROMPT =
   "回复长度控制在 200 字以内，除非用户明确要求更长。\n\n" +
   "【重要规则】当你有工具返回的数据时，必须严格按工具返回的实际数值来回答。不要编造、夸大或缩小任何数字。" +
   "如果工具返回的数据中包含总金额、交易笔数、分类等统计信息，直接引用原文，不要自己计算或推断。";
-
-// 生成当前日期/时间字符串，注入到用户消息中（放在系统提示词中模型可能忽略）
-// 使用 China 时区（Asia/Shanghai, UTC+8），避免 Cloudflare Workers UTC 时区导致日期偏差
-function getCurrentDateTag(): string {
-  const now = new Date();
-  const tz = "Asia/Shanghai";
-  // 用 Intl 拆分年月日和星期，时区正确
-  const dateParts = new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit", weekday: "long" }).formatToParts(now);
-  const get = (t: string) => dateParts.find(p => p.type === t)?.value || "";
-  const year = get("year"), month = get("month"), day = get("day");
-  const weekdayMap: Record<string, string> = { "Sunday": "日", "Monday": "一", "Tuesday": "二", "Wednesday": "三", "Thursday": "四", "Friday": "五", "Saturday": "六" };
-  const weekdayStr = weekdayMap[get("weekday")] || get("weekday");
-  return `[当前日期: ${year}年${month}月${day}日（星期${weekdayStr}）]`;
-}
 
 // 从 API baseUrl 中提取 base 和 version，用于构建其他端点
 // 例: "https://open.bigmodel.cn/api/paas/v4/chat/completions"
@@ -91,6 +78,29 @@ export function tryQuickReply(text: string): string | null {
 
 // ========== OpenAI 兼容 API 调用 ==========
 
+// 内置工具：获取当前日期时间（中国时区 Asia/Shanghai）
+const BUILTIN_TOOLS = [{
+  type: "function",
+  function: {
+    name: "get_current_datetime",
+    description: "获取当前日期和时间（中国时区 Asia/Shanghai, UTC+8），当用户问到「今天/昨天/明天/上个月/本月/上周/下周」等相对时间时，调用此工具获取准确日期后再回答",
+    parameters: { type: "object", properties: {} },
+  },
+}];
+
+function executeBuiltinTool(toolCall: { id: string; function: { name: string } }): MCPToolResult | null {
+  if (toolCall.function.name !== "get_current_datetime") return null;
+  const now = new Date();
+  const tz = "Asia/Shanghai";
+  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit", weekday: "long", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).formatToParts(now);
+  const get = (t: string) => parts.find(p => p.type === t)?.value || "";
+  const weekdayMap: Record<string, string> = { "Sunday": "日", "Monday": "一", "Tuesday": "二", "Wednesday": "三", "Thursday": "四", "Friday": "五", "Saturday": "六" };
+  const dateStr = `${get("year")}年${get("month")}月${get("day")}日`;
+  const weekdayStr = weekdayMap[get("weekday")] || get("weekday");
+  const timeStr = `${get("hour")}:${get("minute")}:${get("second")}`;
+  return { callId: toolCall.id, name: "get_current_datetime", content: `当前日期: ${dateStr}（星期${weekdayStr}），当前时间: ${timeStr}（中国时区）` };
+}
+
 async function callOpenAICompatible(params: {
   baseUrl: string;
   apiKey: string;
@@ -119,10 +129,11 @@ async function callOpenAICompatible(params: {
     body.chat_template_kwargs = { enable_thinking: true };
   }
 
-  // 如果有 MCP 工具，附加到请求
-  const hasTools = params.tools && params.tools.length > 0;
+  // 如果有 MCP 工具，附加到请求（加上内置时间工具）
+  const allTools = [...BUILTIN_TOOLS, ...(params.tools || [])];
+  const hasTools = allTools.length > 0;
   if (hasTools) {
-    body.tools = params.tools;
+    body.tools = allTools;
   }
 
   const maxRounds = params.maxToolRounds ?? 5;
@@ -167,12 +178,23 @@ async function callOpenAICompatible(params: {
       return message.content || "";
     }
 
-    // 解析并执行 MCP 工具调用
-    const parsedCalls = parseToolCalls(
-      toolCalls as Array<{ id: string; function: { name: string; arguments: string } }>,
-      mcpTools
-    );
-    const results = await executeToolCalls(parsedCalls, db);
+    // 解析并执行工具调用（内置工具 + MCP 工具）
+    const allToolCalls = toolCalls as Array<{ id: string; function: { name: string; arguments: string } }>;
+    // 内置工具直接执行，不走 MCP
+    const builtinResults: MCPToolResult[] = [];
+    const mcpOnlyCalls: typeof allToolCalls = [];
+    for (const tc of allToolCalls) {
+      const builtin = executeBuiltinTool(tc);
+      if (builtin) {
+        builtinResults.push(builtin);
+      } else {
+        mcpOnlyCalls.push(tc);
+      }
+    }
+    const mcpResults = mcpOnlyCalls.length > 0
+      ? await executeToolCalls(parseToolCalls(mcpOnlyCalls, mcpTools), db)
+      : [];
+    const results = [...builtinResults, ...mcpResults];
 
     // 将工具结果添加到消息列表（用于下一轮）
     for (const result of results) {
@@ -269,12 +291,10 @@ export async function callAIWithContext(
   const system = systemPrompt || DEFAULT_SYSTEM_PROMPT;
   const context = db ? await getContextFromD1(db, userId) : await getContextFromSQLite(storage, userId);
 
-  // 将当前日期直接注入用户消息，确保模型能正确换算相对时间
-  const dateTaggedMsg = `${getCurrentDateTag()}${cleanMsg}`;
-
+  // 提示 AI 可用 get_current_datetime 工具获取当前日期，用于换算相对时间
   const messages = buildMessagesWithContext(
-    `请牢记当前日期: ${getCurrentDateTag()}\n\n${system}`,
-    dateTaggedMsg,
+    `当用户询问"今天/昨天/明天/上个月/本月/上周/下周"等相对时间时，必须调用 get_current_datetime 工具获取准确日期后再回答。\n\n${system}`,
+    cleanMsg,
     context
   );
 
@@ -359,7 +379,6 @@ export async function callAI(
   }
 
   const system = systemPrompt || DEFAULT_SYSTEM_PROMPT;
-  const dateTaggedMsg = `${getCurrentDateTag()}${cleanMsg}`;
 
   Logger.info(`[ai] Calling AI (no context)`, { provider: config.provider, model: config.model });
 
@@ -380,8 +399,8 @@ export async function callAI(
         apiKey: config.apiKey,
         model: config.model,
         messages: [
-          { role: "system", content: `请牢记当前日期: ${getCurrentDateTag()}\n\n${system}` },
-          { role: "user", content: dateTaggedMsg },
+          { role: "system", content: `当用户询问"今天/昨天/明天/上个月/本月/上周/下周"等相对时间时，必须调用 get_current_datetime 工具获取准确日期后再回答。\n\n${system}` },
+          { role: "user", content: cleanMsg },
         ],
         maxTokens: config.maxTokens,
         thinking: config.thinking,
@@ -392,8 +411,8 @@ export async function callAI(
       });
     } else {
       text = await callCloudflareAI(aiBinding, config.model, [
-        { role: "system", content: `请牢记当前日期: ${getCurrentDateTag()}\n\n${system}` },
-        { role: "user", content: dateTaggedMsg },
+        { role: "system", content: `当用户询问"今天/昨天/明天/上个月/本月/上周/下周"等相对时间时，必须获取当前准确日期后回答。\n\n${system}` },
+        { role: "user", content: cleanMsg },
       ], config.maxTokens);
     }
 
