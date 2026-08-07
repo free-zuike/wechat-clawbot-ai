@@ -9,6 +9,7 @@ import { callAIWithContext, isImageGenerationRequest, isVideoGenerationRequest, 
 import { sendWebhook } from "./webhook";
 import { clearContextSQLite, clearContextD1 } from "./context";
 import type { ILinkCredentials, WeixinMessage } from "../types";
+import { initSQLite, initD1Tables, ensurePendingVideosColumns, ensureGenerationLogsColumns, loadCredentials, saveCredentials, clearCredentials, loadAllCredentials } from "./ilink-db";
 
 export interface ILINKSessionState {
   syncBuf: string;
@@ -60,8 +61,6 @@ export class ILinkConnectionDO implements DurableObject {
     configLoadedAt: 0,
   };
   private sqliteInitialized = false;
-  private pendingVideosColumnsEnsured = false;
-  private generationLogsColumnsEnsured = false;
 
   constructor(state: DurableObjectState, env: any) {
     this.doState = state;
@@ -126,198 +125,23 @@ export class ILinkConnectionDO implements DurableObject {
       .catch(() => {});
   }
 
-  // ========== SQLite 初始化 ==========
+  // ========== SQLite / D1 初始化 ==========
 
   private async initSQLite(): Promise<void> {
     if (this.sqliteInitialized) return;
-
     const sql = this.doState.storage.sql;
-
-    // credentials 表：存储微信登录凭证
-    await sql.exec(`
-      CREATE TABLE IF NOT EXISTS credentials (
-        id INTEGER PRIMARY KEY CHECK (id = 1),
-        bot_token TEXT NOT NULL,
-        account_id TEXT NOT NULL,
-        base_url TEXT NOT NULL DEFAULT 'https://ilinkai.weixin.qq.com',
-        user_id TEXT NOT NULL,
-        sync_buf TEXT DEFAULT '',
-        created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL
-      )
-    `);
-
-    // contexts 表：存储用户对话上下文（替代 KV clawbot:context:${userId}）
-    await sql.exec(`
-      CREATE TABLE IF NOT EXISTS contexts (
-        user_id TEXT PRIMARY KEY,
-        messages TEXT NOT NULL DEFAULT '[]',
-        last_updated INTEGER NOT NULL
-      )
-    `);
-
-    // processed_messages 表：本地持久化去重，避免 syncBuf 回退时重复回复历史消息
-    await sql.exec(`
-      CREATE TABLE IF NOT EXISTS processed_messages (
-        message_id TEXT PRIMARY KEY,
-        created_at INTEGER NOT NULL
-      )
-    `);
-
-    // pending_videos 表：待处理的视频生成任务
-    // video_id：Agnes 等平台推荐的查询标识符，优先于 task_id
-    await sql.exec(`
-      CREATE TABLE IF NOT EXISTS pending_videos (
-        task_id TEXT PRIMARY KEY,
-        prompt TEXT NOT NULL,
-        model TEXT NOT NULL,
-        provider TEXT NOT NULL,
-        base_url TEXT NOT NULL,
-        api_key TEXT NOT NULL,
-        status TEXT DEFAULT 'queued',
-        video_url TEXT,
-        video_id TEXT,
-        to_user_id TEXT,
-        context_token TEXT,
-        account_id TEXT,
-        created_at INTEGER NOT NULL
-      )
-    `);
-
-    // generation_logs 表：保存所有生成记录（文字/图片/视频）
-    await sql.exec(`
-      CREATE TABLE IF NOT EXISTS generation_logs (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        type TEXT NOT NULL,
-        prompt TEXT,
-        result TEXT,
-        provider TEXT,
-        model TEXT,
-        status TEXT DEFAULT 'success',
-        error TEXT,
-        source TEXT,
-        from_user TEXT,
-        created_at INTEGER NOT NULL
-      )
-    `);
-
+    await initSQLite(sql);
+    await ensurePendingVideosColumns(sql);
+    await ensureGenerationLogsColumns(sql);
     this.sqliteInitialized = true;
-    Logger.info("[DO] SQLite tables initialized");
 
     // D1: 确保持久化表存在
     if (this.env.DB) {
       try {
-        await this.env.DB.exec(`
-          CREATE TABLE IF NOT EXISTS generation_logs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            type TEXT NOT NULL,
-            prompt TEXT,
-            result TEXT,
-            provider TEXT,
-            model TEXT,
-            status TEXT DEFAULT 'success',
-            error TEXT,
-            source TEXT,
-            from_user TEXT,
-            key_index INTEGER DEFAULT 0,
-            provider_name TEXT,
-            created_at INTEGER NOT NULL
-          )
-        `);
-        await this.env.DB.exec(`
-          CREATE TABLE IF NOT EXISTS pending_videos (
-            task_id TEXT PRIMARY KEY,
-            video_id TEXT,
-            prompt TEXT NOT NULL,
-            model TEXT NOT NULL,
-            provider TEXT NOT NULL,
-            base_url TEXT NOT NULL,
-            api_key TEXT NOT NULL,
-            status TEXT DEFAULT 'queued',
-            video_url TEXT,
-            to_user_id TEXT,
-            context_token TEXT,
-            account_id TEXT,
-            source TEXT,
-            error_message TEXT,
-            retry_count INTEGER DEFAULT 0,
-            created_at INTEGER NOT NULL
-          )
-        `);
-        await this.env.DB.exec(`
-          CREATE TABLE IF NOT EXISTS contexts (
-            user_id TEXT PRIMARY KEY,
-            messages TEXT NOT NULL DEFAULT '[]',
-            last_updated INTEGER NOT NULL
-          )
-        `);
-        await this.env.DB.exec(`
-          CREATE TABLE IF NOT EXISTS processed_messages (
-            message_id TEXT PRIMARY KEY,
-            created_at INTEGER NOT NULL
-          )
-        `);
-        Logger.info("[DO] D1 tables initialized");
+        await initD1Tables(this.env.DB);
       } catch (e: any) {
         Logger.warn("[DO] D1 init skipped", { error: e?.message || String(e) });
       }
-    }
-  }
-
-  // 确保 pending_videos 表包含 to_user_id / context_token / account_id / video_id 列
-  // video_id：Agnes 等平台推荐用于查询结果的标识符，优先于 task_id
-  private async ensurePendingVideosColumns(): Promise<void> {
-    if (this.pendingVideosColumnsEnsured) return;
-    try {
-      const sql = this.doState.storage.sql;
-      const info = await sql.exec("PRAGMA table_info(pending_videos)");
-      if (!info) return;
-      const rows = info.toArray ? info.toArray() : [];
-      const cols = new Set(rows.map((r: any) => r.name as string));
-      const needAdd: [string, string][] = [
-        ["to_user_id", "TEXT"],
-        ["context_token", "TEXT"],
-        ["account_id", "TEXT"],
-        ["video_id", "TEXT"],
-        ["source", "TEXT"],
-        ["error_message", "TEXT"],
-        ["retry_count", "INTEGER DEFAULT 0"],
-        ["key_index", "INTEGER DEFAULT 0"],
-        ["provider_name", "TEXT"],
-      ];
-      for (const [col, type] of needAdd) {
-        if (!cols.has(col)) {
-          await sql.exec(`ALTER TABLE pending_videos ADD COLUMN ${col} ${type}`);
-          Logger.info("[DO] pending_videos column added", { column: col });
-        }
-      }
-      this.pendingVideosColumnsEnsured = true;
-    } catch (e: any) {
-      Logger.warn("[DO] pending_videos column check failed", { error: e?.message });
-    }
-  }
-
-  private async ensureGenerationLogsColumns(): Promise<void> {
-    if (this.generationLogsColumnsEnsured) return;
-    try {
-      const sql = this.doState.storage.sql;
-      const info = await sql.exec("PRAGMA table_info(generation_logs)");
-      if (!info) return;
-      const rows = info.toArray ? info.toArray() : [];
-      const cols = new Set(rows.map((r: any) => r.name as string));
-      const needAdd: [string, string][] = [
-        ["key_index", "INTEGER DEFAULT 0"],
-        ["provider_name", "TEXT"],
-      ];
-      for (const [col, type] of needAdd) {
-        if (!cols.has(col)) {
-          await sql.exec(`ALTER TABLE generation_logs ADD COLUMN ${col} ${type}`);
-          Logger.info("[DO] generation_logs column added", { column: col });
-        }
-      }
-      this.generationLogsColumnsEnsured = true;
-    } catch (e: any) {
-      Logger.warn("[DO] generation_logs column check failed", { error: e?.message });
     }
   }
 
@@ -1068,7 +892,6 @@ export class ILinkConnectionDO implements DurableObject {
   async checkPendingVideos(): Promise<void> {
     try {
       await this.initSQLite();
-      await this.ensurePendingVideosColumns();
 
       // 自动清理超过 24 小时的已完成/失败任务
       const cleanupAge = Date.now() - 24 * 60 * 60 * 1000;
@@ -1960,7 +1783,6 @@ export class ILinkConnectionDO implements DurableObject {
                 } else {
                   // 异步任务：存储到 pending_videos，稍后由 checkPendingVideos 处理
                   // 若返回了 video_id 则一起存储（Agnes 等平台优先用 video_id 查询）
-                  await this.ensurePendingVideosColumns();
                   Logger.info("[DO] Storing pending video task", {
                     taskId: result.taskId,
                     videoId: result.videoId,
