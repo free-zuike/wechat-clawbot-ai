@@ -2,7 +2,7 @@
 
 import { json, verifyAdmin } from "../utils";
 import { Logger } from "../utils/error";
-import { callAI, tryQuickReply, isImageGenerationRequest, isVideoGenerationRequest, extractMediaPrompt, generateImage, generateVideo } from "../services/ai";
+import { callAI, tryQuickReply, isImageGenerationRequest, isVideoGenerationRequest, extractMediaPrompt, generateImage } from "../services/ai";
 import { configCache } from "../utils/cache";
 import { resolveAIConfig } from "./config";
 import type { Env } from "../index";
