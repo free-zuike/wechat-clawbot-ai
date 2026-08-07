@@ -101,6 +101,52 @@ function executeBuiltinTool(toolCall: { id: string; function: { name: string } }
   return { callId: toolCall.id, name: "get_current_datetime", content: `当前日期: ${dateStr}（星期${weekdayStr}），当前时间: ${timeStr}（中国时区）` };
 }
 
+// 将工具返回的 JSON 转成自然语言，避免 AI 解析 JSON 时编造数字
+function formatToolContent(raw: string): string {
+  if (!raw) return raw;
+  const trimmed = raw.trim();
+  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return raw;
+
+  try {
+    const obj = JSON.parse(trimmed);
+    return flattenToText(obj);
+  } catch {
+    return raw;
+  }
+}
+
+// 常见字段名翻译，让 AI 更易理解工具返回的数据
+const FIELD_LABELS: Record<string, string> = {
+  ledger: "账本", scope: "范围", period: "期间", income: "收入", expense: "支出",
+  balance: "结余", transaction_count: "交易笔数", total: "总计", top_categories: "主要分类",
+  name: "名称", items: "记录", amount: "金额", tx_type: "交易类型", happened_at: "发生时间",
+  note: "备注", category_name: "分类", account_name: "账户", sync_id: "记录ID",
+  date_from: "开始日期", date_to: "结束日期", category: "分类", account: "账户", q: "关键词", limit: "条数",
+  items_total: "总条数", title: "标题", content: "内容", status: "状态", message: "消息",
+};
+
+// 把 JSON 对象递归展开成 "key: value" 的易读文本
+function flattenToText(value: any, depth = 0): string {
+  if (value === null || value === undefined) return "无";
+  if (typeof value === "number") return String(value);
+  if (typeof value === "boolean") return value ? "是" : "否";
+  if (typeof value === "string") return value;
+
+  if (Array.isArray(value)) {
+    if (value.length === 0) return "无";
+    return value.map(v => flattenToText(v, depth + 1)).join("；");
+  }
+
+  if (typeof value === "object") {
+    const entries = Object.entries(value);
+    return entries
+      .map(([k, v]) => `${FIELD_LABELS[k] || k}: ${flattenToText(v, depth + 1)}`)
+      .join("；");
+  }
+
+  return String(value);
+}
+
 async function callOpenAICompatible(params: {
   baseUrl: string;
   apiKey: string;
@@ -198,12 +244,12 @@ async function callOpenAICompatible(params: {
       : [];
     const results = [...builtinResults, ...mcpResults];
 
-    // 将工具结果添加到消息列表（用于下一轮）
+    // 将工具结果格式化后添加到消息列表（JSON 转自然语言，防止 AI 编造数字）
     for (const result of results) {
       params.messages.push({
         role: "tool",
         tool_call_id: result.callId,
-        content: result.content,
+        content: formatToolContent(result.content),
       } as any);
     }
 
