@@ -7,6 +7,7 @@ import { Logger } from "../utils/error";
 import type { Env } from "../index";
 import {
   ensureMCPServersTable,
+  ensureMCPSessionsTable,
   loadAllMCPServers,
   saveMCPServers,
   deleteMCPServer,
@@ -41,6 +42,7 @@ export async function handleMCP(request: Request, env: Env): Promise<Response> {
 
   // 确保表存在
   await ensureMCPServersTable(env.DB);
+  await ensureMCPSessionsTable(env.DB);
 
   if (method === "GET") {
     // 列表：只读缓存数据，不自动联网拉取工具
@@ -124,7 +126,7 @@ export async function handleMCP(request: Request, env: Env): Promise<Response> {
     if (!server) return json({ error: "NOT_FOUND", message: "MCP Server 不存在" }, 404);
 
     try {
-      const tools = await fetchToolsFromServer(server);
+      const tools = await fetchToolsFromServer(env.DB, server);
       await updateServerTools(env.DB, id, tools);
       return json({ ok: true, tools });
     } catch (e: any) {

@@ -1725,8 +1725,9 @@ export class ILinkConnectionDO implements DurableObject {
 
     // 确保 MCP 表存在
     try {
-      const { ensureMCPServersTable } = await import("../services/mcp");
+      const { ensureMCPServersTable, ensureMCPSessionsTable } = await import("../services/mcp");
       await ensureMCPServersTable(this.env.DB);
+      await ensureMCPSessionsTable(this.env.DB);
     } catch (_e) {}
     let webhookEnabled = false;
     let webhookTitle = "";

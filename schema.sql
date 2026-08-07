@@ -68,3 +68,13 @@ CREATE TABLE IF NOT EXISTS mcp_servers (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
+
+-- MCP 会话表（存储与 MCP 服务器的会话状态，用于 Streamable HTTP 传输）
+CREATE TABLE IF NOT EXISTS mcp_sessions (
+  server_id TEXT PRIMARY KEY,
+  session_id TEXT,
+  protocol_version TEXT,
+  server_capabilities TEXT,
+  expires_at INTEGER,
+  updated_at TEXT NOT NULL
+);

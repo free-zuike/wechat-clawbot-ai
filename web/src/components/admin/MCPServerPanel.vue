@@ -47,7 +47,7 @@
           </div>
           <div class="modal-body">
             <div class="field"><label>名称 *</label><input v-model="form.name" class="input" placeholder="如：天气查询服务" /></div>
-            <div class="field"><label>URL *</label><input v-model="form.url" class="input" placeholder="https://mcp.example.com" /><div class="field-hint">MCP Server 的 HTTP 端点地址，末尾不要加 /</div></div>
+            <div class="field"><label>URL *</label><input v-model="form.url" class="input" placeholder="https://example.com/mcp" /><div class="field-hint">MCP Server 端点地址（如 https://example.com/mcp），支持标准 Streamable HTTP 传输</div></div>
             <div class="field"><label>API Key（可选）</label><input v-model="form.apiKey" class="input" type="password" placeholder="可选" /></div>
             <div class="field"><label class="checkbox-label"><input type="checkbox" v-model="form.enabled" /> 启用</label></div>
             <div class="field"><label>工具前缀</label><input v-model="form.toolPrefix" class="input" placeholder="默认：mcp_服务ID" /><div class="field-hint">工具名称前缀，避免名称冲突。留空自动生成</div></div>
