@@ -104,48 +104,56 @@ const BUILTIN_TOOLS = [{
   },
 }];
 
-// 网页搜索：有 API Key 时用 Bing Search API（通过 Azure 申请，免费层每月1000次），否则用 Bing HTML 兜底
+// 网页搜索：多引擎兜底方案（模仿 Open-WebSearch），依次尝试 Bing API → Bing HTML → DDG → Baidu → 通用链接
 async function executeWebSearch(query: string, searchApiKey?: string, searchApiUrl?: string): Promise<string> {
   const q = (query || "").trim();
   if (!q) return "搜索关键词为空";
 
-  // 如果有搜索 API Key，走 Bing Search API（Azure 免费层，国内可访问）
+  // 1. 有 API Key 时走 Bing Search API
   if (searchApiKey) {
-    try {
-      const apiUrl = searchApiUrl || "https://api.bing.microsoft.com/v7.0/search";
-      const resp = await fetch(`${apiUrl}?q=${encodeURIComponent(q)}&count=6&mkt=zh-CN&textFormat=Raw`, {
-        headers: { "Ocp-Apim-Subscription-Key": searchApiKey, "Accept": "application/json" },
-        signal: AbortSignal.timeout(10000),
-      });
-      if (resp.ok) {
-        const data = await resp.json() as any;
-        const items = data?.webPages?.value;
-        if (Array.isArray(items) && items.length > 0) {
-          return items.slice(0, 6).map((item: any, i: number) =>
-            `${i + 1}. ${item.name || "无标题"}\n   ${item.url || ""}\n   ${item.snippet || ""}`
-          ).join("\n\n");
-        }
-      }
-    } catch (e: any) {
-      // API 失败，回退到 Bing
-    }
+    const apiResult = await tryBingApi(q, searchApiKey, searchApiUrl);
+    if (apiResult) return apiResult;
   }
 
-  // 兜底：Bing HTML 搜索（可能被 Workers IP 屏蔽）
+  // 2. 多引擎 HTML 搜索兜底
+  const engines = [
+    { url: "https://www.bing.com/search?q={q}&setlang=zh-hans", parser: parseBingResults, name: "Bing" },
+    { url: "https://html.duckduckgo.com/html/?q={q}", parser: parseDuckDuckGoResults, name: "DDG" },
+    { url: "https://www.baidu.com/s?wd={q}&ie=utf-8", parser: parseBaiduResults, name: "百度" },
+    { url: "https://www.bing.com/search?q={q}&setlang=zh-hans", parser: parseGenericResults, name: "通用" },
+  ];
+
+  for (const { url, parser } of engines) {
+    try {
+      const resp = await fetch(url.replace("{q}", encodeURIComponent(q)), {
+        headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" },
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!resp.ok) continue;
+      const html = await resp.text();
+      const result = parser(html);
+      if (result) return result;
+    } catch { continue; }
+  }
+
+  return "没有找到相关结果";
+}
+
+async function tryBingApi(q: string, key: string, url?: string): Promise<string | null> {
   try {
-    const url = `https://www.bing.com/search?q=${encodeURIComponent(q)}&setlang=zh-hans`;
-    const resp = await fetch(url, {
-      headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" },
+    const apiUrl = url || "https://api.bing.microsoft.com/v7.0/search";
+    const resp = await fetch(`${apiUrl}?q=${encodeURIComponent(q)}&count=6&mkt=zh-CN&textFormat=Raw`, {
+      headers: { "Ocp-Apim-Subscription-Key": key, "Accept": "application/json" },
       signal: AbortSignal.timeout(10000),
     });
-    if (!resp.ok) return `搜索失败 (HTTP ${resp.status})`;
-    const html = await resp.text();
-    // 尝试多种解析方式
-    const results = parseBingResults(html) || parseGenericResults(html);
-    return results || "没有找到相关结果";
-  } catch (e: any) {
-    return `搜索失败: ${e?.message || String(e)}`;
-  }
+    if (!resp.ok) return null;
+    const data = await resp.json() as any;
+    const items = data?.webPages?.value;
+    if (!Array.isArray(items) || items.length === 0) return null;
+    return items.slice(0, 6).map((item: any, i: number) =>
+      `${i + 1}. ${item.name || "无标题"}\n   ${item.url || ""}\n   ${item.snippet || ""}`
+    ).join("\n\n");
+  } catch { return null; }
 }
 
 // 解析 Bing HTML 搜索结果
@@ -166,6 +174,57 @@ function parseBingResults(html: string): string | null {
     count++;
   }
   return results.length > 0 ? results.join("\n\n") : null;
+}
+
+// 解析 DuckDuckGo HTML 搜索结果
+function parseDuckDuckGoResults(html: string): string | null {
+  const results: string[] = [];
+  const linkRe = /<a[^>]*class="result__a"[^>]*href="([^"]*)"[^>]*>(.*?)<\/a>/g;
+  const snippetRe = /<a[^>]*class="result__snippet"[^>]*>(.*?)<\/a>/g;
+  const links: Array<{ url: string; title: string }> = [];
+  let m: RegExpExecArray | null;
+  while ((m = linkRe.exec(html)) !== null) {
+    links.push({ url: m[1], title: stripTags(m[2]) });
+  }
+  const snippets: string[] = [];
+  while ((m = snippetRe.exec(html)) !== null) {
+    snippets.push(stripTags(m[1]));
+  }
+  const count = Math.min(links.length, 6);
+  if (count === 0) return null;
+  for (let i = 0; i < count; i++) {
+    const title = links[i].title || `结果 ${i + 1}`;
+    const url = links[i].url;
+    const snippet = snippets[i] || "";
+    results.push(`${i + 1}. ${title}\n   ${url}\n   ${snippet}`);
+  }
+  return results.join("\n\n");
+}
+
+// 解析百度 HTML 搜索结果
+function parseBaiduResults(html: string): string | null {
+  const results: string[] = [];
+  // 百度结果：<h3 class="c-title"><a href="url">title</a></h3>  +  <span class="content-right_8Zs40">snippet</span>
+  const titleRe = /<h3[^>]*class="[^"]*c-title[^"]*"[^>]*>.*?<a[^>]*href="([^"]*)"[^>]*>(.*?)<\/a>/gs;
+  const snippetRe = /<span[^>]*class="[^"]*content-right[^"]*"[^>]*>(.*?)<\/span>/gs;
+  const titles: Array<{ url: string; title: string }> = [];
+  let m: RegExpExecArray | null;
+  while ((m = titleRe.exec(html)) !== null) {
+    titles.push({ url: m[1], title: stripTags(m[2]) });
+  }
+  const snippets: string[] = [];
+  while ((m = snippetRe.exec(html)) !== null) {
+    snippets.push(stripTags(m[1]));
+  }
+  const count = Math.min(titles.length, 6);
+  if (count === 0) return null;
+  for (let i = 0; i < count; i++) {
+    const title = titles[i].title || `结果 ${i + 1}`;
+    const url = titles[i].url;
+    const snippet = snippets[i] || "";
+    results.push(`${i + 1}. ${title}\n   ${url}\n   ${snippet}`);
+  }
+  return results.join("\n\n");
 }
 
 // 通用 HTML 解析兜底：匹配任意 <a href="http"> 链接
