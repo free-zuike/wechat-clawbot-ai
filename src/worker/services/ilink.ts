@@ -768,8 +768,19 @@ export function extractMessageText(msg: WeixinMessage): string {
   for (const item of msg.item_list) {
     if (item.type === MessageItemType.TEXT && item.text_item?.text) {
       const ref = item.ref_msg;
-      if (ref?.title) {
-        parts.push(`[引用: ${ref.title}]\n${translateEmoji(item.text_item.text)}`);
+      // 提取被引用消息的内容（可能在 ref.message_item 里，而不只是 ref.title）
+      let quoted = "";
+      if (ref?.message_item) {
+        const q = ref.message_item;
+        if (q.text_item?.text) quoted = q.text_item.text;
+        else if (q.image_item) quoted = q.image_item.url || "图片";
+        else if (q.file_item) quoted = q.file_item.file_name || "文件";
+        else if (q.video_item) quoted = q.video_item.url || "视频";
+        else if (q.voice_item?.text) quoted = q.voice_item.text;
+      }
+      const refText = quoted || ref?.title || "";
+      if (refText) {
+        parts.push(`[引用: ${translateEmoji(refText)}]\n${translateEmoji(item.text_item.text)}`);
       } else {
         parts.push(translateEmoji(item.text_item.text));
       }
