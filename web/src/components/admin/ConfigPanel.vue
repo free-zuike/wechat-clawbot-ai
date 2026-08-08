@@ -88,6 +88,7 @@
         </div>
         <div v-else class="form-empty">← 从左侧选择提供商</div>
         <div v-if="config.aiProvider" class="field" style="margin-top: 12px"><label>最大 Token 数</label><input v-model.number="config.aiMaxTokens" class="input" type="number" min="1" max="32000" placeholder="1024" /></div>
+        <div v-if="config.aiProvider" class="field"><label>上下文窗口（字符数）</label><input v-model.number="config.aiMaxContextChars" class="input" type="number" min="1000" max="4000000" placeholder="12000" /><div class="field-hint">模型支持的最大上下文长度，根据模型自动填充。太小会丢失对话历史，太大会浪费 Token</div></div>
         <div v-if="config.aiProvider" class="field">
           <label class="checkbox-label">
             <input type="checkbox" v-model="config.aiThinking" />
@@ -142,6 +143,7 @@ interface Preset {
   apiKey: string;
   apiKeys?: string[];
   maxTokens: number;
+  maxContextChars?: number;
   thinking?: boolean;
   responseConfig?: Record<string, string>;
 }
@@ -161,6 +163,7 @@ const props = defineProps<{
     aiBaseUrl: string;
     aiApiKey: string;
     aiMaxTokens: number;
+    aiMaxContextChars?: number;
     aiSystemPrompt: string;
     webhookEnabled: boolean;
     webhookUrl: string;
@@ -192,8 +195,12 @@ function upsertPreset(id: string, fields: Partial<Preset>): Preset {
   const presets = ensurePresets();
   let preset = presets.find(p => p.id === id);
   if (!preset) {
-    preset = { id, model: "", imageModel: "", videoModel: "", baseUrl: "", apiKey: "", apiKeys: [], maxTokens: 1024 };
+    preset = { id, model: "", imageModel: "", videoModel: "", baseUrl: "", apiKey: "", apiKeys: [], maxTokens: 1024, maxContextChars: 12000 };
     presets.push(preset);
+  }
+  // 模型名变化时自动填充上下文长度
+  if (fields.model && fields.model !== preset.model) {
+    fields.maxContextChars = guessModelContextChars(fields.model);
   }
   Object.assign(preset, fields);
   return preset;
@@ -233,6 +240,7 @@ function selectProvider(id: string) {
     props.config.aiApiKey = "";
     backupKeys.value = [];
     props.config.aiMaxTokens = preset?.maxTokens || 1024;
+    props.config.aiMaxContextChars = preset?.maxContextChars || 12000;
   } else {
     props.config.aiModel = preset?.model || "";
     props.config.aiImageModel = preset?.imageModel || "";
@@ -241,6 +249,7 @@ function selectProvider(id: string) {
     props.config.aiApiKey = preset?.apiKey || "";
     backupKeys.value = [...(preset?.apiKeys || [])];
     props.config.aiMaxTokens = preset?.maxTokens || 1024;
+    props.config.aiMaxContextChars = preset?.maxContextChars || 12000;
     responseConfig.value = { ...(preset?.responseConfig || {}) };
   }
 }
@@ -278,6 +287,36 @@ function deleteProvider(id: string, event: Event) {
 function getCurrentProviderName() {
   const p = (props.config.aiCustomProviders || []).find(x => x.id === props.config.aiProvider);
   return p ? p.name : "OpenAI 兼容";
+}
+
+// 常见模型上下文窗口（字符数），根据模型名自动匹配
+const MODEL_CONTEXT: Record<string, number> = {
+  "deepseek": 128000, "deepseek-v3": 128000, "deepseek-r1": 128000,
+  "gpt-4o": 128000, "gpt-4": 128000, "gpt-4-turbo": 128000, "gpt-4o-mini": 128000,
+  "claude": 200000, "claude-3": 200000, "claude-sonnet": 200000, "claude-haiku": 200000,
+  "gemini": 1000000, "gemini-pro": 1000000, "gemini-flash": 1000000,
+  "qwen": 128000, "qwen2": 128000, "qwen-turbo": 128000, "qwen-plus": 128000,
+  "glm": 128000, "glm-4": 128000, "glm-4-flash": 128000,
+  "yi": 200000, "yi-lightning": 200000,
+  "moonshot": 128000, "kimi": 128000,
+  "mistral": 128000, "mixtral": 128000,
+  "llama": 128000, "llama-3": 128000,
+  "doubao": 128000, "volc": 128000,
+  "ernie": 128000, "文心": 128000,
+  "hunyuan": 128000, "混元": 128000,
+  "spark": 128000, "讯飞": 128000, "星火": 128000,
+  "baichuan": 128000, "百川": 128000,
+  "minimax": 1000000,
+  "step": 128000, "阶跃": 128000,
+};
+
+function guessModelContextChars(model: string): number {
+  if (!model) return 12000;
+  const lower = model.toLowerCase();
+  for (const [key, val] of Object.entries(MODEL_CONTEXT)) {
+    if (lower.includes(key)) return val;
+  }
+  return 12000;
 }
 
 const showAddModal = ref(false);
@@ -329,6 +368,7 @@ function syncCurrentToPreset() {
     apiKey: props.config.aiApiKey,
     apiKeys: [...backupKeys.value],
     maxTokens: props.config.aiMaxTokens,
+    maxContextChars: props.config.aiMaxContextChars || 12000,
     thinking: props.config.aiThinking || false,
     responseConfig: Object.keys(rc).length > 0 ? rc : undefined,
   });
