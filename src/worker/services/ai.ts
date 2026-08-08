@@ -78,12 +78,13 @@ export function tryQuickReply(text: string): string | null {
 
 // ========== OpenAI 兼容 API 调用 ==========
 
-// 获取当前日期字符串（中国时区），通用辅助函数
-function getTodayStr(): string {
+// 获取当前日期时间字符串（中国时区 Asia/Shanghai），通用辅助函数
+function getCurrentTimeStr(): string {
   const now = new Date();
-  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(now);
+  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit", weekday: "long", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).formatToParts(now);
   const get = (t: string) => parts.find(p => p.type === t)?.value || "";
-  return `${get("year")}年${get("month")}月${get("day")}日`;
+  const weekdayMap: Record<string, string> = { "Sunday": "日", "Monday": "一", "Tuesday": "二", "Wednesday": "三", "Thursday": "四", "Friday": "五", "Saturday": "六" };
+  return `${get("year")}年${get("month")}月${get("day")}日 ${get("hour")}:${get("minute")}:${get("second")}（星期${weekdayMap[get("weekday")] || get("weekday")}，中国时区）`;
 }
 
 // 内置工具：获取当前日期时间（中国时区 Asia/Shanghai）
@@ -364,7 +365,7 @@ export async function callAIWithContext(
 
   // 注入当前日期（通用，不针对特定 MCP），让 AI 正确换算"今天/上个月/本月"等相对时间
   const messages = buildMessagesWithContext(
-    `当前日期: ${getTodayStr()}（中国时区）。当用户提到"今天/昨天/明天/上个月/本月/下周"等相对时间时，基于以上日期和 get_current_datetime 工具返回的日期来准确换算。\n\n${system}`,
+    `当前时间: ${getCurrentTimeStr()}。当用户提到"今天/昨天/明天/上个月/本月/下周/几点"等相对时间时，基于以上时间准确换算。\n\n${system}`,
     cleanMsg,
     context
   );
@@ -470,7 +471,7 @@ export async function callAI(
         apiKey: config.apiKey,
         model: config.model,
         messages: [
-          { role: "system", content: `当前日期: ${getTodayStr()}（中国时区）。当用户提到"今天/昨天/明天/上个月/本月/下周"等相对时间时，基于以上日期和 get_current_datetime 工具返回的日期来准确换算。\n\n${system}` },
+          { role: "system", content: `当前时间: ${getCurrentTimeStr()}。当用户提到"今天/昨天/明天/上个月/本月/下周/几点"等相对时间时，基于以上时间准确换算。\n\n${system}` },
           { role: "user", content: cleanMsg },
         ],
         maxTokens: config.maxTokens,
@@ -482,7 +483,7 @@ export async function callAI(
       });
     } else {
       text = await callCloudflareAI(aiBinding, config.model, [
-        { role: "system", content: `当前日期: ${getTodayStr()}（中国时区）。当用户提到"今天/昨天/明天/上个月/本月/下周"等相对时间时，基于以上日期来准确换算。\n\n${system}` },
+        { role: "system", content: `当前时间: ${getCurrentTimeStr()}。当用户提到"今天/昨天/明天/上个月/本月/下周/几点"等相对时间时，基于以上时间准确换算。\n\n${system}` },
         { role: "user", content: cleanMsg },
       ], config.maxTokens);
     }
