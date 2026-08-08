@@ -70,7 +70,14 @@
                 <img v-if="msg.mediaType !== 'video'" :src="msg.url" style="max-width: 100%; max-height: 300px; border-radius: 8px" />
                 <video v-else :src="msg.url" controls style="max-width: 100%; max-height: 300px; border-radius: 8px"></video>
               </div>
-              <div v-else-if="msg.data?.content || msg.data" style="color: var(--text-primary)">{{ msg.data?.content || msg.data }}</div>
+              <div v-else-if="msg.data?.content || msg.data">
+                <!-- 引用消息单独显示 -->
+                <template v-if="extractQuote(msg.data?.content)">
+                  <div style="color: var(--text-dim); margin-bottom: 4px; padding: 6px 8px; background: var(--bg-skeleton-1); border-left: 3px solid var(--link); border-radius: 4px; white-space: pre-wrap">{{ extractQuote(msg.data?.content) }}</div>
+                  <div style="color: var(--text-primary); white-space: pre-wrap">{{ extractMain(msg.data?.content) }}</div>
+                </template>
+                <div v-else style="color: var(--text-primary); white-space: pre-wrap">{{ msg.data?.content || msg.data }}</div>
+              </div>
               <div v-if="msg.data?.replyContent" style="color: var(--success); margin-top: 4px; padding: 6px 8px; background: var(--alert-success-bg); border-radius: 4px">
                 💬 {{ msg.data.replyContent }}
               </div>
@@ -274,6 +281,22 @@ const mergedMessages = computed(() => {
   }
   return result;
 });
+
+// 提取消息中的引用内容（[引用: xxx] 开头）
+function extractQuote(content: any): string {
+  if (!content) return "";
+  const text = String(content);
+  const m = text.match(/^\s*\[引用[:：]\s*([^\n]*)/);
+  return m ? m[1].trim() : "";
+}
+
+// 提取引用内容之外的主体文字
+function extractMain(content: any): string {
+  if (!content) return "";
+  const text = String(content);
+  const m = text.match(/^\s*\[引用[:：][^\n]*\n?([\s\S]*)/);
+  return m ? m[1].trim() : text;
+}
 
 // ===== Debug =====
 const debugInfo = ref(""); const debugLoading = ref(false);
