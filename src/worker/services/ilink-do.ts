@@ -1117,10 +1117,20 @@ export class ILinkConnectionDO implements DurableObject {
       processedCount++;
 
       // 添加到待处理队列
+      // 提取引用消息内容（如果有）
+      let refContent = "";
+      for (const item of (msg.item_list || [])) {
+        if (item.ref_msg) {
+          const r = item.ref_msg;
+          refContent = r.title || (r.message_item?.text_item?.text) || (r.message_item?.image_item?.url ? "图片" : "") || (r.message_item?.file_item?.file_name ? "文件" : "") || "";
+          break;
+        }
+      }
       const pendingMsg = {
         messageId,
         fromUserId: from,
         content: text,
+        refContent: refContent || undefined,
         timestamp: createdAt,
         replyContent,
         replyAt,
