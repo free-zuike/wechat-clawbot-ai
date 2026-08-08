@@ -73,7 +73,7 @@
               <div v-else-if="msg.data?.content || msg.data">
                 <!-- 引用消息单独显示 -->
                 <template v-if="msg.data?.refContent">
-                  <div style="color: var(--text-dim); margin-bottom: 4px; padding: 6px 8px; background: var(--bg-skeleton-1); border-left: 3px solid var(--link); border-radius: 4px; white-space: pre-wrap">💬 引用: {{ msg.data.refContent }}</div>
+                  <div style="color: var(--text-dim); margin-bottom: 4px; padding: 6px 8px; background: var(--bg-skeleton-1); border-left: 3px solid var(--link); border-radius: 4px; white-space: pre-wrap; font-size: 11px; font-family: monospace">💬 引用(原始): {{ msg.data.refContent }}</div>
                   <div style="color: var(--text-primary); white-space: pre-wrap">{{ msg.data?.content || msg.data }}</div>
                 </template>
                 <template v-else-if="extractQuote(msg.data?.content)">
