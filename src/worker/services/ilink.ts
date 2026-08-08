@@ -768,6 +768,10 @@ export function extractMessageText(msg: WeixinMessage): string {
   for (const item of msg.item_list) {
     if (item.type === MessageItemType.TEXT && item.text_item?.text) {
       const ref = item.ref_msg;
+      // 记录引用消息的原始结构，便于诊断
+      if (ref) {
+        Logger.info("[iLink] Received quoted message", { refKeys: Object.keys(ref), title: ref.title, hasMessageItem: !!ref.message_item, itemKeys: ref.message_item ? Object.keys(ref.message_item) : [] });
+      }
       // 提取被引用消息的内容（可能在 ref.message_item 里，而不只是 ref.title）
       let quoted = "";
       if (ref?.message_item) {
