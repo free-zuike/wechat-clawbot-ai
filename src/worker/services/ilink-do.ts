@@ -1117,15 +1117,18 @@ export class ILinkConnectionDO implements DurableObject {
       processedCount++;
 
       // 添加到待处理队列
-      // 提取引用消息内容（如果有）
+      // 尝试从对话历史中提取被引用的消息（微信 ref_msg 通常不携带原文）
       let refContent = "";
-      for (const item of (msg.item_list || [])) {
-        if (item.ref_msg) {
-          const r = item.ref_msg;
-          refContent = r.title || (r.message_item?.text_item?.text) || (r.message_item?.image_item?.url ? "图片" : "") || (r.message_item?.file_item?.file_name ? "文件" : "") || "";
-          break;
+      try {
+        const { getContextFromD1, getContextFromSQLite } = await import("../services/context");
+        const ctx = this.env.DB ? await getContextFromD1(this.env.DB, from) : await getContextFromSQLite(this.doState.storage.sql, from);
+        // 找最近 2 条历史消息（不含当前消息，因为已保存到上下文中）
+        const hist = ctx.messages.filter(m => m.role !== "user" || m.content !== text);
+        if (hist.length > 0) {
+          const last = hist[hist.length - 1];
+          refContent = last.content.slice(0, 200);
         }
-      }
+      } catch {}
       const pendingMsg = {
         messageId,
         fromUserId: from,
