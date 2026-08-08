@@ -246,10 +246,8 @@ async function callOpenAICompatible(params: {
     body.chat_template_kwargs = { enable_thinking: true };
   }
 
-  // 如果有 MCP 工具，附加到请求（加上内置时间工具）
-  // 仅当有 MCP 工具时才添加内置工具，避免无工具场景下 AI 只调用时间工具而不回复
-  const hasMcpTools = !!(params.tools && params.tools.length > 0);
-  const allTools = hasMcpTools ? [...BUILTIN_TOOLS, ...params.tools!] : [];
+  // 始终附加内置工具（web_search 需要恒可用，get_current_datetime 辅助日期换算）
+  const allTools = [...BUILTIN_TOOLS, ...(params.tools || [])];
   const hasTools = allTools.length > 0;
   if (hasTools) {
     body.tools = allTools;
