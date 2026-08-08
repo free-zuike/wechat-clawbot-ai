@@ -104,24 +104,25 @@ const BUILTIN_TOOLS = [{
   },
 }];
 
-// 网页搜索：有 API Key 时用博查/SerpAPI 等正式搜索 API，否则用 Bing HTML 兜底
-async function executeWebSearch(query: string, searchApiKey?: string): Promise<string> {
+// 网页搜索：有 API Key 时用 Bing Search API（通过 Azure 申请，免费层每月1000次），否则用 Bing HTML 兜底
+async function executeWebSearch(query: string, searchApiKey?: string, searchApiUrl?: string): Promise<string> {
   const q = (query || "").trim();
   if (!q) return "搜索关键词为空";
 
-  // 如果有搜索 API Key，走正式 API（推荐：博查/SerpAPI/Brave）
+  // 如果有搜索 API Key，走 Bing Search API（Azure 免费层，国内可访问）
   if (searchApiKey) {
     try {
-      // 博查搜索 API：https://bocha.com 支持中文，免费额度
-      const resp = await fetch(`https://api.bochaai.com/v1/ai/search?q=${encodeURIComponent(q)}&count=6`, {
-        headers: { "Authorization": `Bearer ${searchApiKey}`, "Accept": "application/json" },
+      const apiUrl = searchApiUrl || "https://api.bing.microsoft.com/v7.0/search";
+      const resp = await fetch(`${apiUrl}?q=${encodeURIComponent(q)}&count=6&mkt=zh-CN&textFormat=Raw`, {
+        headers: { "Ocp-Apim-Subscription-Key": searchApiKey, "Accept": "application/json" },
         signal: AbortSignal.timeout(10000),
       });
       if (resp.ok) {
         const data = await resp.json() as any;
-        if (data?.data?.items && Array.isArray(data.data.items)) {
-          return data.data.items.map((item: any, i: number) =>
-            `${i + 1}. ${item.title || "无标题"}\n   ${item.url || ""}\n   ${item.snippet || ""}`
+        const items = data?.webPages?.value;
+        if (Array.isArray(items) && items.length > 0) {
+          return items.slice(0, 6).map((item: any, i: number) =>
+            `${i + 1}. ${item.name || "无标题"}\n   ${item.url || ""}\n   ${item.snippet || ""}`
           ).join("\n\n");
         }
       }
@@ -189,7 +190,7 @@ function stripTags(str: string): string {
   return str.replace(/<[^>]*>/g, "").replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#x27;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").trim();
 }
 
-function executeBuiltinTool(toolCall: { id: string; function: { name: string; arguments: string } }, searchApiKey?: string): Promise<MCPToolResult | null> {
+function executeBuiltinTool(toolCall: { id: string; function: { name: string; arguments: string } }, searchApiKey?: string, searchApiUrl?: string): Promise<MCPToolResult | null> {
   if (toolCall.function.name === "get_current_datetime") {
     const now = new Date();
     const tz = "Asia/Shanghai";
@@ -204,7 +205,7 @@ function executeBuiltinTool(toolCall: { id: string; function: { name: string; ar
   if (toolCall.function.name === "web_search") {
     let args: Record<string, any> = {};
     try { args = JSON.parse(toolCall.function.arguments || "{}"); } catch {}
-    return executeWebSearch(args.q || "", searchApiKey).then(content => ({ callId: toolCall.id, name: "web_search", content }));
+    return executeWebSearch(args.q || "", searchApiKey, searchApiUrl).then(content => ({ callId: toolCall.id, name: "web_search", content }));
   }
   return Promise.resolve(null);
 }
@@ -269,6 +270,7 @@ async function callOpenAICompatible(params: {
   db?: D1Database | null;
   maxToolRounds?: number;
   searchApiKey?: string;    // 搜索 API 密钥
+  searchApiUrl?: string;    // 搜索 API 地址
 }): Promise<string> {
   const url = params.baseUrl.trim().replace(/\/+$/, "");
 
@@ -341,7 +343,7 @@ async function callOpenAICompatible(params: {
     const builtinResults: MCPToolResult[] = [];
     const mcpOnlyCalls: typeof allToolCalls = [];
     for (const tc of allToolCalls) {
-      const builtin = await executeBuiltinTool(tc, params.searchApiKey);
+      const builtin = await executeBuiltinTool(tc, params.searchApiKey, params.searchApiUrl);
       if (builtin) {
         builtinResults.push(builtin);
       } else {
@@ -416,7 +418,8 @@ interface AIConfig {
   apiKey: string;
   maxTokens: number;
   maxContextChars?: number;  // 模型上下文窗口（字符数），默认 12000
-  searchApiKey?: string;     // 搜索 API 密钥（如博查），用于可靠联网搜索
+  searchApiKey?: string;     // 搜索 API 密钥（如 Bing Search API），用于可靠联网搜索
+  searchApiUrl?: string;     // 搜索 API 地址，默认 https://api.bing.microsoft.com/v7.0/search
   thinking?: boolean;
   mcpServers?: MCPServerConfig[];
   db?: D1Database | null;
@@ -453,6 +456,7 @@ export async function callAIWithContext(
     maxTokens: aiConfig?.maxTokens || 1024,
     maxContextChars: aiConfig?.maxContextChars || 12000,
     searchApiKey: aiConfig?.searchApiKey,
+    searchApiUrl: aiConfig?.searchApiUrl,
     thinking: aiConfig?.thinking || false,
     mcpServers: aiConfig?.mcpServers || [],
     db: aiConfig?.db || null,
@@ -499,6 +503,7 @@ export async function callAIWithContext(
         mcpTools,
         db: config.db,
         searchApiKey: config.searchApiKey,
+        searchApiUrl: config.searchApiUrl,
       });
     } else {
       reply = await callCloudflareAI(aiBinding, config.model, messages, config.maxTokens);
@@ -547,6 +552,7 @@ export async function callAI(
     maxTokens: aiConfig?.maxTokens || 1024,
     maxContextChars: aiConfig?.maxContextChars || 12000,
     searchApiKey: aiConfig?.searchApiKey,
+    searchApiUrl: aiConfig?.searchApiUrl,
     thinking: aiConfig?.thinking || false,
     mcpServers: aiConfig?.mcpServers || [],
     db: aiConfig?.db || null,
@@ -587,6 +593,7 @@ export async function callAI(
         mcpTools,
         db: config.db,
         searchApiKey: config.searchApiKey,
+        searchApiUrl: config.searchApiUrl,
       });
     } else {
       text = await callCloudflareAI(aiBinding, config.model, [

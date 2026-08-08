@@ -193,6 +193,7 @@ export async function handleChat(request: Request, env: Env): Promise<Response> 
       maxTokens: aiConfig.maxTokens,
       maxContextChars: aiConfig.maxContextChars,
       searchApiKey: env.SEARCH_API_KEY,
+      searchApiUrl: env.SEARCH_API_URL,
       thinking: aiConfig.thinking,
       mcpServers,
       db: env.DB,
