@@ -99,16 +99,15 @@ const BUILTIN_TOOLS = [{
   type: "function",
   function: {
     name: "web_search",
-    description: "联网搜索互联网获取实时信息，当用户问到新闻、时事、知识、价格、天气等需要最新信息的问题时调用。返回多条搜索结果（标题+摘要+链接）",
+    description: "搜索互联网获取实时信息，从维基百科、技术社区、DuckDuckGo 等多个来源聚合结果。当用户问到新闻、知识、技术问题等需要联网查询的问题时调用",
     parameters: { type: "object", properties: { q: { type: "string", description: "搜索关键词（必填）" } }, required: ["q"] },
   },
 }];
 
-// 网页搜索：优先 DuckDuckGo（JSON API → HTML → Lite），再试其他引擎
+// 网页搜索：使用公共 API（Wikipedia、HN 等），这些不会屏蔽 Workers IP
 async function executeWebSearch(query: string, searchApiKey?: string, searchApiUrl?: string): Promise<string> {
   const q = (query || "").trim();
   if (!q) return "搜索关键词为空";
-  argQuery = q;
 
   // 1. 有 API Key 时走 Bing Search API
   if (searchApiKey) {
@@ -116,82 +115,80 @@ async function executeWebSearch(query: string, searchApiKey?: string, searchApiU
     if (apiResult) return apiResult;
   }
 
-  // 2. DuckDuckGo 多接口优先
-  const ddgResult = await tryDuckDuckGo(q);
-  if (ddgResult) return ddgResult;
+  // 2. 公共 API（对 Workers 友好，不会屏蔽）
+  const results: string[] = [];
 
-  // 3. 其他引擎兜底
-  const engines = [
-    { url: "https://www.bing.com/search?q={q}&setlang=zh-hans", parser: parseBingResults, name: "Bing" },
-    { url: "https://www.baidu.com/s?wd={q}&ie=utf-8", parser: parseBaiduResults, name: "百度" },
-    { url: "https://www.bing.com/search?q={q}&setlang=zh-hans", parser: parseGenericResults, name: "通用" },
-  ];
+  // 2a. Wikipedia API（通用知识，最可靠）
+  const wiki = await tryWikipedia(q);
+  if (wiki) results.push("📚 维基百科:\n" + wiki);
 
-  for (const { url, parser } of engines) {
-    try {
-      const resp = await fetch(url.replace("{q}", encodeURIComponent(q)), {
-        headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" },
-        signal: AbortSignal.timeout(8000),
-      });
-      if (!resp.ok) continue;
-      const html = await resp.text();
-      const result = parser(html);
-      if (result) return result;
-    } catch { continue; }
-  }
+  // 2b. Hacker News API（技术新闻/热点）
+  const hn = await tryHackerNews(q);
+  if (hn) results.push("📰 HN 开发者社区:\n" + hn);
+
+  // 2c. DuckDuckGo API（可能被屏蔽，做备选）
+  const ddg = await tryDuckDuckGoQ(q);
+  if (ddg) results.push("🔍 DuckDuckGo:\n" + ddg);
+
+  if (results.length > 0) return results.join("\n\n---\n\n");
 
   return "没有找到相关结果";
 }
 
-// DuckDuckGo 综合搜索：JSON API → HTML → Lite
-async function tryDuckDuckGo(q: string): Promise<string | null> {
-  // a. JSON API（最可能不被屏蔽）
+// Wikipedia 搜索 API（免费，无需 Key，对 Workers 友好）
+async function tryWikipedia(q: string): Promise<string | null> {
   try {
-    const apiUrl = `https://api.duckduckgo.com/?q=${encodeURIComponent(q)}&format=json&no_html=1&skip_disambig=1`;
-    const resp = await fetch(apiUrl, {
-      headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
-      signal: AbortSignal.timeout(8000),
-    });
-    if (resp.ok) {
-      const data = await resp.json() as any;
-      const parts: string[] = [];
-      if (data.AbstractText) parts.push(`摘要: ${data.AbstractText}${data.AbstractURL ? ` (${data.AbstractURL})` : ""}`);
-      const topics = (data.RelatedTopics || []).filter((t: any) => t.Text);
-      if (topics.length > 0) {
-        topics.slice(0, 6).forEach((t: any, i: number) => {
-          parts.push(`${i + 1}. ${t.Text}\n   ${t.FirstURL || ""}`);
-        });
-      }
-      if (parts.length > 0) return parts.join("\n\n");
-    }
-  } catch { /* 继续 */ }
-
-  // b. HTML 接口
-  const htmlResult = await tryGeneric(`https://html.duckduckgo.com/html/?q={q}`, parseDuckDuckGoResults);
-  if (htmlResult) return htmlResult;
-
-  // c. Lite 接口
-  const liteResult = await tryGeneric(`https://lite.duckduckgo.com/lite/?q={q}`, parseDuckDuckGoLiteResults);
-  if (liteResult) return liteResult;
-
-  return null;
-}
-
-// 抓取单个 HTML 引擎
-async function tryGeneric(urlTemplate: string, parser: (html: string) => string | null): Promise<string | null> {
-  try {
-    const url = urlTemplate.replace("{q}", encodeURIComponent(argQuery));
-    const resp = await fetch(url, {
-      headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" },
-      signal: AbortSignal.timeout(8000),
-    });
+    const resp = await fetch(
+      `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(q)}&format=json&srlimit=5&srprop=snippet`,
+      { headers: { "User-Agent": "ClawBot/1.0" }, signal: AbortSignal.timeout(8000) }
+    );
     if (!resp.ok) return null;
-    return parser(await resp.text());
+    const data = await resp.json() as any;
+    const items = data?.query?.search;
+    if (!Array.isArray(items) || items.length === 0) return null;
+    return items.map((i: any, idx: number) =>
+      `${idx + 1}. ${i.title}\n   https://en.wikipedia.org/wiki/${encodeURIComponent(i.title)}\n   ${stripTags(i.snippet).slice(0, 200)}`
+    ).join("\n\n");
   } catch { return null; }
 }
 
-// 保存当前 query 供 tryGeneric 使用
-let argQuery = "";
+// Hacker News 搜索（Algolia 提供，免费，对 Workers 友好）
+async function tryHackerNews(q: string): Promise<string | null> {
+  try {
+    const resp = await fetch(
+      `https://hn.algolia.com/api/v1/search?query=${encodeURIComponent(q)}&hitsPerPage=5&tags=story`,
+      { headers: { "User-Agent": "ClawBot/1.0" }, signal: AbortSignal.timeout(8000) }
+    );
+    if (!resp.ok) return null;
+    const data = await resp.json() as any;
+    const hits = data?.hits;
+    if (!Array.isArray(hits) || hits.length === 0) return null;
+    return hits.map((h: any, idx: number) =>
+      `${idx + 1}. ${h.title || "无标题"}\n   ${h.url || `https://news.ycombinator.com/item?id=${h.objectID}`}\n   ${h.points || 0} 分, ${h.author || ""}`
+    ).join("\n\n");
+  } catch { return null; }
+}
+
+// DuckDuckGo API 搜索（备选）
+async function tryDuckDuckGoQ(q: string): Promise<string | null> {
+  try {
+    const resp = await fetch(
+      `https://api.duckduckgo.com/?q=${encodeURIComponent(q)}&format=json&no_html=1&skip_disambig=1`,
+      { headers: { "User-Agent": "ClawBot/1.0" }, signal: AbortSignal.timeout(8000) }
+    );
+    if (!resp.ok) return null;
+    const data = await resp.json() as any;
+    const parts: string[] = [];
+    if (data.AbstractText) parts.push(`摘要: ${data.AbstractText}${data.AbstractURL ? `\n   ${data.AbstractURL}` : ""}`);
+    const topics = (data.RelatedTopics || []).filter((t: any) => t.Text);
+    if (topics.length > 0) {
+      topics.slice(0, 5).forEach((t: any, i: number) => {
+        parts.push(`${i + 1}. ${t.Text}\n   ${t.FirstURL || ""}`);
+      });
+    }
+    return parts.length > 0 ? parts.join("\n\n") : null;
+  } catch { return null; }
+}
 
 async function tryBingApi(q: string, key: string, url?: string): Promise<string | null> {
   try {
