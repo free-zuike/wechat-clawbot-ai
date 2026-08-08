@@ -838,6 +838,10 @@ export class ILinkConnectionDO implements DurableObject {
         if (item.type === MessageItemType.TEXT && item.text_item?.text) {
           hasRealText = true;
         }
+        // 语音消息的 ASR 转文字也算有效文本
+        if (item.type === MessageItemType.VOICE && item.voice_item?.text) {
+          hasRealText = true;
+        }
       }
 
       // 纯图片消息（无文字 item）：缓存图片信息供后续以图生图使用
