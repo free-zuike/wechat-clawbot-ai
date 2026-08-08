@@ -147,13 +147,13 @@ async function mcpRequest(
     headers["Authorization"] = `Bearer ${server.apiKey}`;
   }
 
-  // 非初始化请求需要会话和协议版本
+  // 非初始化请求需要会话和协议版本（使用服务器实际支持的版本，而非硬编码的）
   if (!options?.noSession) {
     const session = await loadSession(db, server.id);
     if (session?.sessionId) {
       headers["Mcp-Session-Id"] = session.sessionId;
     }
-    headers["MCP-Protocol-Version"] = MCP_PROTOCOL_VERSION;
+    headers["MCP-Protocol-Version"] = session?.protocolVersion || MCP_PROTOCOL_VERSION;
   }
 
   const requestId = options?.id ?? Date.now();
@@ -696,7 +696,7 @@ async function executeToolCallStateless(server: MCPServerConfig, toolCall: MCPTo
   }
 }
 
-// 执行一批 MCP 工具调用（并行执行，提升多工具场景速度）
+// 执行一批 MCP 工具调用（串行执行，避免并发会话冲突）
 export async function executeToolCalls(
   toolCalls: MCPToolCall[],
   db: D1Database | null
@@ -706,26 +706,18 @@ export async function executeToolCalls(
   const servers = await loadMCPServers(db);
   const serverMap = new Map(servers.map(s => [s.id, s]));
 
-  // 先处理缺失服务器的调用（同步构造结果），其余并行执行
-  const missing: MCPToolResult[] = [];
-  const validCalls: MCPToolCall[] = [];
+  const results: MCPToolResult[] = [];
   for (const tc of toolCalls) {
     const server = serverMap.get(tc.serverId);
     if (!server) {
-      missing.push({ callId: tc.callId, name: tc.name, content: `未找到 MCP Server: ${tc.serverId}`, isError: true });
-    } else {
-      validCalls.push(tc);
+      results.push({ callId: tc.callId, name: tc.name, content: `未找到 MCP Server: ${tc.serverId}`, isError: true });
+      continue;
     }
+    const result = await executeToolCall(db, server, tc);
+    results.push(result);
   }
 
-  const results = await Promise.all(
-    validCalls.map(async (tc) => {
-      const server = serverMap.get(tc.serverId)!;
-      return executeToolCall(db, server, tc);
-    })
-  );
-
-  return [...missing, ...results];
+  return results;
 }
 
 // 发送告警通知：自动从已配置的 MCP 服务器中寻找推送工具（如 BeeSwarm 的 send_push）
