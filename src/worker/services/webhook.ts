@@ -31,20 +31,27 @@ export async function sendWebhook(config: WebhookConfig, data: {
     headers["X-API-Key"] = config.apiKey;
   }
 
-  try {
-    const resp = await fetch(config.url, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({ title, content, channels: config.channels || [] }),
-      signal: AbortSignal.timeout(5000),
-    });
-    if (!resp.ok) {
-      const body = await resp.text().catch(() => "");
-      Logger.warn("[Webhook] push failed", { status: resp.status, body: body.slice(0, 200) });
-    } else {
-      Logger.info("[Webhook] push sent", { to: data.fromUserId });
+  const body = JSON.stringify({ title, content, channels: config.channels || [] });
+
+  // 重试 3 次：立即 → 1秒 → 3秒
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const resp = await fetch(config.url, {
+        method: "POST",
+        headers,
+        body,
+        signal: AbortSignal.timeout(5000),
+      });
+      if (resp.ok) {
+        Logger.info("[Webhook] push sent", { to: data.fromUserId, attempt: attempt + 1 });
+        return;
+      }
+      const bodyText = await resp.text().catch(() => "");
+      Logger.warn("[Webhook] push failed", { status: resp.status, body: bodyText.slice(0, 200), attempt: attempt + 1 });
+      if (attempt < 2) await new Promise(r => setTimeout(r, [0, 1000, 3000][attempt]));
+    } catch (e) {
+      Logger.warn("[Webhook] push error", { error: (e as Error).message, attempt: attempt + 1 });
+      if (attempt < 2) await new Promise(r => setTimeout(r, [0, 1000, 3000][attempt]));
     }
-  } catch (e) {
-    Logger.warn("[Webhook] push error", { error: (e as Error).message });
   }
 }

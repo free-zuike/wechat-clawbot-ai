@@ -740,7 +740,7 @@ export async function callAIWithContext(
     }
     } catch (e: any) {
     Logger.error(`[ai] AI call failed for ${userId}`, { error: e?.message || String(e) });
-    return `AI调用失败: ${e?.message || String(e)}`;
+    return "AI 暂时无法回答，请稍后重试";
   }
 
   Logger.info(`[ai] AI reply for ${userId}`, { replyLength: reply.length, provider: config.provider });
