@@ -17,8 +17,8 @@ export interface UserContext {
 }
 
 // 配置
-const MAX_CONTEXT_MESSAGES = 10; // 保留最近 10 条消息（5轮对话）
-const CONTEXT_EXPIRE_HOURS = 24; // 上下文 24 小时过期
+export const MAX_CONTEXT_MESSAGES = 40; // 保留最近 40 条消息（20轮对话）
+export const CONTEXT_EXPIRE_HOURS = 72; // 上下文 72 小时（3天）过期
 
 // ========== DO SQLite 版本 ==========
 

@@ -10,6 +10,7 @@ import {
   clearContextD1,
   buildMessagesWithContext,
   shouldClearContext,
+  MAX_CONTEXT_MESSAGES,
 } from "./context";
 import {
   loadMCPServers,
@@ -751,8 +752,8 @@ export async function callAIWithContext(
   if (reply) {
     context.messages.push({ role: "assistant", content: reply.slice(0, 500), timestamp: now });
   }
-  if (context.messages.length > 10) {
-    context.messages = context.messages.slice(-10);
+  if (context.messages.length > MAX_CONTEXT_MESSAGES) {
+    context.messages = context.messages.slice(-MAX_CONTEXT_MESSAGES);
   }
   context.lastUpdated = now;
   try {
