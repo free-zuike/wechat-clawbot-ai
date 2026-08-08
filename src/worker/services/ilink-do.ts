@@ -955,7 +955,7 @@ export class ILinkConnectionDO implements DurableObject {
               // 之后由 checkPendingVideos 轮询完成后发送视频
               startTypingKeepAlive();
               const videoParams = extractVideoDuration(text);
-              const result = await submitVideoTask(this.env.AI, mediaPrompt, cfg.aiVideoModel, cfg.aiProvider, cfg.aiBaseUrl, cfg.aiApiKey, videoParams?.numFrames, videoParams?.frameRate);
+              const result = await submitVideoTask(this.env.AI, mediaPrompt, cfg.aiVideoModel, cfg.aiProvider, cfg.aiBaseUrl, cfg.aiApiKey, videoParams?.numFrames, videoParams?.frameRate, imageUrl);
               const modelInfo = `🤖 ${providerName} · ${cfg.aiVideoModel}`;
               if (result) {
                 if (result.url) {

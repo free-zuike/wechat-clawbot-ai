@@ -1167,12 +1167,13 @@ export async function submitVideoTask(
   apiKey?: string,
   numFrames?: number,
   frameRate?: number,
+  imageUrl?: string,  // 可选：以图生视频的参考图片
 ): Promise<{ taskId: string; videoId?: string; baseUrl: string; provider: string; apiKey: string; model: string; prompt: string; url?: string } | null> {
   const videoModel = model || DEFAULT_VIDEO_MODEL;
   const effectiveProvider = provider || "cloudflare";
   const effectiveNumFrames = numFrames || DEFAULT_NUM_FRAMES;
   const effectiveFrameRate = frameRate || DEFAULT_FRAME_RATE;
-  Logger.info("[ai] Submitting video task", { prompt: prompt.slice(0, 50), model: videoModel, provider: effectiveProvider, numFrames: effectiveNumFrames, frameRate: effectiveFrameRate });
+  Logger.info("[ai] Submitting video task", { prompt: prompt.slice(0, 50), model: videoModel, provider: effectiveProvider, numFrames: effectiveNumFrames, frameRate: effectiveFrameRate, hasImageUrl: !!imageUrl });
 
   // 非 Cloudflare 提供商（如 Agnes AI）：POST /v1/videos，返回 task_id 和 video_id
   // Agnes 查询结果推荐用 GET /agnesapi?video_id=
@@ -1182,10 +1183,16 @@ export async function submitVideoTask(
       // 智谱AI用 /videos/generations，其他提供商用 /videos
       const isZhipu = baseUrl.includes("bigmodel.cn");
       const submitUrl = isZhipu ? `${base}/${version}/videos/generations` : `${base}/${version}/videos`;
+      const body: Record<string, any> = { model: videoModel, prompt, num_frames: effectiveNumFrames, frame_rate: effectiveFrameRate };
+      // 参考图片（部分提供商支持以图生视频）
+      if (imageUrl) {
+        body.image = imageUrl;
+        body.image_url = imageUrl;
+      }
       const resp = await fetch(submitUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
-        body: JSON.stringify({ model: videoModel, prompt, num_frames: effectiveNumFrames, frame_rate: effectiveFrameRate }),
+        body: JSON.stringify(body),
       });
       if (!resp.ok) {
         const errBody = await resp.text().catch(() => "");
