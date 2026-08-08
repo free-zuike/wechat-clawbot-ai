@@ -87,7 +87,7 @@ function getCurrentTimeStr(): string {
   return `${get("year")}年${get("month")}月${get("day")}日 ${get("hour")}:${get("minute")}:${get("second")}（星期${weekdayMap[get("weekday")] || get("weekday")}，中国时区）`;
 }
 
-// 内置工具：获取当前日期时间（中国时区 Asia/Shanghai）
+// 内置工具：获取当前日期时间（中国时区 Asia/Shanghai）+ 联网搜索
 const BUILTIN_TOOLS = [{
   type: "function",
   function: {
@@ -95,19 +95,81 @@ const BUILTIN_TOOLS = [{
     description: "获取当前日期和时间（中国时区 Asia/Shanghai, UTC+8），当用户问到「今天/昨天/明天/上个月/本月/上周/下周」等相对时间时，调用此工具获取准确日期后再回答",
     parameters: { type: "object", properties: {} },
   },
+}, {
+  type: "function",
+  function: {
+    name: "web_search",
+    description: "联网搜索互联网获取实时信息，当用户问到新闻、时事、知识、价格、天气等需要最新信息的问题时调用。返回多条搜索结果（标题+摘要+链接）",
+    parameters: { type: "object", properties: { q: { type: "string", description: "搜索关键词（必填）" } }, required: ["q"] },
+  },
 }];
 
-function executeBuiltinTool(toolCall: { id: string; function: { name: string } }): MCPToolResult | null {
-  if (toolCall.function.name !== "get_current_datetime") return null;
-  const now = new Date();
-  const tz = "Asia/Shanghai";
-  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit", weekday: "long", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).formatToParts(now);
-  const get = (t: string) => parts.find(p => p.type === t)?.value || "";
-  const weekdayMap: Record<string, string> = { "Sunday": "日", "Monday": "一", "Tuesday": "二", "Wednesday": "三", "Thursday": "四", "Friday": "五", "Saturday": "六" };
-  const dateStr = `${get("year")}年${get("month")}月${get("day")}日`;
-  const weekdayStr = weekdayMap[get("weekday")] || get("weekday");
-  const timeStr = `${get("hour")}:${get("minute")}:${get("second")}`;
-  return { callId: toolCall.id, name: "get_current_datetime", content: `当前日期: ${dateStr}（星期${weekdayStr}），当前时间: ${timeStr}（中国时区）` };
+// 网页搜索：使用 DuckDuckGo 的 HTML 接口（免费，无需 API Key）
+async function executeWebSearch(query: string): Promise<string> {
+  const q = (query || "").trim();
+  if (!q) return "搜索关键词为空";
+  try {
+    const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(q)}`;
+    const resp = await fetch(url, {
+      headers: { "User-Agent": "Mozilla/5.0 (compatible; ClawBot/1.0)" },
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!resp.ok) return `搜索失败 (HTTP ${resp.status})`;
+    const html = await resp.text();
+    return parseDDGResults(html);
+  } catch (e: any) {
+    return `搜索失败: ${e?.message || String(e)}`;
+  }
+}
+
+// 解析 DuckDuckGo HTML 搜索结果
+function parseDDGResults(html: string): string {
+  const results: string[] = [];
+  // 匹配 <a class="result__a" href="...">标题</a> 和 <a class="result__snippet" ...>摘要</a>
+  const linkRe = /<a[^>]*class="result__a"[^>]*href="([^"]*)"[^>]*>(.*?)<\/a>/g;
+  const snippetRe = /<a[^>]*class="result__snippet"[^>]*>(.*?)<\/a>/g;
+  const links: Array<{ url: string; title: string }> = [];
+  let m: RegExpExecArray | null;
+  while ((m = linkRe.exec(html)) !== null) {
+    links.push({ url: m[1], title: stripTags(m[2]) });
+  }
+  const snippets: string[] = [];
+  while ((m = snippetRe.exec(html)) !== null) {
+    snippets.push(stripTags(m[1]));
+  }
+  const count = Math.min(links.length, 6);
+  if (count === 0) return "没有找到相关结果";
+  for (let i = 0; i < count; i++) {
+    const title = links[i].title || `结果 ${i + 1}`;
+    const url = links[i].url;
+    const snippet = snippets[i] || "";
+    results.push(`${i + 1}. ${title}\n   ${url}\n   ${snippet}`);
+  }
+  return results.join("\n\n");
+}
+
+function stripTags(str: string): string {
+  return str.replace(/<[^>]*>/g, "").replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#x27;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").trim();
+}
+
+function executeBuiltinTool(toolCall: { id: string; function: { name: string; arguments: string } }): Promise<MCPToolResult | null> {
+  if (toolCall.function.name === "get_current_datetime") {
+    const now = new Date();
+    const tz = "Asia/Shanghai";
+    const parts = new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit", weekday: "long", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).formatToParts(now);
+    const get = (t: string) => parts.find(p => p.type === t)?.value || "";
+    const weekdayMap: Record<string, string> = { "Sunday": "日", "Monday": "一", "Tuesday": "二", "Wednesday": "三", "Thursday": "四", "Friday": "五", "Saturday": "六" };
+    const dateStr = `${get("year")}年${get("month")}月${get("day")}日`;
+    const weekdayStr = weekdayMap[get("weekday")] || get("weekday");
+    const timeStr = `${get("hour")}:${get("minute")}:${get("second")}`;
+    return Promise.resolve({ callId: toolCall.id, name: "get_current_datetime", content: `当前日期: ${dateStr}（星期${weekdayStr}），当前时间: ${timeStr}（中国时区）` });
+  }
+  if (toolCall.function.name === "web_search") {
+    let args: Record<string, any> = {};
+    try { args = JSON.parse(toolCall.function.arguments || "{}"); } catch {}
+    return executeWebSearch(args.q || "").then(content => ({ callId: toolCall.id, name: "web_search", content }));
+  }
+  return Promise.resolve(null);
 }
 
 // 将工具返回的 JSON 转成自然语言，避免 AI 解析 JSON 时编造数字
@@ -239,11 +301,11 @@ async function callOpenAICompatible(params: {
 
     // 解析并执行工具调用（内置工具 + MCP 工具）
     const allToolCalls = toolCalls as Array<{ id: string; function: { name: string; arguments: string } }>;
-    // 内置工具直接执行，不走 MCP
+    // 内置工具直接执行（异步），不走 MCP
     const builtinResults: MCPToolResult[] = [];
     const mcpOnlyCalls: typeof allToolCalls = [];
     for (const tc of allToolCalls) {
-      const builtin = executeBuiltinTool(tc);
+      const builtin = await executeBuiltinTool(tc);
       if (builtin) {
         builtinResults.push(builtin);
       } else {
@@ -367,7 +429,7 @@ export async function callAIWithContext(
 
   // 注入当前日期（通用，不针对特定 MCP），让 AI 正确换算"今天/上个月/本月"等相对时间
   const messages = buildMessagesWithContext(
-    `当前时间: ${getCurrentTimeStr()}。当用户提到"今天/昨天/明天/上个月/本月/下周/几点"等相对时间时，基于以上时间准确换算。\n\n${system}`,
+    `当前时间: ${getCurrentTimeStr()}。当用户提到"今天/昨天/明天/上个月/本月/下周/几点"等相对时间时，基于以上时间准确换算。当用户问到新闻、时事、最新信息等需要联网查询的问题时，调用 web_search 工具搜索。\n\n${system}`,
     cleanMsg,
     context,
     config.maxContextChars
@@ -474,7 +536,7 @@ export async function callAI(
         apiKey: config.apiKey,
         model: config.model,
         messages: [
-          { role: "system", content: `当前时间: ${getCurrentTimeStr()}。当用户提到"今天/昨天/明天/上个月/本月/下周/几点"等相对时间时，基于以上时间准确换算。\n\n${system}` },
+          { role: "system", content: `当前时间: ${getCurrentTimeStr()}。当用户提到"今天/昨天/明天/上个月/本月/下周/几点"等相对时间时，基于以上时间准确换算。当用户问到新闻、时事、最新信息等需要联网查询的问题时，调用 web_search 工具搜索。\n\n${system}` },
           { role: "user", content: cleanMsg },
         ],
         maxTokens: config.maxTokens,
@@ -486,7 +548,7 @@ export async function callAI(
       });
     } else {
       text = await callCloudflareAI(aiBinding, config.model, [
-        { role: "system", content: `当前时间: ${getCurrentTimeStr()}。当用户提到"今天/昨天/明天/上个月/本月/下周/几点"等相对时间时，基于以上时间准确换算。\n\n${system}` },
+        { role: "system", content: `当前时间: ${getCurrentTimeStr()}。当用户提到"今天/昨天/明天/上个月/本月/下周/几点"等相对时间时，基于以上时间准确换算。当用户问到新闻、时事、最新信息等需要联网查询的问题时，调用 web_search 工具搜索。\n\n${system}` },
         { role: "user", content: cleanMsg },
       ], config.maxTokens);
     }
