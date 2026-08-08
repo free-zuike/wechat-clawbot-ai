@@ -1090,18 +1090,10 @@ export class ILinkConnectionDO implements DurableObject {
       } catch (e: any) {
         aiFailCount++;
         Logger.error("[DO] AI processing failed", { error: e.message, from });
-        // AI 失败时通过 webhook 发送告警
+        // AI 失败时通过 MCP 推送工具（如 BeeSwarm）发送告警
         try {
-          const wh = this.cache.config?.webhook;
-          if (wh?.enabled && wh?.url) {
-            const { sendWebhook } = await import("./webhook");
-            sendWebhook(wh, {
-              fromUserId: from,
-              content: text,
-              replyContent: `❌ AI 调用失败: ${e.message?.slice(0, 200) || "未知错误"}`,
-              timestamp: createdAt,
-            }).catch(() => {});
-          }
+          const { sendAlert } = await import("../services/mcp");
+          sendAlert(this.env.DB, "🤖 AI 调用失败", `用户: ${from}\n错误: ${e.message?.slice(0, 200) || "未知错误"}`).catch(() => {});
         } catch {}
       }
 

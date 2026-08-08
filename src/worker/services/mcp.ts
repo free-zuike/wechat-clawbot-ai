@@ -719,3 +719,44 @@ export async function executeToolCalls(
 
   return results;
 }
+
+// 发送告警通知：自动从已配置的 MCP 服务器中寻找推送工具（如 BeeSwarm 的 send_push）
+// 不依赖 webhook 配置，直接使用 MCP 工具调用
+export async function sendAlert(db: D1Database | null, title: string, body: string): Promise<void> {
+  if (!db) return;
+  try {
+    const servers = await loadAllMCPServers(db);
+    for (const server of servers) {
+      if (!server.enabled || !server.tools) continue;
+      // 在工具列表中找名包含 push/notify/alert 的工具
+      const pushTool = server.tools.find(t => {
+        const name = (t.name || "").toLowerCase();
+        return name.includes("push") || name.includes("notify") || name.includes("alert");
+      });
+      if (!pushTool) continue;
+
+      const prefix = server.toolPrefix || `mcp_${server.id}`;
+      const toolCall: MCPToolCall = {
+        name: `${prefix}_${pushTool.name}`,
+        rawName: pushTool.name,
+        serverId: server.id,
+        callId: `alert_${Date.now()}`,
+        arguments: { title, body, content: `${title}\n${body}` },
+      };
+      const result = await executeToolCall(db, server, toolCall);
+      if (result.isError) {
+        // 参数可能不同，重试一次简化参数
+        const retryCall: MCPToolCall = {
+          ...toolCall,
+          arguments: { message: `${title}: ${body}` },
+        };
+        await executeToolCall(db, server, retryCall);
+      }
+      Logger.info("[mcp] Alert sent via MCP", { server: server.name, tool: pushTool.name });
+      return; // 只发一次
+    }
+    Logger.warn("[mcp] No push-capable MCP tool found for alert");
+  } catch (e: any) {
+    Logger.warn("[mcp] Alert failed", { error: e?.message });
+  }
+}
