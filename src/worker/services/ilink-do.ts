@@ -835,6 +835,19 @@ export class ILinkConnectionDO implements DurableObject {
             };
           }
         }
+        // 引用消息中的图片（用户回复图片消息时，原图在 ref_msg 里）
+        if (item.ref_msg?.message_item?.image_item) {
+          const refImg = item.ref_msg.message_item.image_item;
+          if (!imageUrl && !imageCdnParams) {
+            imageUrl = refImg.cdn_url || refImg.url;
+            if (!imageUrl && refImg.media?.encrypt_query_param && refImg.media?.aes_key) {
+              imageCdnParams = {
+                encryptQueryParam: refImg.media.encrypt_query_param,
+                aesKey: refImg.media.aes_key,
+              };
+            }
+          }
+        }
         if (item.type === MessageItemType.TEXT && item.text_item?.text) {
           hasRealText = true;
         }
