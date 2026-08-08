@@ -735,6 +735,31 @@ function maskToken(token: string): string {
   return token.substring(0, 8) + "***" + token.substring(token.length - 4);
 }
 
+// 常见表情符号 → 文字描述（帮 AI 理解入站消息里的 emoji）
+const EMOJI_MAP: Record<string, string> = {
+  "😀": "开心", "😁": "大笑", "😂": "笑哭", "🤣": "笑到哭", "😊": "微笑",
+  "😍": "爱慕", "😘": "飞吻", "😜": "调皮", "🤔": "思考", "😎": "酷",
+  "🥳": "庆祝", "😢": "哭泣", "😭": "大哭", "😡": "生气", "😱": "震惊",
+  "😴": "困", "👍": "赞", "👎": "踩", "👏": "鼓掌", "🙏": "感谢",
+  "💪": "加油", "🤝": "握手", "❤️": "心", "💔": "心碎", "🔥": "火/热门",
+  "✨": "闪耀", "🎉": "庆祝", "🎂": "生日", "🎁": "礼物", "💡": "主意",
+  "❗": "注意", "❓": "疑问", "✅": "完成", "❌": "错误", "⚠️": "警告",
+  "🔍": "搜索", "📤": "发送", "📥": "接收", "📎": "附件", "📌": "标记",
+  "☕": "咖啡", "🍵": "茶", "🌹": "玫瑰", "🌸": "花", "🌞": "太阳/好",
+  "👋": "挥手", "🤗": "拥抱", "😤": "憋气", "😓": "汗", "🙄": "翻白眼",
+};
+
+export function translateEmoji(text: string): string {
+  if (!text) return text;
+  let result = text;
+  for (const [emoji, desc] of Object.entries(EMOJI_MAP)) {
+    if (result.includes(emoji)) {
+      result = result.split(emoji).join(`[${desc}]`);
+    }
+  }
+  return result;
+}
+
 export function extractMessageText(msg: WeixinMessage): string {
   if (!msg.item_list?.length) return "";
   
@@ -744,14 +769,14 @@ export function extractMessageText(msg: WeixinMessage): string {
     if (item.type === MessageItemType.TEXT && item.text_item?.text) {
       const ref = item.ref_msg;
       if (ref?.title) {
-        parts.push(`[引用: ${ref.title}]\n${item.text_item.text}`);
+        parts.push(`[引用: ${ref.title}]\n${translateEmoji(item.text_item.text)}`);
       } else {
-        parts.push(item.text_item.text);
+        parts.push(translateEmoji(item.text_item.text));
       }
     }
     if (item.type === MessageItemType.VOICE && item.voice_item?.text) {
       const playtime = item.voice_item.playtime ? `（${item.voice_item.playtime}秒）` : "";
-      parts.push(`🎤 [语音转文字${playtime}]: ${item.voice_item.text}`);
+      parts.push(`🎤 [语音转文字${playtime}]: ${translateEmoji(item.voice_item.text)}`);
     }
     if (item.type === MessageItemType.IMAGE) {
       const url = item.image_item?.cdn_url || item.image_item?.url;
