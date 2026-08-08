@@ -190,17 +190,18 @@ export async function clearContextD1(db: D1Database, userId: string): Promise<vo
 
 // ========== 通用工具函数 ==========
 
-// 构建带上下文的 AI 消息数组（带 token 截断）
+// 构建带上下文的 AI 消息数组（带字符数截断）
 export function buildMessagesWithContext(
   systemPrompt: string,
   userMessage: string,
-  context: UserContext
+  context: UserContext,
+  maxContextChars = 12000
 ): Array<{ role: string; content: string }> {
   const messages: Array<{ role: string; content: string }> = [
     { role: "system", content: systemPrompt }
   ];
 
-  const MAX_CHARS = 12000;
+  const MAX_CHARS = maxContextChars;
   let totalChars = 0;
 
   // 从最新消息往前加，超过上限截断

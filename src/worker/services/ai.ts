@@ -317,6 +317,7 @@ interface AIConfig {
   baseUrl: string;
   apiKey: string;
   maxTokens: number;
+  maxContextChars?: number;  // 模型上下文窗口（字符数），默认 12000
   thinking?: boolean;
   mcpServers?: MCPServerConfig[];
   db?: D1Database | null;
@@ -351,6 +352,7 @@ export async function callAIWithContext(
     baseUrl: aiConfig?.baseUrl || "",
     apiKey: aiConfig?.apiKey || "",
     maxTokens: aiConfig?.maxTokens || 1024,
+    maxContextChars: aiConfig?.maxContextChars || 12000,
     thinking: aiConfig?.thinking || false,
     mcpServers: aiConfig?.mcpServers || [],
     db: aiConfig?.db || null,
@@ -367,7 +369,8 @@ export async function callAIWithContext(
   const messages = buildMessagesWithContext(
     `当前时间: ${getCurrentTimeStr()}。当用户提到"今天/昨天/明天/上个月/本月/下周/几点"等相对时间时，基于以上时间准确换算。\n\n${system}`,
     cleanMsg,
-    context
+    context,
+    config.maxContextChars
   );
 
   Logger.info(`[ai] Calling AI for ${userId}`, { provider: config.provider, model: config.model });
