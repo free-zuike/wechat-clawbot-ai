@@ -104,47 +104,43 @@ const BUILTIN_TOOLS = [{
   },
 }];
 
-// 网页搜索：使用 DuckDuckGo 的 HTML 接口（免费，无需 API Key）
+// 网页搜索：使用 Bing 搜索（更稳定，不易被 Cloudflare Workers 屏蔽）
 async function executeWebSearch(query: string): Promise<string> {
   const q = (query || "").trim();
   if (!q) return "搜索关键词为空";
   try {
-    const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(q)}`;
+    const url = `https://www.bing.com/search?q=${encodeURIComponent(q)}&setlang=zh-hans`;
     const resp = await fetch(url, {
-      headers: { "User-Agent": "Mozilla/5.0 (compatible; ClawBot/1.0)" },
+      headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" },
       signal: AbortSignal.timeout(10000),
     });
     if (!resp.ok) return `搜索失败 (HTTP ${resp.status})`;
     const html = await resp.text();
-    return parseDDGResults(html);
+    return parseBingResults(html);
   } catch (e: any) {
     return `搜索失败: ${e?.message || String(e)}`;
   }
 }
 
-// 解析 DuckDuckGo HTML 搜索结果
-function parseDDGResults(html: string): string {
+// 解析 Bing HTML 搜索结果
+function parseBingResults(html: string): string {
   const results: string[] = [];
-  // 匹配 <a class="result__a" href="...">标题</a> 和 <a class="result__snippet" ...>摘要</a>
-  const linkRe = /<a[^>]*class="result__a"[^>]*href="([^"]*)"[^>]*>(.*?)<\/a>/g;
-  const snippetRe = /<a[^>]*class="result__snippet"[^>]*>(.*?)<\/a>/g;
-  const links: Array<{ url: string; title: string }> = [];
+  // Bing 结果格式：<li class="b_algo"><h2><a href="url">title</a></h2><p>snippet</p>
+  const algoRe = /<li[^>]*class="b_algo"[^>]*>(.*?)<\/li>/gs;
   let m: RegExpExecArray | null;
-  while ((m = linkRe.exec(html)) !== null) {
-    links.push({ url: m[1], title: stripTags(m[2]) });
+  let count = 0;
+  while ((m = algoRe.exec(html)) !== null && count < 6) {
+    const item = m[1];
+    const titleMatch = item.match(/<h2[^>]*>.*?<a[^>]*href="([^"]*)"[^>]*>(.*?)<\/a>/s);
+    const snippetMatch = item.match(/<p[^>]*>(.*?)<\/p>/s);
+    if (!titleMatch) continue;
+    const url = titleMatch[1].replace(/^https?:\/\/www\.bing\.com\/.*?[?&]url=/, "").replace(/&.*$/, "");
+    const title = stripTags(titleMatch[2]);
+    const snippet = snippetMatch ? stripTags(snippetMatch[1]).slice(0, 200) : "";
+    results.push(`${count + 1}. ${title}\n   ${decodeURIComponent(url)}\n   ${snippet}`);
+    count++;
   }
-  const snippets: string[] = [];
-  while ((m = snippetRe.exec(html)) !== null) {
-    snippets.push(stripTags(m[1]));
-  }
-  const count = Math.min(links.length, 6);
-  if (count === 0) return "没有找到相关结果";
-  for (let i = 0; i < count; i++) {
-    const title = links[i].title || `结果 ${i + 1}`;
-    const url = links[i].url;
-    const snippet = snippets[i] || "";
-    results.push(`${i + 1}. ${title}\n   ${url}\n   ${snippet}`);
-  }
+  if (results.length === 0) return "没有找到相关结果";
   return results.join("\n\n");
 }
 
