@@ -1069,7 +1069,7 @@ export class ILinkConnectionDO implements DurableObject {
           from,
           text,
           systemPrompt,
-          { provider: cfg.aiProvider, model: aiModel, baseUrl: cfg.aiBaseUrl, apiKey: cfg.aiApiKey, maxTokens: cfg.aiMaxTokens, maxContextChars: cfg.aiMaxContextChars, mcpServers: cfg.mcpServers, db: this.env.DB },
+          { provider: cfg.aiProvider, model: aiModel, baseUrl: cfg.aiBaseUrl, apiKey: cfg.aiApiKey, maxTokens: cfg.aiMaxTokens, maxContextChars: cfg.aiMaxContextChars, searchApiKey: this.env.SEARCH_API_KEY, mcpServers: cfg.mcpServers, db: this.env.DB },
           this.env.DB
         );
 
