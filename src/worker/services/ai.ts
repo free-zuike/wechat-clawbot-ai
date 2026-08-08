@@ -118,21 +118,92 @@ async function executeWebSearch(query: string, searchApiKey?: string, searchApiU
   // 2. 公共 API（对 Workers 友好，不会屏蔽）
   const results: string[] = [];
 
-  // 2a. Wikipedia API（通用知识，最可靠）
+  // 2a. 检测是否为"新闻/热点"类查询 → 获取今日热门新闻
+  if (isNewsQuery(q)) {
+    const news = await tryTopNews();
+    if (news) results.push("📰 今日热门新闻:\n" + news);
+  }
+
+  // 2b. Wikipedia API（通用知识，最可靠）
   const wiki = await tryWikipedia(q);
   if (wiki) results.push("📚 维基百科:\n" + wiki);
 
-  // 2b. Hacker News API（技术新闻/热点）
+  // 2c. Hacker News 搜索（技术主题）
   const hn = await tryHackerNews(q);
   if (hn) results.push("📰 HN 开发者社区:\n" + hn);
 
-  // 2c. DuckDuckGo API（可能被屏蔽，做备选）
+  // 2d. DuckDuckGo API（可能被屏蔽，做备选）
   const ddg = await tryDuckDuckGoQ(q);
   if (ddg) results.push("🔍 DuckDuckGo:\n" + ddg);
 
   if (results.length > 0) return results.join("\n\n---\n\n");
 
   return "没有找到相关结果";
+}
+
+// 判断是否"新闻/热点"类查询（需要今日新闻）
+function isNewsQuery(q: string): boolean {
+  return /新闻|热点|头条|大事|最新|今日|今天|news|trending|breaking/i.test(q);
+}
+
+// 获取今日热门新闻（HN 前端 RSS + Wikipedia 每日大事）
+async function tryTopNews(): Promise<string | null> {
+  const parts: string[] = [];
+
+  // a. Hacker News 前端热门（RSS）
+  try {
+    const resp = await fetch("https://hnrss.org/frontpage", {
+      headers: { "User-Agent": "ClawBot/1.0" }, signal: AbortSignal.timeout(8000),
+    });
+    if (resp.ok) {
+      const xml = await resp.text();
+      const items = parseHNXML(xml);
+      if (items.length > 0) parts.push(items.join("\n"));
+    }
+  } catch { /* 忽略 */ }
+
+  // b. Wikipedia 每日大事（on this day）
+  try {
+    const now = new Date();
+    const tz = "Asia/Shanghai";
+    const dp = new Intl.DateTimeFormat("en-CA", { timeZone: tz, month: "2-digit", day: "2-digit" }).formatToParts(now);
+    const get = (t: string) => dp.find(p => p.type === t)?.value || "";
+    const month = get("month"), day = get("day");
+    const resp = await fetch(
+      `https://en.wikipedia.org/api/rest_v1/feed/onthisday/events/${month}/${day}`,
+      { headers: { "User-Agent": "ClawBot/1.0" }, signal: AbortSignal.timeout(8000) }
+    );
+    if (resp.ok) {
+      const data = await resp.json() as any;
+      const events = data?.events;
+      if (Array.isArray(events) && events.length > 0) {
+        const lines = events.slice(0, 6).map((e: any, i: number) =>
+          `${i + 1}. ${stripTags(e.text || "").slice(0, 150)}${e.pages?.[0]?.content_urls?.desktop?.page ? `\n   ${e.pages[0].content_urls.desktop.page}` : ""}`
+        );
+        parts.push("📅 历史上的今天:\n" + lines.join("\n"));
+      }
+    }
+  } catch { /* 忽略 */ }
+
+  return parts.length > 0 ? parts.join("\n\n---\n\n") : null;
+}
+
+// 解析 HN RSS（frontpage）的 <item> 列表
+function parseHNXML(xml: string): string[] {
+  const results: string[] = [];
+  const itemRe = /<item>(.*?)<\/item>/gs;
+  let m: RegExpExecArray | null;
+  let count = 0;
+  while ((m = itemRe.exec(xml)) !== null && count < 8) {
+    const item = m[1];
+    const titleMatch = item.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>/s);
+    const linkMatch = item.match(/<link>(.*?)<\/link>/s);
+    const pointsMatch = item.match(/Points: (\d+)/);
+    if (!titleMatch) continue;
+    results.push(`${count + 1}. ${titleMatch[1]}\n   ${linkMatch?.[1] || ""}${pointsMatch ? `\n   ${pointsMatch[1]} 分` : ""}`);
+    count++;
+  }
+  return results;
 }
 
 // Wikipedia 搜索 API（免费，无需 Key，对 Workers 友好）
