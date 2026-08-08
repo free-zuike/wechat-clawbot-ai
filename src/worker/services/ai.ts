@@ -104,10 +104,11 @@ const BUILTIN_TOOLS = [{
   },
 }];
 
-// 网页搜索：多引擎兜底方案（模仿 Open-WebSearch），依次尝试 Bing API → Bing HTML → DDG → Baidu → 通用链接
+// 网页搜索：优先 DuckDuckGo（JSON API → HTML → Lite），再试其他引擎
 async function executeWebSearch(query: string, searchApiKey?: string, searchApiUrl?: string): Promise<string> {
   const q = (query || "").trim();
   if (!q) return "搜索关键词为空";
+  argQuery = q;
 
   // 1. 有 API Key 时走 Bing Search API
   if (searchApiKey) {
@@ -115,10 +116,13 @@ async function executeWebSearch(query: string, searchApiKey?: string, searchApiU
     if (apiResult) return apiResult;
   }
 
-  // 2. 多引擎 HTML 搜索兜底
+  // 2. DuckDuckGo 多接口优先
+  const ddgResult = await tryDuckDuckGo(q);
+  if (ddgResult) return ddgResult;
+
+  // 3. 其他引擎兜底
   const engines = [
     { url: "https://www.bing.com/search?q={q}&setlang=zh-hans", parser: parseBingResults, name: "Bing" },
-    { url: "https://html.duckduckgo.com/html/?q={q}", parser: parseDuckDuckGoResults, name: "DDG" },
     { url: "https://www.baidu.com/s?wd={q}&ie=utf-8", parser: parseBaiduResults, name: "百度" },
     { url: "https://www.bing.com/search?q={q}&setlang=zh-hans", parser: parseGenericResults, name: "通用" },
   ];
@@ -138,6 +142,56 @@ async function executeWebSearch(query: string, searchApiKey?: string, searchApiU
 
   return "没有找到相关结果";
 }
+
+// DuckDuckGo 综合搜索：JSON API → HTML → Lite
+async function tryDuckDuckGo(q: string): Promise<string | null> {
+  // a. JSON API（最可能不被屏蔽）
+  try {
+    const apiUrl = `https://api.duckduckgo.com/?q=${encodeURIComponent(q)}&format=json&no_html=1&skip_disambig=1`;
+    const resp = await fetch(apiUrl, {
+      headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (resp.ok) {
+      const data = await resp.json() as any;
+      const parts: string[] = [];
+      if (data.AbstractText) parts.push(`摘要: ${data.AbstractText}${data.AbstractURL ? ` (${data.AbstractURL})` : ""}`);
+      const topics = (data.RelatedTopics || []).filter((t: any) => t.Text);
+      if (topics.length > 0) {
+        topics.slice(0, 6).forEach((t: any, i: number) => {
+          parts.push(`${i + 1}. ${t.Text}\n   ${t.FirstURL || ""}`);
+        });
+      }
+      if (parts.length > 0) return parts.join("\n\n");
+    }
+  } catch { /* 继续 */ }
+
+  // b. HTML 接口
+  const htmlResult = await tryGeneric(`https://html.duckduckgo.com/html/?q={q}`, parseDuckDuckGoResults);
+  if (htmlResult) return htmlResult;
+
+  // c. Lite 接口
+  const liteResult = await tryGeneric(`https://lite.duckduckgo.com/lite/?q={q}`, parseDuckDuckGoLiteResults);
+  if (liteResult) return liteResult;
+
+  return null;
+}
+
+// 抓取单个 HTML 引擎
+async function tryGeneric(urlTemplate: string, parser: (html: string) => string | null): Promise<string | null> {
+  try {
+    const url = urlTemplate.replace("{q}", encodeURIComponent(argQuery));
+    const resp = await fetch(url, {
+      headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!resp.ok) return null;
+    return parser(await resp.text());
+  } catch { return null; }
+}
+
+// 保存当前 query 供 tryGeneric 使用
+let argQuery = "";
 
 async function tryBingApi(q: string, key: string, url?: string): Promise<string | null> {
   try {
@@ -176,6 +230,29 @@ function parseBingResults(html: string): string | null {
   return results.length > 0 ? results.join("\n\n") : null;
 }
 
+// 解析 360 搜索 HTML 结果（res-list / res-title / res-desc 结构）
+function parse360Results(html: string): string | null {
+  const results: string[] = [];
+  // 每个结果块 <li class="res-list">
+  const itemRe = /<li[^>]*class="[^"]*res-list[^"]*"[^>]*>(.*?)<\/li>/gs;
+  let m: RegExpExecArray | null;
+  let count = 0;
+  while ((m = itemRe.exec(html)) !== null && count < 6) {
+    const item = m[1];
+    const titleMatch = item.match(/<h3[^>]*class="[^"]*res-title[^"]*"[^>]*>.*?<a[^>]*href="([^"]*)"[^>]*>(.*?)<\/a>/s);
+    const descMatch = item.match(/<p[^>]*class="[^"]*res-desc[^"]*"[^>]*>(.*?)<\/p>/s);
+    if (!titleMatch) continue;
+    let url = titleMatch[1];
+    // 360 跳转链接形如 //www.so.com/link?m=...，可能需要解码
+    if (url.startsWith("//") && !url.startsWith("//www.so.com")) url = "https:" + url;
+    const title = stripTags(titleMatch[2]);
+    const snippet = descMatch ? stripTags(descMatch[1]).slice(0, 200) : "";
+    results.push(`${count + 1}. ${title}\n   ${url}\n   ${snippet}`);
+    count++;
+  }
+  return results.length > 0 ? results.join("\n\n") : null;
+}
+
 // 解析 DuckDuckGo HTML 搜索结果
 function parseDuckDuckGoResults(html: string): string | null {
   const results: string[] = [];
@@ -197,6 +274,32 @@ function parseDuckDuckGoResults(html: string): string | null {
     const url = links[i].url;
     const snippet = snippets[i] || "";
     results.push(`${i + 1}. ${title}\n   ${url}\n   ${snippet}`);
+  }
+  return results.join("\n\n");
+}
+
+// 解析 DuckDuckGo Lite HTML（简单表格结构）
+function parseDuckDuckGoLiteResults(html: string): string | null {
+  const results: string[] = [];
+  // Lite 版结果在 <tr> 里，标题在 <a rel="nofollow" href="..."> 中
+  const linkRe = /<a[^>]*rel="nofollow"[^>]*href="([^"]*)"[^>]*>(.*?)<\/a>/g;
+  const snippetRe = /<td[^>]*class="result-snippet"[^>]*>(.*?)<\/td>/g;
+  const links: string[] = [];
+  const titles: string[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = linkRe.exec(html)) !== null) {
+    if (links.length >= 6) break;
+    links.push(m[1]);
+    titles.push(stripTags(m[2]));
+  }
+  const snippets: string[] = [];
+  while ((m = snippetRe.exec(html)) !== null) {
+    snippets.push(stripTags(m[1]).slice(0, 200));
+  }
+  const count = Math.min(links.length, 6);
+  if (count === 0) return null;
+  for (let i = 0; i < count; i++) {
+    results.push(`${i + 1}. ${titles[i] || `结果 ${i + 1}`}\n   ${links[i]}\n   ${snippets[i] || ""}`);
   }
   return results.join("\n\n");
 }
