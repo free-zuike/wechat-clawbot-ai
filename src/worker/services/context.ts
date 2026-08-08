@@ -119,6 +119,18 @@ export async function clearContextSQLite(sql: SqlStorage, userId: string): Promi
 // ========== D1 版本 ==========
 
 export async function getContextFromD1(db: D1Database, userId: string): Promise<UserContext> {
+  // 确保表存在（与 SQLite 版本一致）
+  try {
+    await db.exec(
+      `CREATE TABLE IF NOT EXISTS contexts (
+        user_id TEXT PRIMARY KEY,
+        messages TEXT NOT NULL DEFAULT '[]',
+        last_updated INTEGER NOT NULL
+      )`
+    );
+  } catch (e) {
+    Logger.warn(`[Context] Failed to ensure D1 contexts table`, { error: (e as Error).message });
+  }
   try {
     const { results } = await db.prepare(
       `SELECT messages, last_updated FROM contexts WHERE user_id = ?`
@@ -151,6 +163,14 @@ export async function saveContextToD1(db: D1Database, userId: string, context: U
     context.messages = context.messages.slice(-MAX_CONTEXT_MESSAGES);
   }
   try {
+    // 确保表存在
+    await db.exec(
+      `CREATE TABLE IF NOT EXISTS contexts (
+        user_id TEXT PRIMARY KEY,
+        messages TEXT NOT NULL DEFAULT '[]',
+        last_updated INTEGER NOT NULL
+      )`
+    );
     await db.prepare(
       `INSERT INTO contexts (user_id, messages, last_updated) VALUES (?, ?, ?)
        ON CONFLICT(user_id) DO UPDATE SET messages = excluded.messages, last_updated = excluded.last_updated`
