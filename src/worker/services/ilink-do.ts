@@ -59,6 +59,8 @@ export class ILinkConnectionDO implements DurableObject {
   }> = new Map();
   // 缓存每个用户最近发送的图片 URL（用于以图生图，有效期 60 秒）
   private recentImageUrls: Map<string, { url: string; timestamp: number }> = new Map();
+  // 缓存最近消息 ID → 内容（用于引用消息查询，有效期 5 分钟）
+  private recentMessageIds: Map<string, { content: string; timestamp: number }> = new Map();
   private kv: KVNamespace | null = null;
   private websockets: Set<WebSocket> = new Set();
   private runtimeStats = { polls: 0, handled: 0, aiCalls: 0, aiFails: 0, lastLatencyMs: 0 };
@@ -821,6 +823,19 @@ export class ILinkConnectionDO implements DurableObject {
       const from = msg.from_user_id;
       const ctxToken = msg.context_token;
 
+      // 缓存消息 ID → 内容（供引用消息查询）
+      if (msg.message_id && text) {
+        const mid = String(msg.message_id);
+        this.recentMessageIds.set(mid, { content: text.slice(0, 300), timestamp: Date.now() });
+        // 清理 5 分钟前的旧条目
+        if (this.recentMessageIds.size > 100) {
+          const cutoff = Date.now() - 300_000;
+          for (const [k, v] of this.recentMessageIds) {
+            if (v.timestamp < cutoff) this.recentMessageIds.delete(k);
+          }
+        }
+      }
+
       // 提取消息中的图片信息和是否有真实文字
       let imageUrl: string | undefined;
       let imageCdnParams: { encryptQueryParam: string; aesKey: string } | undefined;
@@ -898,6 +913,7 @@ export class ILinkConnectionDO implements DurableObject {
 
       let replyContent = "";
       let replyAt = "";
+      let refContent = ""; // 引用消息内容（供面板显示）
 
       // 检查重置命令
       const RESET_COMMANDS = new Set(["新对话", "/reset", "/clear", "重置", "清空"]);
@@ -1080,11 +1096,22 @@ export class ILinkConnectionDO implements DurableObject {
         }
 
         // 调用 AI 生成回复（使用 D1 存储上下文）
+        // 提取引用消息：用 ref_msg 里的 msg_id 查缓存，找到被引用的原文
+        for (const item of (msg.item_list || [])) {
+          const refMsgId = item.ref_msg?.message_item?.msg_id;
+          if (refMsgId) {
+            const cached = this.recentMessageIds.get(String(refMsgId));
+            if (cached) refContent = cached.content;
+            break;
+          }
+        }
+        // 如果有引用内容，追加到 AI 的输入文本中
+        const aiText = refContent ? `[引用: ${refContent}]\n${text}` : text;
         const reply = await callAIWithContext(
           this.doState.storage.sql,
           this.env.AI,
           from,
-          text,
+          aiText,
           systemPrompt,
           { provider: cfg.aiProvider, model: aiModel, baseUrl: cfg.aiBaseUrl, apiKey: cfg.aiApiKey, maxTokens: cfg.aiMaxTokens, maxContextChars: cfg.aiMaxContextChars, searchApiKey: this.env.SEARCH_API_KEY, searchApiUrl: this.env.SEARCH_API_URL, mcpServers: cfg.mcpServers, db: this.env.DB },
           this.env.DB
@@ -1117,19 +1144,11 @@ export class ILinkConnectionDO implements DurableObject {
       processedCount++;
 
       // 添加到待处理队列
-      // 提取引用消息（ref_msg 原始结构）
-      let refRaw = "";
-      for (const item of (msg.item_list || [])) {
-        if (item.ref_msg) {
-          try { refRaw = JSON.stringify(item.ref_msg); } catch {}
-          break;
-        }
-      }
       const pendingMsg = {
         messageId,
         fromUserId: from,
         content: text,
-        refContent: refRaw || undefined,
+        refContent: refContent || undefined,
         timestamp: createdAt,
         replyContent,
         replyAt,

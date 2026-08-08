@@ -54,7 +54,7 @@ export interface MessageItem {
     height?: number;
     duration?: number;
   };
-  ref_msg?: { title?: string; message_item?: MessageItem };
+  ref_msg?: { title?: string; message_item?: MessageItem & { msg_id?: string; create_time_ms?: number; update_time_ms?: number; is_completed?: boolean } };
 }
 
 export interface WeixinMessage {
