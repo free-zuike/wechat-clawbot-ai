@@ -59,7 +59,7 @@ export class ILinkConnectionDO implements DurableObject {
   }> = new Map();
   // 缓存每个用户最近发送的图片 URL（用于以图生图，有效期 60 秒）
   private recentImageUrls: Map<string, { url: string; timestamp: number }> = new Map();
-  // 缓存最近消息 ID → 内容（用于引用消息查询，有效期 5 分钟）
+  // 缓存最近消息 ID → 内容（用于引用消息查询，24 小时有效）
   private recentMessageIds: Map<string, { content: string; timestamp: number }> = new Map();
   private kv: KVNamespace | null = null;
   private websockets: Set<WebSocket> = new Set();
@@ -827,9 +827,9 @@ export class ILinkConnectionDO implements DurableObject {
       if (msg.message_id && text) {
         const mid = String(msg.message_id);
         this.recentMessageIds.set(mid, { content: text.slice(0, 300), timestamp: Date.now() });
-        // 清理 5 分钟前的旧条目
-        if (this.recentMessageIds.size > 100) {
-          const cutoff = Date.now() - 300_000;
+        // 清理 24 小时前的旧条目（最多保留 1000 条）
+        if (this.recentMessageIds.size > 1000) {
+          const cutoff = Date.now() - 86400_000; // 24 小时
           for (const [k, v] of this.recentMessageIds) {
             if (v.timestamp < cutoff) this.recentMessageIds.delete(k);
           }
