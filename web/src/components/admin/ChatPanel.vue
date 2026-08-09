@@ -210,12 +210,11 @@ function renderMarkdown(text: string): string {
   position: relative;
 }
 .msg-actions {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
   position: absolute;
   top: 4px;
   right: 4px;
+  display: flex;
+  gap: 4px;
   opacity: 0;
   transition: opacity 0.2s;
 }
@@ -261,6 +260,11 @@ function renderMarkdown(text: string): string {
   background: var(--bg-card);
   color: var(--text-primary);
   border: 1px solid var(--border-light);
+}
+.chat-input {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 .quote-bar {
   display: flex;
