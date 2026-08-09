@@ -154,6 +154,8 @@ function renderMarkdown(text: string): string {
     .replace(/```(\w*)\n([\s\S]*?)```/g, (_m, _lang, code) => `<pre><code>${code.trim()}</code></pre>`)
     // 行内代码 `code`
     .replace(/`([^`]+)`/g, "<code>$1</code>")
+    // 删除线 ~~text~~
+    .replace(/~~([^~]+)~~/g, "<del>$1</del>")
     // 粗体 **text**
     .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
     // 斜体 *text*
@@ -162,6 +164,25 @@ function renderMarkdown(text: string): string {
     .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
     // 水平分割线
     .replace(/^---$/gm, "<hr>")
+    // 标题 # ~ ######
+    .replace(/^###### (.+)$/gm, '<h6 style="margin:8px 0 4px;font-size:13px">$1</h6>')
+    .replace(/^##### (.+)$/gm, '<h5 style="margin:8px 0 4px;font-size:14px">$1</h5>')
+    .replace(/^#### (.+)$/gm, '<h4 style="margin:8px 0 4px;font-size:15px">$1</h4>')
+    .replace(/^### (.+)$/gm, '<h3 style="margin:8px 0 4px;font-size:16px">$1</h3>')
+    .replace(/^## (.+)$/gm, '<h2 style="margin:8px 0 4px;font-size:17px">$1</h2>')
+    .replace(/^# (.+)$/gm, '<h1 style="margin:8px 0 4px;font-size:18px">$1</h1>')
+    // 引用块 > text
+    .replace(/^&gt; (.+)$/gm, '<blockquote style="margin:4px 0;padding:4px 10px;border-left:3px solid var(--link);background:var(--bg-skeleton-1);border-radius:0 4px 4px 0;color:var(--text-muted);font-size:13px">$1</blockquote>')
+    // 无序列表 - item 或 * item（多行连续）
+    .replace(/((?:^[*-] .+(?:\n|$))+)/gm, (m) => {
+      const items = m.trim().split("\n").map(l => l.replace(/^[*-] /, "")).filter(Boolean);
+      return '<ul style="margin:4px 0;padding-left:20px">' + items.map(i => `<li style="font-size:13px">${i}</li>`).join("") + '</ul>\n';
+    })
+    // 有序列表 1. item（多行连续）
+    .replace(/((?:^\d+\. .+(?:\n|$))+)/gm, (m) => {
+      const items = m.trim().split("\n").map(l => l.replace(/^\d+\. /, "")).filter(Boolean);
+      return '<ol style="margin:4px 0;padding-left:20px">' + items.map(i => `<li style="font-size:13px">${i}</li>`).join("") + '</ol>\n';
+    })
     // 表格：| col1 | col2 |\n| --- | --- |\n| val1 | val2 |
     .replace(/\n?\|(.+)\|\n\|[-| :]+\|\n((?:\|.+\|\n?)+)/g, (_m, header, body) => {
       const headers = header.split("|").map(h => h.trim()).filter(Boolean);
