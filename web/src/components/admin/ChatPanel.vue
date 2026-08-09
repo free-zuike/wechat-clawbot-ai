@@ -210,11 +210,12 @@ function renderMarkdown(text: string): string {
   position: relative;
 }
 .msg-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
   position: absolute;
   top: 4px;
   right: 4px;
-  display: flex;
-  gap: 4px;
   opacity: 0;
   transition: opacity 0.2s;
 }
