@@ -141,7 +141,30 @@ function renderMessage(text: string): { isImage: boolean; html: string; text: st
   if (/<[a-z][\s\S]*>/i.test(text)) {
     return { isImage: false, html: text, text };
   }
-  return { isImage: false, html: text, text };
+  // 普通文本：渲染 Markdown 格式
+  return { isImage: false, html: renderMarkdown(text), text };
+}
+
+// 简单的 Markdown 渲染器
+function renderMarkdown(text: string): string {
+  let html = text
+    // 转义 HTML 特殊字符
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    // 代码块 ```lang\n...\n```
+    .replace(/```(\w*)\n([\s\S]*?)```/g, (_m, _lang, code) => `<pre><code>${code.trim()}</code></pre>`)
+    // 行内代码 `code`
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    // 粗体 **text**
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    // 斜体 *text*
+    .replace(/\*([^*]+)\*/g, "<em>$1</em>")
+    // 链接 [text](url)
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
+    // 水平分割线
+    .replace(/^---$/gm, "<hr>")
+    // 换行转为 <br>
+    .replace(/\n/g, "<br>");
+  return html;
 }
 </script>
 
@@ -245,5 +268,39 @@ function renderMessage(text: string): { isImage: boolean; html: string; text: st
   border-radius: 0 6px 6px 0;
   font-size: 12px;
   color: var(--text-muted);
+}
+.bubble :deep(code) {
+  background: var(--bg-skeleton-1, rgba(255,255,255,0.08));
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-family: 'SF Mono', Consolas, monospace;
+  font-size: 12px;
+}
+.bubble :deep(pre) {
+  background: var(--bg-skeleton-1, rgba(255,255,255,0.08));
+  padding: 10px;
+  border-radius: 6px;
+  overflow-x: auto;
+  margin: 6px 0;
+}
+.bubble :deep(pre code) {
+  background: none;
+  padding: 0;
+  font-size: 12px;
+}
+.bubble :deep(a) {
+  color: var(--link, #6366f1);
+  text-decoration: underline;
+}
+.bubble :deep(strong) {
+  font-weight: 600;
+}
+.bubble :deep(em) {
+  font-style: italic;
+}
+.bubble :deep(hr) {
+  border: none;
+  border-top: 1px solid var(--border-light);
+  margin: 8px 0;
 }
 </style>
