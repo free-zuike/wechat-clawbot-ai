@@ -162,6 +162,18 @@ function renderMarkdown(text: string): string {
     .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
     // 水平分割线
     .replace(/^---$/gm, "<hr>")
+    // 表格：| col1 | col2 |\n| --- | --- |\n| val1 | val2 |
+    .replace(/\n?\|(.+)\|\n\|[-| :]+\|\n((?:\|.+\|\n?)+)/g, (_m, header, body) => {
+      const headers = header.split("|").map(h => h.trim()).filter(Boolean);
+      const rows = body.trim().split("\n").map(line =>
+        line.split("|").map(c => c.trim()).filter(Boolean)
+      );
+      let table = '<table style="width:100%;border-collapse:collapse;margin:8px 0;font-size:13px">';
+      table += '<thead><tr>' + headers.map(h => `<th style="border:1px solid var(--border-light);padding:6px 8px;text-align:left;background:var(--bg-skeleton-1)">${h}</th>`).join("") + '</tr></thead>';
+      table += '<tbody>' + rows.map(row => '<tr>' + row.map(c => `<td style="border:1px solid var(--border-light);padding:6px 8px">${c}</td>`).join("") + '</tr>').join("") + '</tbody>';
+      table += '</table>';
+      return table;
+    })
     // 换行转为 <br>
     .replace(/\n/g, "<br>");
   return html;
