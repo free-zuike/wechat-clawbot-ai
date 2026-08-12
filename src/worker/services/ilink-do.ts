@@ -823,7 +823,7 @@ export class ILinkConnectionDO implements DurableObject {
       if (msg.message_type !== undefined && msg.message_type !== MessageType.USER) return;
       if (msg.message_type === undefined && !msg.from_user_id) return;
 
-      const text = extractMessageText(msg);
+      let text = extractMessageText(msg);
       const from = msg.from_user_id;
       const ctxToken = msg.context_token;
 
@@ -899,6 +899,18 @@ export class ILinkConnectionDO implements DurableObject {
       }
 
       if (!text) return;
+
+      // 尝试从 ref_msg 的 msg_id 缓存中查找被引用的消息原文，追加到文本中
+      for (const item of (msg.item_list || [])) {
+        const refMsgId = item.ref_msg?.message_item?.msg_id;
+        if (refMsgId) {
+          const cached = this.recentMessageIds.get(String(refMsgId));
+          if (cached) {
+            text = `[引用: ${cached.content}]\n${text}`;
+          }
+          break;
+        }
+      }
 
       // 引用功能暂不可用，iLink API 的 sendmessage 不支持扁平格式
       if (!from || !ctxToken) return;
@@ -1101,22 +1113,12 @@ export class ILinkConnectionDO implements DurableObject {
         }
 
         // 调用 AI 生成回复（使用 D1 存储上下文）
-        // 提取引用消息：用 ref_msg 里的 msg_id 查缓存，找到被引用的原文
-        for (const item of (msg.item_list || [])) {
-          const refMsgId = item.ref_msg?.message_item?.msg_id;
-          if (refMsgId) {
-            const cached = this.recentMessageIds.get(String(refMsgId));
-            if (cached) refContent = cached.content;
-            break;
-          }
-        }
-        // 如果有引用内容，追加到 AI 的输入文本中
-        const aiText = refContent ? `[引用: ${refContent}]\n${text}` : text;
+        // text 已经在前面追加了 [引用:] 前缀（如果有引用的话）
         const reply = await callAIWithContext(
           this.doState.storage.sql,
           this.env.AI,
           from,
-          aiText,
+          text,
           systemPrompt,
           { provider: cfg.aiProvider, model: aiModel, baseUrl: cfg.aiBaseUrl, apiKey: cfg.aiApiKey, maxTokens: cfg.aiMaxTokens, maxContextChars: cfg.aiMaxContextChars, newsnowBaseUrl: cfg.newsnowBaseUrl, searchBaseUrl: cfg.searchBaseUrl, searchToken: cfg.searchToken, mcpServers: cfg.mcpServers, db: this.env.DB, aiBinding: this.env.AI, mediaProvider: cfg.aiProvider, mediaModel: cfg.aiImageModel, mediaBaseUrl: cfg.aiBaseUrl, mediaApiKey: cfg.aiApiKey, mediaAllKeys: cfg.allKeys, mediaMaxRetries: cfg.aiMaxRetries, mediaResponseConfig: cfg.responseConfig },
           this.env.DB
