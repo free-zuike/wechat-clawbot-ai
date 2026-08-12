@@ -769,33 +769,12 @@ export async function callAIWithContext(
   const system = systemPrompt || DEFAULT_SYSTEM_PROMPT;
   const context = db ? await getContextFromD1(db, userId) : await getContextFromSQLite(storage, userId);
 
-  // 如果用户说"第X条/第X个/第三/第3"（支持中文和阿拉伯数字），从上下文里找数据注入
-  let queryHint = "";
-  if (/第[一二三四五六七八九十\d]+[条个]?/.test(cleanMsg)) {
-    for (let i = context.messages.length - 1; i >= 0; i--) {
-      const m = context.messages[i];
-      if (m.role === "assistant") {
-        // 优先找 [查询结果]（带编号的原始列表数据）
-        const idx = m.content.indexOf("[查询结果]");
-        if (idx !== -1) {
-          queryHint = m.content.slice(idx).slice(0, 2500);
-          break;
-        }
-        // 回退：取第一条 100 字以上的回复
-        if (m.content.length > 100 && !queryHint) {
-          queryHint = m.content.slice(0, 2500);
-        }
-      }
-    }
-  }
-  const hintedMsg = queryHint ? `[以下是之前的数据，用户问的是这个列表中的第几条]\n${queryHint}\n\n---\n${cleanMsg}` : cleanMsg;
-
   // 注入当前日期（通用，不针对特定 MCP），让 AI 正确换算"今天/上个月/本月"等相对时间
   const messages = buildMessagesWithContext(
     `当前时间: ${getCurrentTimeStr()}。当用户提到"今天/昨天/明天/上个月/本月/下周/几点"等相对时间时，基于以上时间准确换算。当用户问到新闻、时事、热点时，调用 get_news 工具获取中文新闻。\n` +
     `当用户先让你列出某类数据（如新闻、记录、清单），然后说"第X条/第一条/详情"时，必须直接从你刚才列出的列表内容中回答对应条目，不要调用任何工具。只有当你没有列出过该列表、且结果中确实没有详情时，才调用对应服务的详情工具获取。\n\n` +
     system,
-    hintedMsg,
+    cleanMsg,
     context,
     config.maxContextChars
   );
