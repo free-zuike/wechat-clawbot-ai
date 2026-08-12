@@ -96,6 +96,7 @@
           </label>
           <div class="field-hint">开启后模型会先推理再回答，对复杂问题效果更好，但会增加响应时间和 Token 消耗</div>
         </div>
+        <div v-if="config.aiProvider" class="field"><label>NewsNow 新闻服务地址</label><input v-model="config.newsnowBaseUrl" class="input" placeholder="https://newsnow.xxx.workers.dev" /><div class="field-hint">可选：部署的 NewsNow 实例地址，用于 AI 获取中文实时新闻（微博热搜/知乎热榜等）</div></div>
       </div>
     </div>
 
@@ -174,6 +175,7 @@ const props = defineProps<{
     aiPresets?: Preset[];
     aiMaxRetries?: number;
     aiThinking?: boolean;
+    newsnowBaseUrl?: string;
   };
   result: string;
   saving: boolean;

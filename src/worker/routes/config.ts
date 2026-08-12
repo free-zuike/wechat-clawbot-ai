@@ -11,7 +11,7 @@ import { configCache } from "../utils/cache";
 import type { Env } from "../index";
 
 const KV_CONFIG_KEY = "clawbot:config";
-const CONFIG_FIELDS = ["aiProvider", "aiModel", "aiBaseUrl", "aiApiKey", "aiMaxTokens", "aiSystemPrompt", "webhookUrl", "webhookEnabled", "webhookTitle", "webhookApiKey", "webhookChannels", "aiPresets", "aiCustomProviders", "aiMaxRetries", "aiThinking"] as const;
+const CONFIG_FIELDS = ["aiProvider", "aiModel", "aiBaseUrl", "aiApiKey", "aiMaxTokens", "aiSystemPrompt", "webhookUrl", "webhookEnabled", "webhookTitle", "webhookApiKey", "webhookChannels", "aiPresets", "aiCustomProviders", "aiMaxRetries", "aiThinking", "newsnowBaseUrl"] as const;
 
 // 读取 KV 配置时自动修复所有掩码密钥
 // 旧数据中 apiKey 可能被掩码保存（如 sk-r***yu3C），需要还原为真实值
@@ -122,6 +122,7 @@ function getConfigResponse(kvConfig: Record<string, unknown>) {
     aiCustomProviders: (kvConfig.aiCustomProviders as any[]) || [],
     aiMaxRetries: (kvConfig.aiMaxRetries as number) ?? 2,
     aiThinking: (kvConfig.aiThinking as boolean) || false,
+    newsnowBaseUrl: (kvConfig.newsnowBaseUrl as string) || "",
   };
 }
 

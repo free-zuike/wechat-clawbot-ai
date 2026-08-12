@@ -41,7 +41,7 @@ export interface ProcessedMessage {
 interface RuntimeCache {
   credentials: { botToken: string; accountId: string; baseUrl: string; userId: string; syncBuf: string } | null;
   credentialsLoadedAt: number;
-  config: { aiSystemPrompt: string; aiModel: string; aiProvider: string; aiBaseUrl: string; aiApiKey: string; aiMaxTokens: number; aiMaxContextChars: number; aiImageModel: string; aiVideoModel: string; allKeys: string[]; aiMaxRetries: number; responseConfig: any; mcpServers: any[]; webhook: { enabled: boolean; url: string; title: string; apiKey: string; channels: string[] } } | null;
+  config: { aiSystemPrompt: string; aiModel: string; aiProvider: string; aiBaseUrl: string; aiApiKey: string; aiMaxTokens: number; aiMaxContextChars: number; aiImageModel: string; aiVideoModel: string; allKeys: string[]; aiMaxRetries: number; responseConfig: any; mcpServers: any[]; newsnowBaseUrl: string; webhook: { enabled: boolean; url: string; title: string; apiKey: string; channels: string[] } } | null;
   configLoadedAt: number;
 }
 
@@ -752,6 +752,8 @@ export class ILinkConnectionDO implements DurableObject {
       }
     } catch (_e) {}
 
+    const newsnowBaseUrl = (kvConfig.newsnowBaseUrl as string) || "";
+
     // 使用 resolveAIConfig 统一解析 AI 提供商配置（支持 aiPresets）
     const presets = (kvConfig.aiPresets as any[]) || [];
     const activeProvider = (kvConfig.aiProvider as string) || "cloudflare";
@@ -795,7 +797,7 @@ export class ILinkConnectionDO implements DurableObject {
       const { loadAllMCPServers } = await import("../services/mcp");
       mcpServers = (await loadAllMCPServers(this.env.DB)).filter((s: any) => s.enabled);
     } catch (_e) {}
-    const cfg = { aiSystemPrompt, aiModel, aiProvider, aiBaseUrl, aiApiKey, aiMaxTokens, aiMaxContextChars, aiImageModel, aiVideoModel, allKeys, aiMaxRetries, responseConfig, aiCustomProviders: (kvConfig.aiCustomProviders as any[]) || [], mcpServers, webhook: { enabled: webhookEnabled, url: webhookUrl, title: webhookTitle, apiKey: webhookApiKey, channels: webhookChannels } };
+    const cfg = { aiSystemPrompt, aiModel, aiProvider, aiBaseUrl, aiApiKey, aiMaxTokens, aiMaxContextChars, aiImageModel, aiVideoModel, allKeys, aiMaxRetries, responseConfig, aiCustomProviders: (kvConfig.aiCustomProviders as any[]) || [], mcpServers, newsnowBaseUrl, webhook: { enabled: webhookEnabled, url: webhookUrl, title: webhookTitle, apiKey: webhookApiKey, channels: webhookChannels } };
     this.cache.config = cfg;
     this.cache.configLoadedAt = now;
     return cfg;
@@ -1114,7 +1116,7 @@ export class ILinkConnectionDO implements DurableObject {
           from,
           aiText,
           systemPrompt,
-          { provider: cfg.aiProvider, model: aiModel, baseUrl: cfg.aiBaseUrl, apiKey: cfg.aiApiKey, maxTokens: cfg.aiMaxTokens, maxContextChars: cfg.aiMaxContextChars, searchApiKey: this.env.SEARCH_API_KEY, searchApiUrl: this.env.SEARCH_API_URL, newsnowBaseUrl: this.env.NEWS_NOW_BASE_URL, mcpServers: cfg.mcpServers, db: this.env.DB },
+          { provider: cfg.aiProvider, model: aiModel, baseUrl: cfg.aiBaseUrl, apiKey: cfg.aiApiKey, maxTokens: cfg.aiMaxTokens, maxContextChars: cfg.aiMaxContextChars, searchApiKey: this.env.SEARCH_API_KEY, searchApiUrl: this.env.SEARCH_API_URL, newsnowBaseUrl: cfg.newsnowBaseUrl, mcpServers: cfg.mcpServers, db: this.env.DB },
           this.env.DB
         );
 
