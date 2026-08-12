@@ -100,7 +100,7 @@ const BUILTIN_TOOLS = [{
   type: "function",
   function: {
     name: "web_search",
-    description: "搜索互联网获取实时信息，从维基百科、技术社区、DuckDuckGo 等多个来源聚合结果。当用户问到新闻、知识、技术问题等需要联网查询的问题时调用",
+    description: "搜索互联网获取通用知识，从维基百科等来源聚合结果。当用户问到知识、技术问题等需要查询互联网信息时调用。注意：获取新闻请用 get_news 工具",
     parameters: { type: "object", properties: { q: { type: "string", description: "搜索关键词（必填）" } }, required: ["q"] },
   },
 }, {
@@ -126,21 +126,11 @@ async function executeWebSearch(query: string, searchApiKey?: string, searchApiU
   // 2. 公共 API（对 Workers 友好，不会屏蔽）
   const results: string[] = [];
 
-  // 2a. 检测是否为"新闻/热点"类查询 → 获取今日热门新闻
-  if (isNewsQuery(q)) {
-    const news = await tryTopNews();
-    if (news) results.push("📰 今日热门新闻:\n" + news);
-  }
-
-  // 2b. Wikipedia API（通用知识，最可靠）
+  // Wikipedia API（通用知识，最可靠）
   const wiki = await tryWikipedia(q);
   if (wiki) results.push("📚 维基百科:\n" + wiki);
 
-  // 2c. Hacker News 搜索（技术主题）
-  const hn = await tryHackerNews(q);
-  if (hn) results.push("📰 HN 开发者社区:\n" + hn);
-
-  // 2d. DuckDuckGo API（可能被屏蔽，做备选）
+  // DuckDuckGo API（可能被屏蔽，做备选）
   const ddg = await tryDuckDuckGoQ(q);
   if (ddg) results.push("🔍 DuckDuckGo:\n" + ddg);
 
@@ -783,7 +773,7 @@ export async function callAIWithContext(
 
   // 注入当前日期（通用，不针对特定 MCP），让 AI 正确换算"今天/上个月/本月"等相对时间
   const messages = buildMessagesWithContext(
-    `当前时间: ${getCurrentTimeStr()}。当用户提到"今天/昨天/明天/上个月/本月/下周/几点"等相对时间时，基于以上时间准确换算。当用户问到新闻、时事、最新信息等需要联网查询的问题时，调用 web_search 工具搜索。\n` +
+    `当前时间: ${getCurrentTimeStr()}。当用户提到"今天/昨天/明天/上个月/本月/下周/几点"等相对时间时，基于以上时间准确换算。当用户问到新闻、时事、热点时，调用 get_news 工具获取中文新闻。\n` +
     `当用户先让你列出某类数据，然后说"看第X条/这条的详情/内容"时，优先从之前的查询结果中直接引用对应内容回答。如果查询结果中已有完整内容，不需要重复调用工具。如果结果中只有标题没有详情，再调用对应服务的详情工具获取。\n\n` +
     system,
     cleanMsg,
@@ -906,7 +896,7 @@ export async function callAI(
         apiKey: config.apiKey,
         model: config.model,
         messages: [
-          { role: "system", content: `当前时间: ${getCurrentTimeStr()}。当用户提到"今天/昨天/明天/上个月/本月/下周/几点"等相对时间时，基于以上时间准确换算。当用户问到新闻、时事、最新信息等需要联网查询的问题时，调用 web_search 工具搜索。\n当用户先让你列出某类数据，然后说"看第X条/这条的详情/内容"时，必须调用该服务的"获取详情/读取单条"工具，传入上一步返回的那条记录的 ID，来获取完整内容，而不是重新调用列表工具或猜测。\n\n${system}` },
+          { role: "system", content: `当前时间: ${getCurrentTimeStr()}。当用户提到"今天/昨天/明天/上个月/本月/下周/几点"等相对时间时，基于以上时间准确换算。当用户问到新闻、时事、热点时，调用 get_news 工具获取中文新闻。\n当用户先让你列出某类数据，然后说"看第X条/这条的详情/内容"时，优先从之前的查询结果中直接引用对应内容回答。如果查询结果中已有完整内容，不需要重复调用工具。如果结果中只有标题没有详情，再调用对应服务的详情工具获取。\n\n${system}` },
           { role: "user", content: cleanMsg },
         ],
         maxTokens: config.maxTokens,
@@ -922,7 +912,7 @@ export async function callAI(
       text = result.reply;
     } else {
       text = await callCloudflareAI(aiBinding, config.model, [
-        { role: "system", content: `当前时间: ${getCurrentTimeStr()}。当用户提到"今天/昨天/明天/上个月/本月/下周/几点"等相对时间时，基于以上时间准确换算。当用户问到新闻、时事、最新信息等需要联网查询的问题时，调用 web_search 工具搜索。\n当用户先让你列出某类数据，然后说"看第X条/这条的详情/内容"时，必须调用该服务的"获取详情/读取单条"工具，传入上一步返回的那条记录的 ID，来获取完整内容，而不是重新调用列表工具或猜测。\n\n${system}` },
+        { role: "system", content: `当前时间: ${getCurrentTimeStr()}。当用户提到"今天/昨天/明天/上个月/本月/下周/几点"等相对时间时，基于以上时间准确换算。当用户问到新闻、时事、热点时，调用 get_news 工具获取中文新闻。\n当用户先让你列出某类数据，然后说"看第X条/这条的详情/内容"时，优先从之前的查询结果中直接引用对应内容回答。如果查询结果中已有完整内容，不需要重复调用工具。如果结果中只有标题没有详情，再调用对应服务的详情工具获取。\n\n${system}` },
         { role: "user", content: cleanMsg },
       ], config.maxTokens);
     }
