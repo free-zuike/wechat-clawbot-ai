@@ -821,15 +821,16 @@ export async function callAIWithContext(
 
   Logger.info(`[ai] AI reply for ${userId}`, { replyLength: reply.length, provider: config.provider });
 
-  // 始终保存上下文（含工具结果，让 AI 能引用之前的查询结果）
+  // 始终保存上下文（含工具结果，拼接到 AI 回复中确保 AI 能引用）
   const now = Date.now();
   context.messages.push({ role: "user", content: cleanMsg.slice(0, 500), timestamp: now });
-  if (reply) {
-    context.messages.push({ role: "assistant", content: reply.slice(0, 500), timestamp: now });
-  }
-  // 保存工具返回结果，用于后续"第X条/详情"场景（500 字符截断，保留足够信息）
+  let savedReply = reply || "";
+  // 把工具结果附加到保存的回复中，这样下一轮 AI 从上下文里能看到完整数据
   for (const tr of toolResults) {
-    context.messages.push({ role: "user", content: `[查询结果] ${tr.slice(0, 2000)}`, timestamp: now });
+    savedReply += `\n\n[查询结果] ${tr.slice(0, 1500)}`;
+  }
+  if (savedReply) {
+    context.messages.push({ role: "assistant", content: savedReply.slice(0, 3000), timestamp: now });
   }
   if (context.messages.length > MAX_CONTEXT_MESSAGES) {
     context.messages = context.messages.slice(-MAX_CONTEXT_MESSAGES);
