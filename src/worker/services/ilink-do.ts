@@ -1134,17 +1134,22 @@ export class ILinkConnectionDO implements DurableObject {
         aiSuccessCount++;
         await this.markMessageProcessed(messageId);
 
-        // 如果 AI 回复中包含图片 URL（如 generate_image 工具生成的），额外发送真实图片给用户
+        // 如果 AI 回复中包含图片/视频 URL（如 generate_image/generate_video 工具生成的），额外发送真实媒体给用户
         try {
           const urlMatch = reply.match(/!\[[^\]]*\]\((https?:\/\/[^)\s]+)\)/);
-          const hrefMatch = reply.match(/https?:\/\/[^\s)\]]+\.(?:png|jpe?g|gif|webp)\b/i);
-          const imgUrl = urlMatch ? urlMatch[1] : (hrefMatch ? hrefMatch[0] : "");
-          if (imgUrl) {
-            Logger.info("[DO] Detected image URL in AI reply, sending as image", { url: imgUrl.slice(0, 100) });
-            await sendImageMessage(useCreds!, from, ctxToken, imgUrl, cfg.aiApiKey);
+          const mediaMatch = reply.match(/https?:\/\/[^\s)\]]+\.(?:png|jpe?g|gif|webp|mp4|mov|avi|mkv|webm)\b/i);
+          const mediaUrl = urlMatch ? urlMatch[1] : (mediaMatch ? mediaMatch[0] : "");
+          if (mediaUrl) {
+            const isVideo = /\.(mp4|mov|avi|mkv|webm)\b/i.test(mediaUrl);
+            Logger.info("[DO] Detected media URL in AI reply", { url: mediaUrl.slice(0, 100), isVideo });
+            if (isVideo) {
+              await sendVideoMessage(useCreds!, from, ctxToken, mediaUrl, cfg.aiApiKey);
+            } else {
+              await sendImageMessage(useCreds!, from, ctxToken, mediaUrl, cfg.aiApiKey);
+            }
           }
-        } catch (imgErr) {
-          Logger.warn("[DO] Failed to send AI-reply image", { error: (imgErr as Error)?.message });
+        } catch (mediaErr) {
+          Logger.warn("[DO] Failed to send AI-reply media", { error: (mediaErr as Error)?.message });
         }
 
         // 取消 typing 状态

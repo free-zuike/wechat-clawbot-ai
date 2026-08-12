@@ -137,6 +137,18 @@ function renderMessage(text: string): { isImage: boolean; html: string; text: st
       text,
     };
   }
+  // 检测纯视频 URL 链接（.mp4/.mov/.webm 等）
+  const videoUrlMatch = text.match(/https?:\/\/[^\s)\]]+\.(?:mp4|mov|webm|mkv|avi)\b/i);
+  if (videoUrlMatch) {
+    const src = videoUrlMatch[0];
+    const prefix = text.slice(0, text.indexOf(src));
+    const suffix = text.slice(text.indexOf(src) + src.length);
+    return {
+      isImage: true,
+      html: `${prefix ? `<div style="margin-bottom:8px;white-space:pre-wrap">${prefix}</div>` : ''}<video src="${src}" controls style="max-width:100%;max-height:400px;border-radius:8px;margin:4px 0"></video>${suffix ? `<div style="margin-top:8px;white-space:pre-wrap">${suffix}</div>` : ''}`,
+      text,
+    };
+  }
   // 包含 HTML 标签（blockquote/video/img）时直接渲染
   if (/<[a-z][\s\S]*>/i.test(text)) {
     return { isImage: false, html: text, text };
