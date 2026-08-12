@@ -466,7 +466,12 @@ async function executeNewsNow(source: string, baseUrl?: string): Promise<string>
       sourceList.map(async (src) => {
         try {
           const resp = await fetch(`${base}/api/s?id=${encodeURIComponent(src)}`, {
-            headers: { "Content-Type": "application/json", "Accept": "application/json" },
+            headers: {
+              "Content-Type": "application/json",
+              "Accept": "application/json, text/plain, */*",
+              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+              "Referer": base + "/",
+            },
             signal: AbortSignal.timeout(8000),
           });
           if (!resp.ok) return null;
