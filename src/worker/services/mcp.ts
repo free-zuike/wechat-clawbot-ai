@@ -25,6 +25,14 @@ export interface MCPServerConfig {
   toolsFetchedAt?: number;
   /** 服务器时代：modern=2026-07-28+，legacy=旧版会话握手 */
   era?: "modern" | "legacy";
+  /** 资源列表（已缓存） */
+  resources?: MCPResourceDefinition[];
+  /** 资源获取时间戳 */
+  resourcesFetchedAt?: number;
+  /** 提示词列表（已缓存） */
+  prompts?: MCPPromptDefinition[];
+  /** 提示词获取时间戳 */
+  promptsFetchedAt?: number;
 }
 
 export interface MCPToolDefinition {
@@ -33,6 +41,21 @@ export interface MCPToolDefinition {
   inputSchema: Record<string, any>;
   serverId: string;
   rawName?: string;
+}
+
+export interface MCPResourceDefinition {
+  uri: string;
+  name: string;
+  description?: string;
+  mimeType?: string;
+  serverId: string;
+}
+
+export interface MCPPromptDefinition {
+  name: string;
+  description?: string;
+  arguments?: Array<{ name: string; description?: string; required?: boolean }>;
+  serverId: string;
 }
 
 export interface MCPToolCall {
@@ -60,7 +83,11 @@ const CLIENT_INFO = { name: "clawbot-mcp-client", version: "2.0.0" };
 export function buildMeta(): Record<string, any> {
   return {
     "io.modelcontextprotocol/protocolVersion": MCP_PROTOCOL_VERSION,
-    "io.modelcontextprotocol/clientCapabilities": { tools: {} },
+    "io.modelcontextprotocol/clientCapabilities": {
+      tools: {},
+      resources: {},
+      prompts: {},
+    },
     "io.modelcontextprotocol/clientInfo": CLIENT_INFO,
   };
 }
@@ -358,10 +385,19 @@ export async function ensureMCPServersTable(db: D1Database): Promise<void> {
         tool_prefix TEXT,
         tools TEXT,
         tools_fetched_at INTEGER,
+        resources TEXT,
+        resources_fetched_at INTEGER,
+        prompts TEXT,
+        prompts_fetched_at INTEGER,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       )`
     ).run();
+    // 迁移旧表：添加 resources/prompts 列（如果不存在，ALTER 会报错则忽略）
+    await db.prepare(`ALTER TABLE mcp_servers ADD COLUMN resources TEXT`).run().catch(() => {});
+    await db.prepare(`ALTER TABLE mcp_servers ADD COLUMN resources_fetched_at INTEGER`).run().catch(() => {});
+    await db.prepare(`ALTER TABLE mcp_servers ADD COLUMN prompts TEXT`).run().catch(() => {});
+    await db.prepare(`ALTER TABLE mcp_servers ADD COLUMN prompts_fetched_at INTEGER`).run().catch(() => {});
   } catch (e: any) {
     Logger.warn("[mcp] Failed to ensure mcp_servers table", { error: e?.message });
     throw e;
@@ -385,6 +421,10 @@ export async function loadMCPServers(db: D1Database | null): Promise<MCPServerCo
       toolPrefix: r.tool_prefix || undefined,
       tools: r.tools ? JSON.parse(r.tools) : undefined,
       toolsFetchedAt: r.tools_fetched_at || undefined,
+      resources: r.resources ? JSON.parse(r.resources) : undefined,
+      resourcesFetchedAt: r.resources_fetched_at || undefined,
+      prompts: r.prompts ? JSON.parse(r.prompts) : undefined,
+      promptsFetchedAt: r.prompts_fetched_at || undefined,
     })).filter(s => s.enabled);
   } catch (e: any) {
     Logger.warn("[mcp] Failed to load MCP servers", { error: e?.message });
@@ -407,6 +447,10 @@ export async function loadAllMCPServers(db: D1Database | null): Promise<MCPServe
       toolPrefix: r.tool_prefix || undefined,
       tools: r.tools ? JSON.parse(r.tools) : undefined,
       toolsFetchedAt: r.tools_fetched_at || undefined,
+      resources: r.resources ? JSON.parse(r.resources) : undefined,
+      resourcesFetchedAt: r.resources_fetched_at || undefined,
+      prompts: r.prompts ? JSON.parse(r.prompts) : undefined,
+      promptsFetchedAt: r.prompts_fetched_at || undefined,
     }));
   } catch (e: any) {
     Logger.warn("[mcp] Failed to load all MCP servers", { error: e?.message });
@@ -427,17 +471,24 @@ export async function saveMCPServers(db: D1Database | null, servers: MCPServerCo
     await db.batch(
       servers.map((s) =>
         db.prepare(
-          `INSERT INTO mcp_servers (id, name, url, api_key, enabled, tool_prefix, tools, tools_fetched_at, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `INSERT INTO mcp_servers (id, name, url, api_key, enabled, tool_prefix, tools, tools_fetched_at, resources, resources_fetched_at, prompts, prompts_fetched_at, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(id) DO UPDATE SET
              name = excluded.name, url = excluded.url, api_key = excluded.api_key,
              enabled = excluded.enabled, tool_prefix = excluded.tool_prefix,
              tools = excluded.tools, tools_fetched_at = excluded.tools_fetched_at,
+             resources = excluded.resources, resources_fetched_at = excluded.resources_fetched_at,
+             prompts = excluded.prompts, prompts_fetched_at = excluded.prompts_fetched_at,
              updated_at = excluded.updated_at`
         ).bind(
           s.id, s.name, s.url, s.apiKey || "", s.enabled ? 1 : 0,
           s.toolPrefix || "", s.tools ? JSON.stringify(s.tools) : "[]",
-          s.toolsFetchedAt || null, new Date().toISOString(), new Date().toISOString()
+          s.toolsFetchedAt || null,
+          s.resources ? JSON.stringify(s.resources) : "[]",
+          s.resourcesFetchedAt || null,
+          s.prompts ? JSON.stringify(s.prompts) : "[]",
+          s.promptsFetchedAt || null,
+          new Date().toISOString(), new Date().toISOString()
         )
       )
     );
@@ -447,17 +498,24 @@ export async function saveMCPServers(db: D1Database | null, servers: MCPServerCo
     for (const s of servers) {
       try {
         await db.prepare(
-          `INSERT INTO mcp_servers (id, name, url, api_key, enabled, tool_prefix, tools, tools_fetched_at, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `INSERT INTO mcp_servers (id, name, url, api_key, enabled, tool_prefix, tools, tools_fetched_at, resources, resources_fetched_at, prompts, prompts_fetched_at, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(id) DO UPDATE SET
              name = excluded.name, url = excluded.url, api_key = excluded.api_key,
              enabled = excluded.enabled, tool_prefix = excluded.tool_prefix,
              tools = excluded.tools, tools_fetched_at = excluded.tools_fetched_at,
+             resources = excluded.resources, resources_fetched_at = excluded.resources_fetched_at,
+             prompts = excluded.prompts, prompts_fetched_at = excluded.prompts_fetched_at,
              updated_at = excluded.updated_at`
         ).bind(
           s.id, s.name, s.url, s.apiKey || "", s.enabled ? 1 : 0,
           s.toolPrefix || "", s.tools ? JSON.stringify(s.tools) : "[]",
-          s.toolsFetchedAt || null, new Date().toISOString(), new Date().toISOString()
+          s.toolsFetchedAt || null,
+          s.resources ? JSON.stringify(s.resources) : "[]",
+          s.resourcesFetchedAt || null,
+          s.prompts ? JSON.stringify(s.prompts) : "[]",
+          s.promptsFetchedAt || null,
+          new Date().toISOString(), new Date().toISOString()
         ).run();
       } catch (e2: any) {
         Logger.error("[mcp] Failed to save individual server", { error: e2?.message, serverId: s.id });
@@ -490,6 +548,28 @@ export async function updateServerTools(db: D1Database | null, serverId: string,
   }
 }
 
+export async function updateServerResources(db: D1Database | null, serverId: string, resources: MCPResourceDefinition[]): Promise<void> {
+  if (!db) return;
+  try {
+    await db.prepare(
+      `UPDATE mcp_servers SET resources = ?, resources_fetched_at = ?, updated_at = ? WHERE id = ?`
+    ).bind(JSON.stringify(resources), Date.now(), new Date().toISOString(), serverId).run();
+  } catch (e: any) {
+    Logger.warn("[mcp] Failed to update server resources", { error: e?.message });
+  }
+}
+
+export async function updateServerPrompts(db: D1Database | null, serverId: string, prompts: MCPPromptDefinition[]): Promise<void> {
+  if (!db) return;
+  try {
+    await db.prepare(
+      `UPDATE mcp_servers SET prompts = ?, prompts_fetched_at = ?, updated_at = ? WHERE id = ?`
+    ).bind(JSON.stringify(prompts), Date.now(), new Date().toISOString(), serverId).run();
+  } catch (e: any) {
+    Logger.warn("[mcp] Failed to update server prompts", { error: e?.message });
+  }
+}
+
 // ========== 工具发现 ==========
 
 // 从 MCP Server 获取工具列表（现代：直接 tools/list；旧版：initialize → tools/list）
@@ -497,7 +577,6 @@ export async function fetchToolsFromServer(db: D1Database, server: MCPServerConf
   const era = await ensureEra(db, server);
 
   if (era === "modern") {
-    // 现代无状态：直接 tools/list
     const { result } = await mcpRequest(db, server, "tools/list");
     const tools = result?.tools || [];
     if (!Array.isArray(tools)) return [];
@@ -509,7 +588,6 @@ export async function fetchToolsFromServer(db: D1Database, server: MCPServerConf
     }));
   }
 
-  // 旧版：确保会话 → tools/list
   const sessionOk = await ensureLegacySession(db, server);
   if (!sessionOk) {
     Logger.info(`[mcp] Trying stateless tool fetch for ${server.name}`);
@@ -525,10 +603,8 @@ export async function fetchToolsFromServer(db: D1Database, server: MCPServerConf
     Logger.warn(`[mcp] tools/list failed for ${server.name}`, { error });
     return [];
   }
-
   const tools = result?.tools || [];
   if (!Array.isArray(tools)) return [];
-
   return tools.map((t: any) => ({
     name: t.name,
     description: t.description || "",
@@ -542,19 +618,15 @@ async function fetchToolsStateless(server: MCPServerConfig): Promise<MCPToolDefi
   try {
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     if (server.apiKey) headers["Authorization"] = `Bearer ${server.apiKey}`;
-
-    // 尝试标准 tools/list JSON-RPC 到同一端点
     const resp = await fetch(server.url.replace(/\/+$/, ""), {
       method: "POST",
       headers,
       body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
     });
-
     if (!resp.ok) return [];
     const data = await resp.json() as any;
     const tools = data?.result?.tools || data?.tools || [];
     if (!Array.isArray(tools)) return [];
-
     return tools.map((t: any) => ({
       name: t.name,
       description: t.description || "",
@@ -566,7 +638,146 @@ async function fetchToolsStateless(server: MCPServerConfig): Promise<MCPToolDefi
   }
 }
 
+// ========== 资源发现 ==========
+
+export async function fetchResourcesFromServer(db: D1Database, server: MCPServerConfig): Promise<MCPResourceDefinition[]> {
+  const era = await ensureEra(db, server);
+
+  if (era === "modern") {
+    const { result } = await mcpRequest(db, server, "resources/list");
+    const resources = result?.resources || [];
+    if (!Array.isArray(resources)) return [];
+    return resources.map((r: any) => ({
+      uri: r.uri,
+      name: r.name || r.uri,
+      description: r.description || "",
+      mimeType: r.mimeType || "",
+      serverId: server.id,
+    }));
+  }
+
+  const sessionOk = await ensureLegacySession(db, server);
+  if (!sessionOk) return [];
+
+  const { result, error } = await mcpRequest(db, server, "resources/list");
+  if (error) {
+    if (error.message === "SESSION_EXPIRED") {
+      await clearSession(db, server.id);
+      return fetchResourcesFromServer(db, server);
+    }
+    return [];
+  }
+  const resources = result?.resources || [];
+  if (!Array.isArray(resources)) return [];
+  return resources.map((r: any) => ({
+    uri: r.uri,
+    name: r.name || r.uri,
+    description: r.description || "",
+    mimeType: r.mimeType || "",
+    serverId: server.id,
+  }));
+}
+
+// 读取资源内容
+async function executeResourceRead(db: D1Database, server: MCPServerConfig, uri: string, toolCallId: string): Promise<MCPToolResult> {
+  const era = await ensureEra(db, server);
+  if (era === "modern") {
+    const { result, error } = await mcpRequest(db, server, "resources/read", { uri });
+    if (error) return { callId: toolCallId, name: "read_resource", content: `读取失败: ${JSON.stringify(error)}`, isError: true };
+    return { callId: toolCallId, name: "read_resource", content: formatContentResult(result?.contents || []) };
+  }
+  const sessionOk = await ensureLegacySession(db, server);
+  if (!sessionOk) return { callId: toolCallId, name: "read_resource", content: "服务器不可用", isError: true };
+  const { result, error } = await mcpRequest(db, server, "resources/read", { uri });
+  if (error) {
+    if (error.message === "SESSION_EXPIRED") {
+      await clearSession(db, server.id);
+      return executeResourceRead(db, server, uri, toolCallId);
+    }
+    return { callId: toolCallId, name: "read_resource", content: `读取失败: ${JSON.stringify(error)}`, isError: true };
+  }
+  return { callId: toolCallId, name: "read_resource", content: formatContentResult(result?.contents || []) };
+}
+
+// ========== 提示词发现 ==========
+
+export async function fetchPromptsFromServer(db: D1Database, server: MCPServerConfig): Promise<MCPPromptDefinition[]> {
+  const era = await ensureEra(db, server);
+
+  if (era === "modern") {
+    const { result } = await mcpRequest(db, server, "prompts/list");
+    const prompts = result?.prompts || [];
+    if (!Array.isArray(prompts)) return [];
+    return prompts.map((p: any) => ({
+      name: p.name,
+      description: p.description || "",
+      arguments: (p.arguments || []).map((a: any) => ({ name: a.name, description: a.description, required: a.required })),
+      serverId: server.id,
+    }));
+  }
+
+  const sessionOk = await ensureLegacySession(db, server);
+  if (!sessionOk) return [];
+
+  const { result, error } = await mcpRequest(db, server, "prompts/list");
+  if (error) {
+    if (error.message === "SESSION_EXPIRED") {
+      await clearSession(db, server.id);
+      return fetchPromptsFromServer(db, server);
+    }
+    return [];
+  }
+  const prompts = result?.prompts || [];
+  if (!Array.isArray(prompts)) return [];
+  return prompts.map((p: any) => ({
+    name: p.name,
+    description: p.description || "",
+    arguments: (p.arguments || []).map((a: any) => ({ name: a.name, description: a.description, required: a.required })),
+    serverId: server.id,
+  }));
+}
+
+// 获取提示词内容
+async function executePromptGet(db: D1Database, server: MCPServerConfig, name: string, args: Record<string, string> | undefined, toolCallId: string): Promise<MCPToolResult> {
+  const era = await ensureEra(db, server);
+  const params: any = { name };
+  if (args) params.arguments = args;
+
+  if (era === "modern") {
+    const { result, error } = await mcpRequest(db, server, "prompts/get", params);
+    if (error) return { callId: toolCallId, name: "get_prompt", content: `获取失败: ${JSON.stringify(error)}`, isError: true };
+    return { callId: toolCallId, name: "get_prompt", content: formatContentResult(result?.messages || []) };
+  }
+  const sessionOk = await ensureLegacySession(db, server);
+  if (!sessionOk) return { callId: toolCallId, name: "get_prompt", content: "服务器不可用", isError: true };
+  const { result, error } = await mcpRequest(db, server, "prompts/get", params);
+  if (error) {
+    if (error.message === "SESSION_EXPIRED") {
+      await clearSession(db, server.id);
+      return executePromptGet(db, server, name, args, toolCallId);
+    }
+    return { callId: toolCallId, name: "get_prompt", content: `获取失败: ${JSON.stringify(error)}`, isError: true };
+  }
+  return { callId: toolCallId, name: "get_prompt", content: formatContentResult(result?.messages || []) };
+}
+
+// 统一格式化内容数组（text + structured 类型）
+function formatContentResult(contents: any[]): string {
+  if (!Array.isArray(contents) || contents.length === 0) return "(空)";
+  return contents.map((c: any) => {
+    if (c.type === "text" && c.text) return c.text;
+    if (c.type === "resource" && c.resource) {
+      const r = c.resource;
+      if (r.text) return r.text;
+      if (r.blob) return `[二进制数据 ${r.blob.length} 字节, ${r.mimeType || "未知格式"}]`;
+      return JSON.stringify(r);
+    }
+    return JSON.stringify(c);
+  }).filter(Boolean).join("\n\n");
+}
+
 // 获取所有已缓存的 MCP 工具定义（含前缀），可选自动拉取
+// 也包括资源读取和提示词获取工具
 export async function getAllMCPTools(db: D1Database | null, autoFetch = false): Promise<MCPToolDefinition[]> {
   const servers = await loadMCPServers(db);
   const allTools: MCPToolDefinition[] = [];
@@ -584,9 +795,38 @@ export async function getAllMCPTools(db: D1Database | null, autoFetch = false): 
     const prefix = server.toolPrefix || `mcp_${server.id}`;
     for (const tool of (tools || [])) {
       const serverTag = `[${server.name}] `;
-      // 描述前面加服务名标签，帮助 AI 区分不同 MCP 服务器的工具归属
       const taggedDesc = tool.description ? `${serverTag}${tool.description}` : `${serverTag}...`;
       allTools.push({ ...tool, name: `${prefix}_${tool.name}`, description: taggedDesc, rawName: tool.name, serverId: server.id });
+    }
+
+    // 资源读取工具（如果服务器有资源）
+    let resources = server.resources;
+    if ((!resources || resources.length === 0) && autoFetch && db) {
+      resources = await fetchResourcesFromServer(db, server);
+    }
+    if (resources && resources.length > 0) {
+      allTools.push({
+        name: `${prefix}_read_resource`,
+        description: `[${server.name}] 读取指定资源的内容。可用的资源：${resources.map(r => r.name).join("、")}`,
+        inputSchema: { type: "object", properties: { uri: { type: "string", description: `资源 URI，可选值：${resources.map(r => r.uri).join("、")}` } }, required: ["uri"] },
+        serverId: server.id,
+        rawName: "read_resource",
+      });
+    }
+
+    // 提示词获取工具（如果服务器有提示词）
+    let prompts = server.prompts;
+    if ((!prompts || prompts.length === 0) && autoFetch && db) {
+      prompts = await fetchPromptsFromServer(db, server);
+    }
+    if (prompts && prompts.length > 0) {
+      allTools.push({
+        name: `${prefix}_get_prompt`,
+        description: `[${server.name}] 获取指定提示词模板的内容。可用的提示词：${prompts.map(p => p.name).join("、")}`,
+        inputSchema: { type: "object", properties: { name: { type: "string", description: `提示词名称，可选值：${prompts.map(p => p.name).join("、")}` } }, required: ["name"] },
+        serverId: server.id,
+        rawName: "get_prompt",
+      });
     }
   }
 
@@ -803,8 +1043,25 @@ export async function executeToolCalls(
       results.push({ callId: tc.callId, name: tc.name, content: `未找到 MCP Server: ${tc.serverId}`, isError: true });
       continue;
     }
-    const result = await executeToolCall(db, server, tc);
-    results.push(result);
+    // 根据 rawName 路由到不同的 MCP 方法
+    if (tc.rawName === "read_resource") {
+      const uri = tc.arguments?.uri;
+      if (!uri) {
+        results.push({ callId: tc.callId, name: tc.name, content: "缺少 uri 参数", isError: true });
+        continue;
+      }
+      results.push(await executeResourceRead(db, server, uri, tc.callId));
+    } else if (tc.rawName === "get_prompt") {
+      const name = tc.arguments?.name;
+      if (!name) {
+        results.push({ callId: tc.callId, name: tc.name, content: "缺少 name 参数", isError: true });
+        continue;
+      }
+      results.push(await executePromptGet(db, server, name, tc.arguments?.arguments, tc.callId));
+    } else {
+      const result = await executeToolCall(db, server, tc);
+      results.push(result);
+    }
   }
 
   return results;

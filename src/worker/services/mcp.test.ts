@@ -26,7 +26,11 @@ describe("buildMeta", () => {
 
   it("should include client capabilities with tools", () => {
     const meta = buildMeta();
-    expect(meta["io.modelcontextprotocol/clientCapabilities"]).toEqual({ tools: {} });
+    expect(meta["io.modelcontextprotocol/clientCapabilities"]).toEqual({
+      tools: {},
+      resources: {},
+      prompts: {},
+    });
   });
 
   it("should include client info", () => {
