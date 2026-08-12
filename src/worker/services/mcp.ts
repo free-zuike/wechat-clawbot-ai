@@ -178,13 +178,16 @@ async function mcpRequest(
     headers["MCP-Protocol-Version"] = MCP_PROTOCOL_VERSION;
     body = { jsonrpc: "2.0", id: requestId, method, _meta: buildMeta() };
   } else {
-    // 旧版模式：会话 + 协议版本头
+    // 旧版模式：始终设置 MCP-Protocol-Version，会话 ID 仅在非初始化请求时设置
     if (!options?.noSession) {
       const session = await loadSession(db, server.id);
       if (session?.sessionId) {
         headers["Mcp-Session-Id"] = session.sessionId;
       }
       headers["MCP-Protocol-Version"] = session?.protocolVersion || LEGACY_PROTOCOL_VERSION;
+    } else {
+      // 即使 noSession（如 initialize），也必须设置 MCP-Protocol-Version
+      headers["MCP-Protocol-Version"] = LEGACY_PROTOCOL_VERSION;
     }
     body = { jsonrpc: "2.0", id: requestId, method };
   }
