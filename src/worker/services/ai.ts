@@ -829,7 +829,7 @@ export async function callAIWithContext(
   }
   // 保存工具返回结果，用于后续"第X条/详情"场景（500 字符截断，保留足够信息）
   for (const tr of toolResults) {
-    context.messages.push({ role: "assistant", content: `[查询结果] ${tr.slice(0, 2000)}`, timestamp: now });
+    context.messages.push({ role: "user", content: `[查询结果] ${tr.slice(0, 2000)}`, timestamp: now });
   }
   if (context.messages.length > MAX_CONTEXT_MESSAGES) {
     context.messages = context.messages.slice(-MAX_CONTEXT_MESSAGES);
