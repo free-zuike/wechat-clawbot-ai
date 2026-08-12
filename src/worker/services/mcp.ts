@@ -190,7 +190,12 @@ async function mcpRequest(
   }
   if (params !== undefined) body.params = params;
 
-  const resp = await fetch(endpoint, { method: "POST", headers, body: JSON.stringify(body) });
+  let resp: Response;
+  try {
+    resp = await fetch(endpoint, { method: "POST", headers, body: JSON.stringify(body) });
+  } catch (e: any) {
+    return { error: { code: -32000, message: `Network error: ${e?.message || "fetch failed"}` } };
+  }
 
   // 旧版会话过期 → 通知调用方重新初始化
   if (resp.status === 404 && !isModern && !options?.noSession) {
@@ -290,18 +295,21 @@ async function discoverServer(db: D1Database, server: MCPServerConfig): Promise<
 // 检测服务器时代。现代服务器：请求成功或返回现代 JSON-RPC 错误。
 // 旧版服务器：400 且无现代错误体 → legacy
 async function detectServerEra(db: D1Database, server: MCPServerConfig): Promise<"modern" | "legacy"> {
-  // server/discover 只对现代服务器有效
-  const discover = await discoverServer(db, server);
-  if (discover) {
-    server.era = "modern";
-    return "modern";
-  }
+  try {
+    const discover = await discoverServer(db, server);
+    if (discover) {
+      server.era = "modern";
+      return "modern";
+    }
 
-  // discover 失败（可能服务器不实现，或返回 400）→ 尝试现代 tools/list
-  const { error, result } = await mcpRequest(db, server, "tools/list", undefined, { forceModern: true, id: 2 });
-  if (result || isModernError(error)) {
-    server.era = "modern";
-    return "modern";
+    // discover 失败 → 尝试现代 tools/list
+    const { error, result } = await mcpRequest(db, server, "tools/list", undefined, { forceModern: true, id: 2 });
+    if (result || isModernError(error)) {
+      server.era = "modern";
+      return "modern";
+    }
+  } catch (e: any) {
+    Logger.warn("[mcp] Era detection failed, assuming legacy", { server: server.name, error: e?.message });
   }
   // 400 无现代错误体 → 旧版
   server.era = "legacy";
