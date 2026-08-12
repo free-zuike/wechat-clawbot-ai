@@ -18,7 +18,7 @@ export interface UserContext {
 
 // 配置
 export const MAX_CONTEXT_MESSAGES = 40; // 保留最近 40 条消息（20轮对话）
-export const CONTEXT_EXPIRE_HOURS = 72; // 上下文 72 小时（3天）过期
+export const CONTEXT_EXPIRE_HOURS = 0;   // 0 = 永不过期，用户手动"重置"才清空
 
 // ========== DO SQLite 版本 ==========
 
@@ -49,9 +49,8 @@ export async function getContextFromSQLite(sql: SqlStorage, userId: string): Pro
         const messages = JSON.parse(row.messages as string);
         const lastUpdated = row.last_updated as number;
 
-        // 检查是否过期（24 小时）
-        const expireMs = CONTEXT_EXPIRE_HOURS * 60 * 60 * 1000;
-        if (Date.now() - lastUpdated > expireMs) {
+        // 检查是否过期（0 = 永不过期）
+        if (CONTEXT_EXPIRE_HOURS > 0 && Date.now() - lastUpdated > CONTEXT_EXPIRE_HOURS * 60 * 60 * 1000) {
           Logger.info(`[Context] SQLite context expired for user ${userId}, resetting`);
           sql.exec(`DELETE FROM contexts WHERE user_id = ?`, userId);
           return { userId, messages: [], lastUpdated: Date.now() };
@@ -141,8 +140,7 @@ export async function getContextFromD1(db: D1Database, userId: string): Promise<
       try {
         const messages = JSON.parse(row.messages as string);
         const lastUpdated = row.last_updated as number;
-        const expireMs = CONTEXT_EXPIRE_HOURS * 60 * 60 * 1000;
-        if (Date.now() - lastUpdated > expireMs) {
+        if (CONTEXT_EXPIRE_HOURS > 0 && Date.now() - lastUpdated > CONTEXT_EXPIRE_HOURS * 60 * 60 * 1000) {
           await db.prepare(`DELETE FROM contexts WHERE user_id = ?`).bind(userId).run();
           return { userId, messages: [], lastUpdated: Date.now() };
         }
