@@ -498,14 +498,18 @@ async function executeNewsNow(source: string, baseUrl?: string): Promise<string>
       }
       if (lines.length > 0) return lines.join("\n\n");
     }
-    // NewsNow 失败（如 D1 过载），回退到 HN 热门
-    const hn = await tryHackerNews(sourceList.join(" ") || "news");
-    if (hn) return "NewsNow 暂不可用，以下是技术社区热门：\n" + hn;
+    // NewsNow 失败（如 D1 过载），回退到 HN 热门（用通用搜索词）
+    if (requested) {
+      const hn = await tryHackerNews(requested);
+      if (hn) return "NewsNow 暂不可用，以下是技术社区热门：\n" + hn;
+    }
+    const topNews = await tryTopNews();
+    if (topNews) return "NewsNow 暂不可用，以下是今日热门：\n" + topNews;
     return "没有获取到新闻";
   } catch (e: any) {
-    // 最终回退 HN
-    const hn = await tryHackerNews(source || "news");
-    if (hn) return "NewsNow 暂不可用，以下是技术社区热门：\n" + hn;
+    // 最终回退 HN 热门
+    const topNews = await tryTopNews();
+    if (topNews) return "NewsNow 暂不可用，以下是今日热门：\n" + topNews;
     return `新闻获取失败: ${e?.message || String(e)}`;
   }
 }
