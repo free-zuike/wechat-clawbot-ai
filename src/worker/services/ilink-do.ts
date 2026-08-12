@@ -1134,6 +1134,19 @@ export class ILinkConnectionDO implements DurableObject {
         aiSuccessCount++;
         await this.markMessageProcessed(messageId);
 
+        // 如果 AI 回复中包含图片 URL（如 generate_image 工具生成的），额外发送真实图片给用户
+        try {
+          const urlMatch = reply.match(/!\[[^\]]*\]\((https?:\/\/[^)\s]+)\)/);
+          const hrefMatch = reply.match(/https?:\/\/[^\s)\]]+\.(?:png|jpe?g|gif|webp)\b/i);
+          const imgUrl = urlMatch ? urlMatch[1] : (hrefMatch ? hrefMatch[0] : "");
+          if (imgUrl) {
+            Logger.info("[DO] Detected image URL in AI reply, sending as image", { url: imgUrl.slice(0, 100) });
+            await sendImageMessage(useCreds!, from, ctxToken, imgUrl, cfg.aiApiKey);
+          }
+        } catch (imgErr) {
+          Logger.warn("[DO] Failed to send AI-reply image", { error: (imgErr as Error)?.message });
+        }
+
         // 取消 typing 状态
         sendTypingStatus(useCreds!, from, ctxToken, false).catch(() => {});
 
