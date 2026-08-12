@@ -1135,10 +1135,12 @@ export class ILinkConnectionDO implements DurableObject {
       } catch (e: any) {
         aiFailCount++;
         Logger.error("[DO] AI processing failed", { error: e.message, from });
-        // 在微信里向用户回复错误信息（不能只发 BeeSwarm 告警，用户会收不到正常回复）
-        try {
-          await sendTextMessage(useCreds!, from, ctxToken, "抱歉，我这边暂时出错了，请稍后再试 🙏");
-        } catch {}
+        // 如果已经发过回复，不发重复错误消息（避免 sendTextChunked 部分失败后还发"抱歉"）
+        if (!replyContent) {
+          try {
+            await sendTextMessage(useCreds!, from, ctxToken, "抱歉，我这边暂时出错了，请稍后再试 🙏");
+          } catch {}
+        }
         // 标记消息已处理，避免重复处理导致多条相同回复
         try { await this.markMessageProcessed(messageId); } catch {}
         // AI 失败时通过 MCP 推送工具（如 BeeSwarm）发送后台告警
