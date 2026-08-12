@@ -333,12 +333,19 @@ export async function sendTextChunked(
     chunks.push(text.slice(i, i + maxLength));
   }
 
+  let sent = 0;
   for (const chunk of chunks) {
-    await sendTextMessage(creds, toUserId, contextToken, chunk);
+    try {
+      await sendTextMessage(creds, toUserId, contextToken, chunk);
+      sent++;
+    } catch (e: any) {
+      // 单段发送失败不中断整体，记录日志继续发下一段
+      Logger.warn("[iLink] Chunk send failed, continuing", { error: e?.message, sent, total: chunks.length });
+    }
   }
 
-  Logger.info(`[iLink] Message chunked`, { total: text.length, chunks: chunks.length });
-  return chunks.length;
+  Logger.info(`[iLink] Message chunked`, { total: text.length, chunks: chunks.length, sent });
+  return sent;
 }
 
 // ========== 媒体上传（已迁移到 cdn-upload.ts）==========
