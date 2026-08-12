@@ -769,17 +769,18 @@ export async function callAIWithContext(
   const system = systemPrompt || DEFAULT_SYSTEM_PROMPT;
   const context = db ? await getContextFromD1(db, userId) : await getContextFromSQLite(storage, userId);
 
-  // 从上下文里找最近一次工具查询结果，拼接到当前用户消息前，确保 AI 能看到
+  // 如果用户说"第X条/第X个/第三/第3"（支持中文和阿拉伯数字），从上下文里找数据注入
   let queryHint = "";
-  for (let i = context.messages.length - 1; i >= 0; i--) {
-    const m = context.messages[i];
-    if (m.role === "assistant" && m.content.includes("[查询结果]")) {
-      const idx = m.content.indexOf("[查询结果]");
-      queryHint = m.content.slice(idx).slice(0, 2000);
-      break;
+  if (/第[一二三四五六七八九十\d]+[条个]?/.test(cleanMsg)) {
+    for (let i = context.messages.length - 1; i >= 0; i--) {
+      const m = context.messages[i];
+      if (m.role === "assistant" && m.content.length > 50) {
+        queryHint = m.content.slice(0, 2000);
+        break;
+      }
     }
   }
-  const hintedMsg = queryHint ? `[上次查询数据]\n${queryHint}\n\n---\n${cleanMsg}` : cleanMsg;
+  const hintedMsg = queryHint ? `[上次回复内容]\n${queryHint}\n\n---\n${cleanMsg}` : cleanMsg;
 
   // 注入当前日期（通用，不针对特定 MCP），让 AI 正确换算"今天/上个月/本月"等相对时间
   const messages = buildMessagesWithContext(
