@@ -1,5 +1,8 @@
 // MCP (Model Context Protocol) 服务 - 标准 Streamable HTTP 传输
-// 遵循 MCP 2025-06-18 规范：https://modelcontextprotocol.io/specification/2025-06-18/basic/transports
+// 遵循 MCP 2026-07-28 规范（dual-era）：https://modelcontextprotocol.io/specification/2026-07-28
+// - 现代（2026-07-28+）：无状态，每请求带 _meta，无 initialize 握手
+// - 旧版（2025-11-25-）：initialize + Mcp-Session-Id 会话
+// 自动检测服务器时代：先发现代请求，400 且无现代错误体 → 降级为旧版
 
 import { Logger } from "../utils/error";
 
@@ -20,6 +23,8 @@ export interface MCPServerConfig {
   tools?: MCPToolDefinition[];
   /** 最近一次获取工具的时间戳 */
   toolsFetchedAt?: number;
+  /** 服务器时代：modern=2026-07-28+，legacy=旧版会话握手 */
+  era?: "modern" | "legacy";
 }
 
 export interface MCPToolDefinition {
@@ -45,7 +50,22 @@ export interface MCPToolResult {
   isError?: boolean;
 }
 
-// ========== 会话管理 ==========
+// ========== 协议版本 ==========
+
+export const MCP_PROTOCOL_VERSION = "2026-07-28";
+const LEGACY_PROTOCOL_VERSION = "2025-06-18";
+const CLIENT_INFO = { name: "clawbot-mcp-client", version: "2.0.0" };
+
+// 现代请求的 _meta 元数据（2026-07-28 要求每个请求携带）
+function buildMeta(): Record<string, any> {
+  return {
+    "io.modelcontextprotocol/protocolVersion": MCP_PROTOCOL_VERSION,
+    "io.modelcontextprotocol/clientCapabilities": { tools: {} },
+    "io.modelcontextprotocol/clientInfo": CLIENT_INFO,
+  };
+}
+
+// ========== 会话管理（仅旧版服务器使用） ==========
 
 // 确保 mcp_sessions 表存在
 export async function ensureMCPSessionsTable(db: D1Database): Promise<void> {
@@ -87,7 +107,7 @@ async function loadSession(db: D1Database, serverId: string): Promise<MCPSession
     }
     return {
       sessionId: row.session_id || null,
-      protocolVersion: row.protocol_version || "2025-06-18",
+      protocolVersion: row.protocol_version || LEGACY_PROTOCOL_VERSION,
       serverCapabilities: row.server_capabilities ? JSON.parse(row.server_capabilities) : {},
       expiresAt: row.expires_at || 0,
     };
@@ -128,15 +148,14 @@ async function clearSession(db: D1Database, serverId: string): Promise<void> {
 
 // ========== 标准 MCP 传输层 ==========
 
-const MCP_PROTOCOL_VERSION = "2025-06-18";
-
 // 发送 JSON-RPC 请求到 MCP Server，返回 result 或 error
+// mode: "modern"（2026-07-28 无状态）或 "legacy"（旧版会话）
 async function mcpRequest(
   db: D1Database,
   server: MCPServerConfig,
   method: string,
   params?: any,
-  options?: { noSession?: boolean; id?: number }
+  options?: { noSession?: boolean; id?: number; forceModern?: boolean }
 ): Promise<{ result?: any; error?: any; sessionId?: string | null }> {
   const endpoint = server.url.replace(/\/+$/, "");
   const headers: Record<string, string> = {
@@ -147,23 +166,34 @@ async function mcpRequest(
     headers["Authorization"] = `Bearer ${server.apiKey}`;
   }
 
-  // 非初始化请求需要会话和协议版本（使用服务器实际支持的版本，而非硬编码的）
-  if (!options?.noSession) {
-    const session = await loadSession(db, server.id);
-    if (session?.sessionId) {
-      headers["Mcp-Session-Id"] = session.sessionId;
-    }
-    headers["MCP-Protocol-Version"] = session?.protocolVersion || MCP_PROTOCOL_VERSION;
-  }
-
   const requestId = options?.id ?? Date.now();
-  const body: any = { jsonrpc: "2.0", id: requestId, method };
+  const isModern = server.era !== "legacy" && !options?.forceModern;
+
+  let body: any;
+  if (isModern) {
+    // 现代模式：无会话，每请求带 _meta
+    // 2026-07-28 要求标准请求头 Mcp-Method / Mcp-Name
+    headers["Mcp-Method"] = method;
+    headers["Mcp-Name"] = method;
+    headers["MCP-Protocol-Version"] = MCP_PROTOCOL_VERSION;
+    body = { jsonrpc: "2.0", id: requestId, method, _meta: buildMeta() };
+  } else {
+    // 旧版模式：会话 + 协议版本头
+    if (!options?.noSession) {
+      const session = await loadSession(db, server.id);
+      if (session?.sessionId) {
+        headers["Mcp-Session-Id"] = session.sessionId;
+      }
+      headers["MCP-Protocol-Version"] = session?.protocolVersion || LEGACY_PROTOCOL_VERSION;
+    }
+    body = { jsonrpc: "2.0", id: requestId, method };
+  }
   if (params !== undefined) body.params = params;
 
   const resp = await fetch(endpoint, { method: "POST", headers, body: JSON.stringify(body) });
 
-  // 会话过期 → 通知调用方重新初始化
-  if (resp.status === 404 && !options?.noSession) {
+  // 旧版会话过期 → 通知调用方重新初始化
+  if (resp.status === 404 && !isModern && !options?.noSession) {
     return { error: { code: -32000, message: "SESSION_EXPIRED" }, sessionId: null };
   }
 
@@ -172,7 +202,7 @@ async function mcpRequest(
     return { error: { code: resp.status, message: errBody.slice(0, 500) } };
   }
 
-  // 提取会话 ID（从响应头）
+  // 提取会话 ID（旧版从响应头）
   const sessionId = resp.headers.get("Mcp-Session-Id");
 
   // 解析响应体
@@ -245,81 +275,62 @@ function parseJSONLResponse(body: string, requestId: number, sessionId: string |
   return { error: { code: -32000, message: "No matching response in JSONL stream" }, sessionId };
 }
 
-// ========== 会话初始化 ==========
+// ========== 时代检测与服务器发现 ==========
 
-async function initializeSession(db: D1Database, server: MCPServerConfig): Promise<void> {
-  Logger.info("[mcp] Initializing session", { server: server.name });
-
-  const { result, sessionId, error } = await mcpRequest(db, server, "initialize", {
-    protocolVersion: MCP_PROTOCOL_VERSION,
-    capabilities: {},
-    clientInfo: { name: "clawbot-mcp-client", version: "1.0.0" },
-  }, { noSession: true, id: 1 });
-
-  if (error) {
-    // 如果不支持 initialize（可能是旧版 MCP 服务器），记录但不阻塞
-    if (error.code === -32601 || error.code === 404 || error.code === 405) {
-      Logger.warn(`[mcp] Server ${server.name} does not support initialize, using stateless mode`);
-      // 保存一个空会话标记，跳过后续初始化
-      await saveSession(db, server.id, {
-        sessionId: null,
-        protocolVersion: "2024-11-05",
-        serverCapabilities: {},
-        expiresAt: 0,
-      });
-      return;
-    }
-    throw new Error(`MCP 初始化失败: ${JSON.stringify(error)}`);
+// 调用 server/discover，探测服务器支持的协议版本（现代服务器必实现）
+async function discoverServer(db: D1Database, server: MCPServerConfig): Promise<any | null> {
+  try {
+    const { result } = await mcpRequest(db, server, "server/discover", undefined, { forceModern: true, id: 1 });
+    return result || null;
+  } catch {
+    return null;
   }
-
-  const protocolVersion = result?.protocolVersion || "2025-06-18";
-  const serverCapabilities = result?.capabilities || {};
-  const serverSessionId = sessionId || null;
-
-  // 保存会话
-  await saveSession(db, server.id, {
-    sessionId: serverSessionId,
-    protocolVersion,
-    serverCapabilities,
-    expiresAt: 0, // 永不过期（除非服务器返回 404）
-  });
-
-  // 发送 initialized 通知
-  if (serverSessionId) {
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-      "Accept": "application/json, text/event-stream",
-      "Mcp-Session-Id": serverSessionId,
-      "MCP-Protocol-Version": protocolVersion,
-    };
-    if (server.apiKey) headers["Authorization"] = `Bearer ${server.apiKey}`;
-
-    try {
-      await fetch(server.url.replace(/\/+$/, ""), {
-        method: "POST",
-        headers,
-        body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }),
-      });
-    } catch {
-      // initialized 通知失败不影响后续请求
-    }
-  }
-
-  Logger.info("[mcp] Session initialized", { server: server.name, protocolVersion, hasSession: !!serverSessionId });
 }
 
-// 确保会话有效，若无效则重新初始化
-async function ensureSession(db: D1Database, server: MCPServerConfig): Promise<boolean> {
-  const session = await loadSession(db, server.id);
-  if (session) return true; // 已有有效会话
-
-  try {
-    await initializeSession(db, server);
-    return true;
-  } catch (e: any) {
-    Logger.warn("[mcp] Session init failed", { server: server.name, error: e?.message });
-    return false;
+// 检测服务器时代。现代服务器：请求成功或返回现代 JSON-RPC 错误。
+// 旧版服务器：400 且无现代错误体 → legacy
+async function detectServerEra(db: D1Database, server: MCPServerConfig): Promise<"modern" | "legacy"> {
+  // server/discover 只对现代服务器有效
+  const discover = await discoverServer(db, server);
+  if (discover) {
+    server.era = "modern";
+    return "modern";
   }
+
+  // discover 失败（可能服务器不实现，或返回 400）→ 尝试现代 tools/list
+  const { error, result } = await mcpRequest(db, server, "tools/list", undefined, { forceModern: true, id: 2 });
+  if (result || isModernError(error)) {
+    server.era = "modern";
+    return "modern";
+  }
+  // 400 无现代错误体 → 旧版
+  server.era = "legacy";
+  Logger.info(`[mcp] Server ${server.name} detected as legacy (initialize-based)`);
+  return "legacy";
+}
+
+// 判断错误是否为"可识别的现代 JSON-RPC 错误"
+function isModernError(error?: any): boolean {
+  if (!error) return false;
+  // UnsupportedProtocolVersionError (-32022) 或 HeaderMismatch (-32020) 都是现代错误
+  if (error.code === -32022 || error.code === -32020 || error.code === -32021) return true;
+  // 现代错误体通常带 _meta 或特定 message
+  const msg = `${error.message || ""}`.toLowerCase();
+  return msg.includes("protocol version") || msg.includes("_meta") || msg.includes("header mismatch");
+}
+
+// 确保服务器时代已检测（缓存）
+const eraCache = new Map<string, "modern" | "legacy">();
+
+async function ensureEra(db: D1Database, server: MCPServerConfig): Promise<"modern" | "legacy"> {
+  if (server.era) return server.era;
+  if (eraCache.has(server.id)) {
+    server.era = eraCache.get(server.id)!;
+    return server.era;
+  }
+  const era = await detectServerEra(db, server);
+  eraCache.set(server.id, era);
+  return era;
 }
 
 // ========== 数据表管理 ==========
@@ -446,6 +457,7 @@ export async function deleteMCPServer(db: D1Database | null, serverId: string): 
   try {
     await db.prepare(`DELETE FROM mcp_servers WHERE id = ?`).bind(serverId).run();
     await clearSession(db, serverId);
+    eraCache.delete(serverId);
   } catch (e: any) {
     Logger.warn("[mcp] Failed to delete MCP server", { error: e?.message });
     throw e;
@@ -465,21 +477,32 @@ export async function updateServerTools(db: D1Database | null, serverId: string,
 
 // ========== 工具发现 ==========
 
-// 从 MCP Server 获取工具列表（标准流程：initialize → tools/list）
+// 从 MCP Server 获取工具列表（现代：直接 tools/list；旧版：initialize → tools/list）
 export async function fetchToolsFromServer(db: D1Database, server: MCPServerConfig): Promise<MCPToolDefinition[]> {
-  // 确保会话有效
-  const sessionOk = await ensureSession(db, server);
+  const era = await ensureEra(db, server);
+
+  if (era === "modern") {
+    // 现代无状态：直接 tools/list
+    const { result } = await mcpRequest(db, server, "tools/list");
+    const tools = result?.tools || [];
+    if (!Array.isArray(tools)) return [];
+    return tools.map((t: any) => ({
+      name: t.name,
+      description: t.description || "",
+      inputSchema: t.inputSchema || t.parameters || {},
+      serverId: server.id,
+    }));
+  }
+
+  // 旧版：确保会话 → tools/list
+  const sessionOk = await ensureLegacySession(db, server);
   if (!sessionOk) {
-    // 如果初始化失败（服务器不支持标准协议），尝试无状态方式
     Logger.info(`[mcp] Trying stateless tool fetch for ${server.name}`);
     return fetchToolsStateless(server);
   }
 
-  // 发送 tools/list
   const { result, error } = await mcpRequest(db, server, "tools/list");
-
   if (error) {
-    // 会话过期 → 清除会话后重试一次
     if (error.message === "SESSION_EXPIRED") {
       await clearSession(db, server.id);
       return fetchToolsFromServer(db, server);
@@ -646,20 +669,37 @@ export function parseToolCalls(
 
 // ========== 工具执行 ==========
 
-// 执行单个 MCP 工具调用（标准流程：initialize → tools/call）
+// 执行单个 MCP 工具调用（现代：直接 tools/call；旧版：initialize → tools/call）
 async function executeToolCall(
   db: D1Database,
   server: MCPServerConfig,
   toolCall: MCPToolCall
 ): Promise<MCPToolResult> {
-  // 确保会话有效
-  const sessionOk = await ensureSession(db, server);
+  const era = await ensureEra(db, server);
+
+  if (era === "modern") {
+    // 现代无状态：直接 tools/call
+    const { result, error } = await mcpRequest(db, server, "tools/call", {
+      name: toolCall.rawName,
+      arguments: toolCall.arguments,
+    });
+    if (error) {
+      return {
+        callId: toolCall.callId,
+        name: toolCall.name,
+        content: `调用失败: ${JSON.stringify(error)}`,
+        isError: true,
+      };
+    }
+    return formatToolResult(toolCall, result);
+  }
+
+  // 旧版：确保会话 → tools/call
+  const sessionOk = await ensureLegacySession(db, server);
   if (!sessionOk) {
-    // 无状态方式兜底
     return executeToolCallStateless(server, toolCall);
   }
 
-  // 发送 tools/call
   const { result, error } = await mcpRequest(db, server, "tools/call", {
     name: toolCall.rawName,
     arguments: toolCall.arguments,
@@ -679,7 +719,11 @@ async function executeToolCall(
     };
   }
 
-  // 解析 content 数组
+  return formatToolResult(toolCall, result);
+}
+
+// 统一格式化工具结果（兼容 2026-07-28 的 resultType/content 结构和旧版结构）
+function formatToolResult(toolCall: MCPToolCall, result?: any): MCPToolResult {
   const content = result?.content || [];
   if (Array.isArray(content)) {
     const textParts = content
@@ -690,7 +734,6 @@ async function executeToolCall(
     const isError = content.some((c: any) => c.type === "error");
     return { callId: toolCall.callId, name: toolCall.name, content: text, isError: isError || undefined };
   }
-
   return { callId: toolCall.callId, name: toolCall.name, content: JSON.stringify(result) };
 }
 
@@ -750,6 +793,82 @@ export async function executeToolCalls(
   }
 
   return results;
+}
+
+// ========== 旧版会话初始化（仅 legacy 服务器） ==========
+
+async function initializeSession(db: D1Database, server: MCPServerConfig): Promise<void> {
+  Logger.info("[mcp] Initializing legacy session", { server: server.name });
+
+  const { result, sessionId, error } = await mcpRequest(db, server, "initialize", {
+    protocolVersion: LEGACY_PROTOCOL_VERSION,
+    capabilities: {},
+    clientInfo: CLIENT_INFO,
+  }, { noSession: true, id: 1, forceModern: false });
+
+  if (error) {
+    // 如果不支持 initialize（可能是旧版 MCP 服务器），记录但不阻塞
+    if (error.code === -32601 || error.code === 404 || error.code === 405) {
+      Logger.warn(`[mcp] Server ${server.name} does not support initialize, using stateless mode`);
+      await saveSession(db, server.id, {
+        sessionId: null,
+        protocolVersion: "2024-11-05",
+        serverCapabilities: {},
+        expiresAt: 0,
+      });
+      return;
+    }
+    throw new Error(`MCP 初始化失败: ${JSON.stringify(error)}`);
+  }
+
+  const protocolVersion = result?.protocolVersion || LEGACY_PROTOCOL_VERSION;
+  const serverCapabilities = result?.capabilities || {};
+  const serverSessionId = sessionId || null;
+
+  // 保存会话
+  await saveSession(db, server.id, {
+    sessionId: serverSessionId,
+    protocolVersion,
+    serverCapabilities,
+    expiresAt: 0, // 永不过期（除非服务器返回 404）
+  });
+
+  // 发送 initialized 通知
+  if (serverSessionId) {
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      "Accept": "application/json, text/event-stream",
+      "Mcp-Session-Id": serverSessionId,
+      "MCP-Protocol-Version": protocolVersion,
+    };
+    if (server.apiKey) headers["Authorization"] = `Bearer ${server.apiKey}`;
+
+    try {
+      await fetch(server.url.replace(/\/+$/, ""), {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }),
+      });
+    } catch {
+      // initialized 通知失败不影响后续请求
+    }
+  }
+
+  Logger.info("[mcp] Legacy session initialized", { server: server.name, protocolVersion, hasSession: !!serverSessionId });
+}
+
+// 确保旧版会话有效，若无效则重新初始化
+async function ensureLegacySession(db: D1Database, server: MCPServerConfig): Promise<boolean> {
+  const session = await loadSession(db, server.id);
+  if (session) return true; // 已有有效会话
+
+  try {
+    await initializeSession(db, server);
+    return true;
+  } catch (e: any) {
+    Logger.warn("[mcp] Legacy session init failed", { server: server.name, error: e?.message });
+    return false;
+  }
 }
 
 // 发送告警通知：自动从已配置的 MCP 服务器中寻找推送工具（如 BeeSwarm 的 send_push）
