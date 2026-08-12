@@ -71,6 +71,8 @@ export class ILinkConnectionDO implements DurableObject {
     configLoadedAt: 0,
   };
   private sqliteInitialized = false;
+  // DO storage 恢复 promise，fetch() 前等待完成，避免竞态
+  private initPromise: Promise<void> = Promise.resolve();
 
   constructor(state: DurableObjectState, env: any) {
     this.doState = state;
@@ -86,53 +88,51 @@ export class ILinkConnectionDO implements DurableObject {
       pendingMessages: [],
     };
 
-    // 从 DO storage 恢复状态（异步）
-    state.storage.get<ILINKSessionState>("session").then((stored) => {
-      if (stored) {
-        this.state.syncBuf = stored.syncBuf || "";
-        this.state.lastPollAt = stored.lastPollAt || "";
-        this.state.consecutiveErrors = stored.consecutiveErrors || 0;
-        this.state.isRunning = stored.isRunning || false;
-        this.state.pendingMessages = stored.pendingMessages || [];
-      }
-    }).catch(() => {});
-
-    // 恢复运行时统计
-    state.storage.get<typeof this.runtimeStats>("runtime_stats")
-      .then((s) => { if (s) this.runtimeStats = { ...this.runtimeStats, ...s }; })
-      .catch(() => {});
-
-    // 异步加载多账号数据
-    state.storage.get<Array<{ accountId: string; creds: ILinkCredentials; syncBuf: string }>>("accounts")
-      .then((accs) => {
-        if (accs && accs.length > 0) {
-          for (const a of accs) {
-            if (!this.accounts.has(a.accountId)) {
-              this.accounts.set(a.accountId, {
-                creds: a.creds,
-                syncBuf: a.syncBuf || "",
-                consecutiveErrors: 0,
-                lastPollAt: "",
-                pollLoopRunning: false,
-              });
-            }
-          }
-          if (!this.ilinkCreds && accs.length > 0) {
-            this.ilinkCreds = accs[0].creds;
-          }
-          // 加载完成后启动轮询
-          for (const [accountId, account] of this.accounts) {
-            if (!account.pollLoopRunning) {
-              account.pollLoopRunning = true;
-              this.runAccountPollLoop(accountId).catch((e) => {
-                Logger.error("[DO] Account poll loop error", { accountId, error: e.message });
-                account.pollLoopRunning = false;
-              });
-            }
-          }
+    // 从 DO storage 恢复状态（异步），用 promise 链确保 fetch() 前完成
+    this.initPromise = Promise.all([
+      state.storage.get<ILINKSessionState>("session").then((stored) => {
+        if (stored) {
+          this.state.syncBuf = stored.syncBuf || "";
+          this.state.lastPollAt = stored.lastPollAt || "";
+          this.state.consecutiveErrors = stored.consecutiveErrors || 0;
+          this.state.isRunning = stored.isRunning || false;
+          this.state.pendingMessages = stored.pendingMessages || [];
         }
-      })
-      .catch(() => {});
+      }).catch(() => {}),
+      state.storage.get<typeof this.runtimeStats>("runtime_stats")
+        .then((s) => { if (s) this.runtimeStats = { ...this.runtimeStats, ...s }; })
+        .catch(() => {}),
+      state.storage.get<Array<{ accountId: string; creds: ILinkCredentials; syncBuf: string }>>("accounts")
+        .then((accs) => {
+          if (accs && accs.length > 0) {
+            for (const a of accs) {
+              if (!this.accounts.has(a.accountId)) {
+                this.accounts.set(a.accountId, {
+                  creds: a.creds,
+                  syncBuf: a.syncBuf || "",
+                  consecutiveErrors: 0,
+                  lastPollAt: "",
+                  pollLoopRunning: false,
+                });
+              }
+            }
+            if (!this.ilinkCreds && accs.length > 0) {
+              this.ilinkCreds = accs[0].creds;
+            }
+            // 加载完成后启动轮询
+            for (const [accountId, account] of this.accounts) {
+              if (!account.pollLoopRunning) {
+                account.pollLoopRunning = true;
+                this.runAccountPollLoop(accountId).catch((e) => {
+                  Logger.error("[DO] Account poll loop error", { accountId, error: e.message });
+                  account.pollLoopRunning = false;
+                });
+              }
+            }
+          }
+        })
+        .catch(() => {}),
+    ]).then(() => {});
   }
 
   // ========== SQLite / D1 初始化 ==========
@@ -184,6 +184,9 @@ export class ILinkConnectionDO implements DurableObject {
 
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
+
+    // 确保构造函数中的异步存储恢复已完成（避免竞态）
+    await this.initPromise;
 
     // 初始化 DO SQLite（credentials / contexts / do_config 建表）
     await this.initSQLite();

@@ -577,7 +577,7 @@ export async function getAllMCPTools(db: D1Database | null, autoFetch = false): 
     if ((!tools || tools.length === 0) && autoFetch && db) {
       tools = await fetchToolsFromServer(db, server);
       if (tools.length > 0) {
-        updateServerTools(db, server.id, tools).catch(() => {});
+        updateServerTools(db, server.id, tools).catch((e: any) => Logger.warn("[mcp] Failed to cache tools", { server: server.name, error: e?.message }));
       }
     }
 
