@@ -502,7 +502,7 @@ async function callOpenAICompatible(params: {
   maxToolRounds?: number;
   searchApiKey?: string;    // 搜索 API 密钥
   searchApiUrl?: string;    // 搜索 API 地址
-}): Promise<string> {
+}): Promise<{ reply: string; toolResults: string[] }> {
   const url = params.baseUrl.trim().replace(/\/+$/, "");
 
   const body: any = {
@@ -565,7 +565,7 @@ async function callOpenAICompatible(params: {
     const toolCalls = message.tool_calls;
     if (!toolCalls || toolCalls.length === 0 || !hasTools) {
       // 没有工具调用，返回最终回复
-      return message.content || "";
+      return { reply: message.content || "", toolResults: allToolTexts };
     }
 
     // 解析并执行工具调用（内置工具 + MCP 工具）
@@ -618,13 +618,13 @@ async function callOpenAICompatible(params: {
   const lastAssistant = [...params.messages].reverse().find(m => m.role === "assistant");
   const lastContent = lastAssistant?.content as string | undefined;
   if (lastContent && lastContent.trim()) {
-    return lastContent;
+    return { reply: lastContent, toolResults: allToolTexts };
   }
   // 兜底：AI 一直调用工具没生成文本，把工具返回的数据整理成回复
   if (allToolTexts.length > 0) {
-    return `根据工具返回的数据：\n${allToolTexts.slice(-3).join("\n")}`;
+    return { reply: `根据工具返回的数据：\n${allToolTexts.slice(-3).join("\n")}`, toolResults: allToolTexts };
   }
-  return "";
+  return { reply: "", toolResults: allToolTexts };
 }
 
 // ========== Cloudflare Workers AI 调用 ==========
@@ -711,6 +711,7 @@ export async function callAIWithContext(
   Logger.info(`[ai] Calling AI for ${userId}`, { provider: config.provider, model: config.model });
 
   let reply = "";
+  let toolResults: string[] = [];
   try {
     if (config.provider !== "cloudflare") {
       // 加载 MCP 工具
@@ -722,7 +723,7 @@ export async function callAIWithContext(
         Logger.info(`[ai] Loaded ${mcpTools.length} MCP tools for ${userId}`);
       }
 
-      reply = await callOpenAICompatible({
+      const result = await callOpenAICompatible({
         baseUrl: config.baseUrl,
         apiKey: config.apiKey,
         model: config.model,
@@ -736,6 +737,8 @@ export async function callAIWithContext(
         searchApiKey: config.searchApiKey,
         searchApiUrl: config.searchApiUrl,
       });
+      reply = result.reply;
+      toolResults = result.toolResults;
     } else {
       reply = await callCloudflareAI(aiBinding, config.model, messages, config.maxTokens);
     }
@@ -746,11 +749,15 @@ export async function callAIWithContext(
 
   Logger.info(`[ai] AI reply for ${userId}`, { replyLength: reply.length, provider: config.provider });
 
-  // 始终保存上下文
+  // 始终保存上下文（含 MCP 工具结果，供后续对话引用）
   const now = Date.now();
   context.messages.push({ role: "user", content: cleanMsg.slice(0, 500), timestamp: now });
   if (reply) {
     context.messages.push({ role: "assistant", content: reply.slice(0, 500), timestamp: now });
+  }
+  // 保存工具返回结果摘要，让 AI 能记住"查到了什么"（作为带标记的 assistant 消息，避免 tool 角色缺 tool_call_id 报错）
+  for (const tr of toolResults) {
+    context.messages.push({ role: "assistant", content: `[上次查询结果] ${tr.slice(0, 500)}`, timestamp: now });
   }
   if (context.messages.length > MAX_CONTEXT_MESSAGES) {
     context.messages = context.messages.slice(-MAX_CONTEXT_MESSAGES);
@@ -809,7 +816,7 @@ export async function callAI(
         Logger.info(`[ai] Loaded ${mcpTools.length} MCP tools (no context)`);
       }
 
-      text = await callOpenAICompatible({
+      const result = await callOpenAICompatible({
         baseUrl: config.baseUrl,
         apiKey: config.apiKey,
         model: config.model,
@@ -826,6 +833,7 @@ export async function callAI(
         searchApiKey: config.searchApiKey,
         searchApiUrl: config.searchApiUrl,
       });
+      text = result.reply;
     } else {
       text = await callCloudflareAI(aiBinding, config.model, [
         { role: "system", content: `当前时间: ${getCurrentTimeStr()}。当用户提到"今天/昨天/明天/上个月/本月/下周/几点"等相对时间时，基于以上时间准确换算。当用户问到新闻、时事、最新信息等需要联网查询的问题时，调用 web_search 工具搜索。\n\n${system}` },
