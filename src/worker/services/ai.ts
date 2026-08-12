@@ -88,7 +88,7 @@ function getCurrentTimeStr(): string {
   return `${get("year")}年${get("month")}月${get("day")}日 ${get("hour")}:${get("minute")}:${get("second")}（星期${weekdayMap[get("weekday")] || get("weekday")}，中国时区）`;
 }
 
-// 内置工具：获取当前日期时间（中国时区 Asia/Shanghai）+ 中文新闻
+// 内置工具：获取当前日期时间 + 中文新闻 + 网页搜索
 const BUILTIN_TOOLS = [{
   type: "function",
   function: {
@@ -103,38 +103,41 @@ const BUILTIN_TOOLS = [{
     description: "获取中文实时新闻和热点，从微博热搜、知乎热榜、今日头条、澎湃新闻、36氪、IT之家、B站等中文源聚合。当用户问到「今天有什么新闻/热点/热搜」时调用",
     parameters: { type: "object", properties: { source: { type: "string", description: "新闻源，可选：weibo/zhihu/baidu/toutiao/thepaper/36kr/ithome/bilibili/tencent/ifeng/sspai/juejin/douyin/hupu，留空返回全部热门" } } },
   },
+}, {
+  type: "function",
+  function: {
+    name: "web_search",
+    description: "搜索互联网获取实时信息，调用 cloudflare-search 聚合搜索引擎（Google/Brave/DuckDuckGo），返回带标题、描述和链接的搜索结果。当用户需要查询最新信息、知识、网站时调用",
+    parameters: { type: "object", properties: { q: { type: "string", description: "搜索关键词（必填）" } }, required: ["q"] },
+  },
 }];
 
-// 网页搜索：使用公共 API（Wikipedia、HN 等），这些不会屏蔽 Workers IP
-async function executeWebSearch(query: string, searchApiKey?: string, searchApiUrl?: string): Promise<string> {
+// 网页搜索：调用 cloudflare-search 聚合搜索引擎
+async function executeWebSearch(query: string, searchBaseUrl?: string, searchToken?: string): Promise<string> {
   const q = (query || "").trim();
   if (!q) return "搜索关键词为空";
-
-  // 1. 有 API Key 时走 Bing Search API
-  if (searchApiKey) {
-    const apiResult = await tryBingApi(q, searchApiKey, searchApiUrl);
-    if (apiResult) return apiResult;
+  const base = (searchBaseUrl || "").trim().replace(/\/+$/, "");
+  if (!base) return "搜索服务未配置（searchBaseUrl 未设置）";
+  try {
+    const url = searchToken
+      ? `${base}/search?q=${encodeURIComponent(q)}&token=${encodeURIComponent(searchToken)}`
+      : `${base}/search?q=${encodeURIComponent(q)}`;
+    const resp = await fetch(url, {
+      headers: { "Accept": "application/json" },
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!resp.ok) return `搜索失败 (HTTP ${resp.status})`;
+    const data = await resp.json() as any;
+    const items = data?.results;
+    if (Array.isArray(items) && items.length > 0) {
+      return items.slice(0, 10).map((it: any, i: number) =>
+        `${i + 1}. ${it.title || "无标题"}\n   ${it.url || ""}\n   ${it.description || ""}`
+      ).join("\n\n");
+    }
+    return "没有找到相关结果";
+  } catch (e: any) {
+    return `搜索失败: ${e?.message || String(e)}`;
   }
-
-  // 2. 公共 API（对 Workers 友好，不会屏蔽）
-  const results: string[] = [];
-
-  // Wikipedia API（通用知识，最可靠）
-  const wiki = await tryWikipedia(q);
-  if (wiki) results.push("📚 维基百科:\n" + wiki);
-
-  // DuckDuckGo API（可能被屏蔽，做备选）
-  const ddg = await tryDuckDuckGoQ(q);
-  if (ddg) results.push("🔍 DuckDuckGo:\n" + ddg);
-
-  if (results.length > 0) return results.join("\n\n---\n\n");
-
-  return "没有找到相关结果";
-}
-
-// 判断是否"新闻/热点"类查询（需要今日新闻）
-function isNewsQuery(q: string): boolean {
-  return /新闻|热点|头条|大事|最新|今日|今天|news|trending|breaking/i.test(q);
 }
 
 async function UNUSED_MARKER() {}
@@ -413,7 +416,7 @@ function stripTags(str: string): string {
   return str.replace(/<[^>]*>/g, "").replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#x27;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").trim();
 }
 
-function executeBuiltinTool(toolCall: { id: string; function: { name: string; arguments: string } }, newsnowBaseUrl?: string): Promise<MCPToolResult | null> {
+function executeBuiltinTool(toolCall: { id: string; function: { name: string; arguments: string } }, newsnowBaseUrl?: string, searchBaseUrl?: string, searchToken?: string): Promise<MCPToolResult | null> {
   if (toolCall.function.name === "get_current_datetime") {
     const now = new Date();
     const tz = "Asia/Shanghai";
@@ -424,6 +427,11 @@ function executeBuiltinTool(toolCall: { id: string; function: { name: string; ar
     const weekdayStr = weekdayMap[get("weekday")] || get("weekday");
     const timeStr = `${get("hour")}:${get("minute")}:${get("second")}`;
     return Promise.resolve({ callId: toolCall.id, name: "get_current_datetime", content: `当前日期: ${dateStr}（星期${weekdayStr}），当前时间: ${timeStr}（中国时区）` });
+  }
+  if (toolCall.function.name === "web_search") {
+    let args: Record<string, any> = {};
+    try { args = JSON.parse(toolCall.function.arguments || "{}"); } catch {}
+    return executeWebSearch(args.q || "", searchBaseUrl, searchToken).then(content => ({ callId: toolCall.id, name: "web_search", content }));
   }
   if (toolCall.function.name === "get_news") {
     let args: Record<string, any> = {};
@@ -559,6 +567,8 @@ async function callOpenAICompatible(params: {
   db?: D1Database | null;
   maxToolRounds?: number;
   newsnowBaseUrl?: string;  // NewsNow 部署地址
+  searchBaseUrl?: string;   // cloudflare-search 部署地址
+  searchToken?: string;     // cloudflare-search Token
 }): Promise<{ reply: string; toolResults: string[] }> {
   const url = params.baseUrl.trim().replace(/\/+$/, "");
 
@@ -631,7 +641,7 @@ async function callOpenAICompatible(params: {
     const builtinResults: MCPToolResult[] = [];
     const mcpOnlyCalls: typeof allToolCalls = [];
     for (const tc of allToolCalls) {
-      const builtin = await executeBuiltinTool(tc, params.newsnowBaseUrl);
+      const builtin = await executeBuiltinTool(tc, params.newsnowBaseUrl, params.searchBaseUrl, params.searchToken);
       if (builtin) {
         builtinResults.push(builtin);
       } else {
@@ -707,6 +717,8 @@ interface AIConfig {
   maxTokens: number;
   maxContextChars?: number;  // 模型上下文窗口（字符数），默认 12000
   newsnowBaseUrl?: string;   // NewsNow 部署地址，用于获取中文新闻
+  searchBaseUrl?: string;    // cloudflare-search 部署地址，用于网页搜索
+  searchToken?: string;      // cloudflare-search Token
   thinking?: boolean;
   mcpServers?: MCPServerConfig[];
   db?: D1Database | null;
@@ -743,6 +755,8 @@ export async function callAIWithContext(
     maxTokens: aiConfig?.maxTokens || 1024,
     maxContextChars: aiConfig?.maxContextChars || 12000,
     newsnowBaseUrl: aiConfig?.newsnowBaseUrl,
+    searchBaseUrl: aiConfig?.searchBaseUrl,
+    searchToken: aiConfig?.searchToken,
     thinking: aiConfig?.thinking || false,
     mcpServers: aiConfig?.mcpServers || [],
     db: aiConfig?.db || null,
@@ -792,6 +806,8 @@ export async function callAIWithContext(
         mcpTools,
         db: config.db,
         newsnowBaseUrl: config.newsnowBaseUrl,
+        searchBaseUrl: config.searchBaseUrl,
+        searchToken: config.searchToken,
       });
       reply = result.reply;
       toolResults = result.toolResults;
@@ -846,6 +862,8 @@ export async function callAI(
     maxTokens: aiConfig?.maxTokens || 1024,
     maxContextChars: aiConfig?.maxContextChars || 12000,
     newsnowBaseUrl: aiConfig?.newsnowBaseUrl,
+    searchBaseUrl: aiConfig?.searchBaseUrl,
+    searchToken: aiConfig?.searchToken,
     thinking: aiConfig?.thinking || false,
     mcpServers: aiConfig?.mcpServers || [],
     db: aiConfig?.db || null,
@@ -886,6 +904,8 @@ export async function callAI(
         mcpTools,
         db: config.db,
         newsnowBaseUrl: config.newsnowBaseUrl,
+        searchBaseUrl: config.searchBaseUrl,
+        searchToken: config.searchToken,
       });
       text = result.reply;
     } else {

@@ -1,12 +1,19 @@
 <template>
   <div class="card">
     <h2>🛠️ 内置工具设置</h2>
-    <div class="desc">配置内置工具（get_news、get_current_datetime 等）的参数</div>
+    <div class="desc">配置内置工具的参数</div>
 
     <div class="tool-section">
       <h3>🗞️ 中文新闻 (get_news)</h3>
-      <div class="desc">默认使用 NewsNow 公共实例，如需使用自己的部署，配置地址</div>
+      <div class="desc">默认使用 NewsNow 公共实例，配置地址可使用自己的部署</div>
       <div class="field"><label>NewsNow 地址</label><input v-model="config.newsnowBaseUrl" class="input" placeholder="https://newsnow.xxx.workers.dev" /><div class="field-hint">留空使用默认公共实例 newsnow.busiyi.world</div></div>
+    </div>
+
+    <div class="tool-section">
+      <h3>🔍 网页搜索 (web_search)</h3>
+      <div class="desc">部署 cloudflare-search 后配置地址，用于通用网页搜索（Google/Brave/DuckDuckGo）</div>
+      <div class="field"><label>搜索服务地址</label><input v-model="config.searchBaseUrl" class="input" placeholder="https://your-search.workers.dev" /><div class="field-hint">cloudflare-search 的 Worker 地址</div></div>
+      <div class="field"><label>Token（可选）</label><input v-model="config.searchToken" class="input" type="password" placeholder="如配置了 TOKEN 则必填" /><div class="field-hint">cloudflare-search 的鉴权 Token</div></div>
     </div>
 
     <div class="save-bar">
@@ -18,10 +25,10 @@
 
 <script setup lang="ts">
 import { ref } from "vue";
-import { fetchConfig, saveConfig } from "../../api";
+import { saveConfig } from "../../api";
 
 const props = defineProps<{
-  config: { newsnowBaseUrl?: string };
+  config: { newsnowBaseUrl?: string; searchBaseUrl?: string; searchToken?: string };
 }>();
 const saving = ref(false);
 const result = ref("");
@@ -30,7 +37,11 @@ async function handleSave() {
   saving.value = true;
   result.value = "保存中...";
   try {
-    const d = await saveConfig({ newsnowBaseUrl: props.config.newsnowBaseUrl || "" });
+    const d = await saveConfig({
+      newsnowBaseUrl: props.config.newsnowBaseUrl || "",
+      searchBaseUrl: props.config.searchBaseUrl || "",
+      searchToken: props.config.searchToken || "",
+    });
     if (d.ok) result.value = "✅ 工具配置已保存";
     else result.value = "❌ " + (d.error || "保存失败");
   } catch (e: any) {
