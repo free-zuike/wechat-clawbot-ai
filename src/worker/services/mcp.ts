@@ -321,13 +321,13 @@ async function detectServerEra(db: D1Database, server: MCPServerConfig): Promise
 }
 
 // 判断错误是否为"可识别的现代 JSON-RPC 错误"
+// 现代服务器返回 200 OK + JSON-RPC error（code 为负值，如 -32022）
+// 旧版服务器返回 HTTP 400（code 为 HTTP 状态码正值）
 function isModernError(error?: any): boolean {
   if (!error) return false;
-  // UnsupportedProtocolVersionError (-32022) 或 HeaderMismatch (-32020) 都是现代错误
-  if (error.code === -32022 || error.code === -32020 || error.code === -32021) return true;
-  // 现代错误体通常带 _meta 或特定 message
-  const msg = `${error.message || ""}`.toLowerCase();
-  return msg.includes("protocol version") || msg.includes("_meta") || msg.includes("header mismatch");
+  // 现代 JSON-RPC 错误码：UnsupportedProtocolVersion (-32022), HeaderMismatch (-32020), MissingCapability (-32021)
+  // 旧版服务器返回 HTTP 400，code 为正值，不匹配
+  return error.code === -32022 || error.code === -32020 || error.code === -32021;
 }
 
 // 确保服务器时代已检测（缓存）
