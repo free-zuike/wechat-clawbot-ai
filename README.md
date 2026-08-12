@@ -11,7 +11,7 @@
 | 💬 AI 对话 | 微信发文字 → AI 自动回复（支持多轮上下文，最近 20 轮/3 天） |
 | 🖼️ 图片生成 | `/图片 <描述>` 或 `/image <prompt>` → AI 生图 |
 | 🎬 视频生成 | `/视频 <描述>` 或 `/video <prompt>` → AI 生视频 |
-| 🔌 MCP 工具 | 接入任意 MCP 服务器（记账、笔记、邮件、推送等），AI 自动调用 |
+| 🔌 MCP 工具 | 接入任意 Streamable HTTP MCP 服务（记账、笔记、推送等），AI 自动调用 |
 | 🗞️ 中文新闻 | 内置 `get_news` 工具，聚合微博/知乎/头条等中文热搜 |
 | 📅 时间感知 | 内置 `get_current_datetime`，时区正确（Asia/Shanghai） |
 | 💬 引用消息 | 支持识别微信引用消息，AI 可回复被引用内容 |
@@ -67,7 +67,7 @@ npm run build && npx wrangler deploy
 
 ## 🔌 MCP 服务器配置
 
-在管理后台「MCP Server 管理」中添加任意 MCP 服务器（Streamable HTTP 传输）：
+在管理后台「MCP Server 管理」中添加 **Streamable HTTP** 类型的 MCP 服务（`@modelcontextprotocol/sdk` 的 HTTP 传输，或任何暴露 `/mcp` 端点的服务）：
 
 ```
 名称: 你的服务名
@@ -76,14 +76,7 @@ API Key: （可选）
 工具前缀: 自动生成，避免工具名冲突
 ```
 
-**已适配示例**：
-
-| MCP 服务 | 用途 |
-|---------|------|
-| BeeCount | 记账/消费查询 |
-| BeeSwarm | 多端消息推送、告警 |
-| EdgeEvery | 笔记管理（列表/搜索/创建/删除） |
-| 邮件 MCP | 收发邮件 |
+**注意**：仅支持 Streamable HTTP 传输（标准 MCP HTTP 协议，Worker 可直接调用）。不支持 stdio 类型（需要本地运行 npx/node）的 MCP 服务器。
 
 **特性**：
 - 工具描述自动追加参数说明和服务名标签，帮助 AI 正确选择
