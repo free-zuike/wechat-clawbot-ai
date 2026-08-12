@@ -22,21 +22,8 @@ export const CONTEXT_EXPIRE_HOURS = 0;   // 0 = 永不过期，用户手动"重�
 
 // ========== DO SQLite 版本 ==========
 
-// 从 DO SQLite 获取上下文（表不存在时自动建表）
+// 从 DO SQLite 获取上下文（表由 initSQLite 确保存在）
 export async function getContextFromSQLite(sql: SqlStorage, userId: string): Promise<UserContext> {
-  // 确保 contexts 表存在（DO 新建实例时表可能尚未创建）
-  try {
-    await sql.exec(`
-      CREATE TABLE IF NOT EXISTS contexts (
-        user_id TEXT PRIMARY KEY,
-        messages TEXT NOT NULL DEFAULT '[]',
-        last_updated INTEGER NOT NULL
-      )
-    `);
-  } catch (e) {
-    Logger.warn(`[Context] Failed to ensure contexts table`, { error: (e as Error).message });
-  }
-
   try {
     const cursor = sql.exec(
       `SELECT messages, last_updated FROM contexts WHERE user_id = ?`,
@@ -68,21 +55,8 @@ export async function getContextFromSQLite(sql: SqlStorage, userId: string): Pro
   return { userId, messages: [], lastUpdated: Date.now() };
 }
 
-// 保存上下文到 DO SQLite（表不存在时自动建表）
+// 保存上下文到 DO SQLite（表由 initSQLite 确保存在）
 export async function saveContextToSQLite(sql: SqlStorage, userId: string, context: UserContext): Promise<void> {
-  // 确保 contexts 表存在
-  try {
-    await sql.exec(`
-      CREATE TABLE IF NOT EXISTS contexts (
-        user_id TEXT PRIMARY KEY,
-        messages TEXT NOT NULL DEFAULT '[]',
-        last_updated INTEGER NOT NULL
-      )
-    `);
-  } catch (e) {
-    Logger.warn(`[Context] Failed to ensure contexts table on save`, { error: (e as Error).message });
-  }
-
   context.lastUpdated = Date.now();
 
   // 只保留最近 N 条消息
@@ -118,18 +92,6 @@ export async function clearContextSQLite(sql: SqlStorage, userId: string): Promi
 // ========== D1 版本 ==========
 
 export async function getContextFromD1(db: D1Database, userId: string): Promise<UserContext> {
-  // 确保表存在（与 SQLite 版本一致）
-  try {
-    await db.exec(
-      `CREATE TABLE IF NOT EXISTS contexts (
-        user_id TEXT PRIMARY KEY,
-        messages TEXT NOT NULL DEFAULT '[]',
-        last_updated INTEGER NOT NULL
-      )`
-    );
-  } catch (e) {
-    Logger.warn(`[Context] Failed to ensure D1 contexts table`, { error: (e as Error).message });
-  }
   try {
     const { results } = await db.prepare(
       `SELECT messages, last_updated FROM contexts WHERE user_id = ?`
@@ -161,14 +123,6 @@ export async function saveContextToD1(db: D1Database, userId: string, context: U
     context.messages = context.messages.slice(-MAX_CONTEXT_MESSAGES);
   }
   try {
-    // 确保表存在
-    await db.exec(
-      `CREATE TABLE IF NOT EXISTS contexts (
-        user_id TEXT PRIMARY KEY,
-        messages TEXT NOT NULL DEFAULT '[]',
-        last_updated INTEGER NOT NULL
-      )`
-    );
     await db.prepare(
       `INSERT INTO contexts (user_id, messages, last_updated) VALUES (?, ?, ?)
        ON CONFLICT(user_id) DO UPDATE SET messages = excluded.messages, last_updated = excluded.last_updated`

@@ -53,11 +53,11 @@ export interface MCPToolResult {
 // ========== 协议版本 ==========
 
 export const MCP_PROTOCOL_VERSION = "2026-07-28";
-const LEGACY_PROTOCOL_VERSION = "2025-06-18";
+export const LEGACY_PROTOCOL_VERSION = "2025-06-18";
 const CLIENT_INFO = { name: "clawbot-mcp-client", version: "2.0.0" };
 
 // 现代请求的 _meta 元数据（2026-07-28 要求每个请求携带）
-function buildMeta(): Record<string, any> {
+export function buildMeta(): Record<string, any> {
   return {
     "io.modelcontextprotocol/protocolVersion": MCP_PROTOCOL_VERSION,
     "io.modelcontextprotocol/clientCapabilities": { tools: {} },
@@ -323,7 +323,7 @@ async function detectServerEra(db: D1Database, server: MCPServerConfig): Promise
 // 判断错误是否为"可识别的现代 JSON-RPC 错误"
 // 现代服务器返回 200 OK + JSON-RPC error（code 为负值，如 -32022）
 // 旧版服务器返回 HTTP 400（code 为 HTTP 状态码正值）
-function isModernError(error?: any): boolean {
+export function isModernError(error?: any): boolean {
   if (!error) return false;
   // 现代 JSON-RPC 错误码：UnsupportedProtocolVersion (-32022), HeaderMismatch (-32020), MissingCapability (-32021)
   // 旧版服务器返回 HTTP 400，code 为正值，不匹配
