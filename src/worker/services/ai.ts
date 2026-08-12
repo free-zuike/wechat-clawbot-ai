@@ -769,12 +769,24 @@ export async function callAIWithContext(
   const system = systemPrompt || DEFAULT_SYSTEM_PROMPT;
   const context = db ? await getContextFromD1(db, userId) : await getContextFromSQLite(storage, userId);
 
+  // 从上下文里找最近一次工具查询结果，拼接到当前用户消息前，确保 AI 能看到
+  let queryHint = "";
+  for (let i = context.messages.length - 1; i >= 0; i--) {
+    const m = context.messages[i];
+    if (m.role === "assistant" && m.content.includes("[查询结果]")) {
+      const idx = m.content.indexOf("[查询结果]");
+      queryHint = m.content.slice(idx).slice(0, 2000);
+      break;
+    }
+  }
+  const hintedMsg = queryHint ? `[上次查询数据]\n${queryHint}\n\n---\n${cleanMsg}` : cleanMsg;
+
   // 注入当前日期（通用，不针对特定 MCP），让 AI 正确换算"今天/上个月/本月"等相对时间
   const messages = buildMessagesWithContext(
     `当前时间: ${getCurrentTimeStr()}。当用户提到"今天/昨天/明天/上个月/本月/下周/几点"等相对时间时，基于以上时间准确换算。当用户问到新闻、时事、热点时，调用 get_news 工具获取中文新闻。\n` +
     `当用户先让你列出某类数据（如新闻、记录、清单），然后说"第X条/第一条/详情"时，必须直接从你刚才列出的列表内容中回答对应条目，不要调用任何工具。只有当你没有列出过该列表、且结果中确实没有详情时，才调用对应服务的详情工具获取。\n\n` +
     system,
-    cleanMsg,
+    hintedMsg,
     context,
     config.maxContextChars
   );
