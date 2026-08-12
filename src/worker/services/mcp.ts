@@ -167,7 +167,7 @@ async function mcpRequest(
   }
 
   const requestId = options?.id ?? Date.now();
-  const isModern = server.era !== "legacy" && !options?.forceModern;
+  const isModern = options?.forceModern || (server.era !== "legacy");
 
   let body: any;
   if (isModern) {
