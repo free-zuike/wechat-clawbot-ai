@@ -774,13 +774,21 @@ export async function callAIWithContext(
   if (/第[一二三四五六七八九十\d]+[条个]?/.test(cleanMsg)) {
     for (let i = context.messages.length - 1; i >= 0; i--) {
       const m = context.messages[i];
-      if (m.role === "assistant" && m.content.length > 50) {
-        queryHint = m.content.slice(0, 2000);
-        break;
+      if (m.role === "assistant") {
+        // 优先找 [查询结果]（带编号的原始列表数据）
+        const idx = m.content.indexOf("[查询结果]");
+        if (idx !== -1) {
+          queryHint = m.content.slice(idx).slice(0, 2500);
+          break;
+        }
+        // 回退：取第一条 100 字以上的回复
+        if (m.content.length > 100 && !queryHint) {
+          queryHint = m.content.slice(0, 2500);
+        }
       }
     }
   }
-  const hintedMsg = queryHint ? `[上次回复内容]\n${queryHint}\n\n---\n${cleanMsg}` : cleanMsg;
+  const hintedMsg = queryHint ? `[以下是之前的数据，用户问的是这个列表中的第几条]\n${queryHint}\n\n---\n${cleanMsg}` : cleanMsg;
 
   // 注入当前日期（通用，不针对特定 MCP），让 AI 正确换算"今天/上个月/本月"等相对时间
   const messages = buildMessagesWithContext(
