@@ -784,7 +784,7 @@ export async function callAIWithContext(
   // 注入当前日期（通用，不针对特定 MCP），让 AI 正确换算"今天/上个月/本月"等相对时间
   const messages = buildMessagesWithContext(
     `当前时间: ${getCurrentTimeStr()}。当用户提到"今天/昨天/明天/上个月/本月/下周/几点"等相对时间时，基于以上时间准确换算。当用户问到新闻、时事、最新信息等需要联网查询的问题时，调用 web_search 工具搜索。\n` +
-    `当用户先让你列出某类数据（如笔记、记录、清单），然后说"看第X条/这条的详情/内容"时，必须调用该服务的"获取详情/读取单条"工具（如 get_memo、get_transaction 等），传入上一步返回的那条记录的 ID，来获取完整内容，而不是重新调用列表工具或猜测。\n\n` +
+    `当用户先让你列出某类数据，然后说"看第X条/这条的详情/内容"时，优先从之前的查询结果中直接引用对应内容回答。如果查询结果中已有完整内容，不需要重复调用工具。如果结果中只有标题没有详情，再调用对应服务的详情工具获取。\n\n` +
     system,
     cleanMsg,
     context,
@@ -833,11 +833,15 @@ export async function callAIWithContext(
 
   Logger.info(`[ai] AI reply for ${userId}`, { replyLength: reply.length, provider: config.provider });
 
-  // 始终保存上下文（含 MCP 工具结果，保留 ID 等关键信息）
+  // 始终保存上下文（含工具结果，让 AI 能引用之前的查询结果）
   const now = Date.now();
   context.messages.push({ role: "user", content: cleanMsg.slice(0, 500), timestamp: now });
   if (reply) {
     context.messages.push({ role: "assistant", content: reply.slice(0, 500), timestamp: now });
+  }
+  // 保存工具返回结果，用于后续"第X条/详情"场景（500 字符截断，保留足够信息）
+  for (const tr of toolResults) {
+    context.messages.push({ role: "assistant", content: `[查询结果] ${tr.slice(0, 800)}`, timestamp: now });
   }
   if (context.messages.length > MAX_CONTEXT_MESSAGES) {
     context.messages = context.messages.slice(-MAX_CONTEXT_MESSAGES);
