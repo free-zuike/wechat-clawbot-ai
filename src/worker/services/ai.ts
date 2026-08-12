@@ -772,7 +772,7 @@ export async function callAIWithContext(
   // 注入当前日期（通用，不针对特定 MCP），让 AI 正确换算"今天/上个月/本月"等相对时间
   const messages = buildMessagesWithContext(
     `当前时间: ${getCurrentTimeStr()}。当用户提到"今天/昨天/明天/上个月/本月/下周/几点"等相对时间时，基于以上时间准确换算。当用户问到新闻、时事、热点时，调用 get_news 工具获取中文新闻。\n` +
-    `当用户先让你列出某类数据，然后说"看第X条/这条的详情/内容"时，优先从之前的查询结果中直接引用对应内容回答。如果查询结果中已有完整内容，不需要重复调用工具。如果结果中只有标题没有详情，再调用对应服务的详情工具获取。\n\n` +
+    `当用户先让你列出某类数据（如新闻、记录、清单），然后说"第X条/第一条/详情"时，必须直接从你刚才列出的列表内容中回答对应条目，不要调用任何工具。只有当你没有列出过该列表、且结果中确实没有详情时，才调用对应服务的详情工具获取。\n\n` +
     system,
     cleanMsg,
     context,
@@ -829,7 +829,7 @@ export async function callAIWithContext(
   }
   // 保存工具返回结果，用于后续"第X条/详情"场景（500 字符截断，保留足够信息）
   for (const tr of toolResults) {
-    context.messages.push({ role: "assistant", content: `[查询结果] ${tr.slice(0, 800)}`, timestamp: now });
+    context.messages.push({ role: "assistant", content: `[查询结果] ${tr.slice(0, 2000)}`, timestamp: now });
   }
   if (context.messages.length > MAX_CONTEXT_MESSAGES) {
     context.messages = context.messages.slice(-MAX_CONTEXT_MESSAGES);
@@ -894,7 +894,7 @@ export async function callAI(
         apiKey: config.apiKey,
         model: config.model,
         messages: [
-          { role: "system", content: `当前时间: ${getCurrentTimeStr()}。当用户提到"今天/昨天/明天/上个月/本月/下周/几点"等相对时间时，基于以上时间准确换算。当用户问到新闻、时事、热点时，调用 get_news 工具获取中文新闻。\n当用户先让你列出某类数据，然后说"看第X条/这条的详情/内容"时，优先从之前的查询结果中直接引用对应内容回答。如果查询结果中已有完整内容，不需要重复调用工具。如果结果中只有标题没有详情，再调用对应服务的详情工具获取。\n\n${system}` },
+          { role: "system", content: `当前时间: ${getCurrentTimeStr()}。当用户提到"今天/昨天/明天/上个月/本月/下周/几点"等相对时间时，基于以上时间准确换算。当用户问到新闻、时事、热点时，调用 get_news 工具获取中文新闻。\n当用户先让你列出某类数据（如新闻、记录、清单），然后说"第X条/第一条/详情"时，必须直接从你刚才列出的列表内容中回答对应条目，不要调用任何工具。只有当你没有列出过该列表、且结果中确实没有详情时，才调用对应服务的详情工具获取。\n\n${system}` },
           { role: "user", content: cleanMsg },
         ],
         maxTokens: config.maxTokens,
@@ -910,7 +910,7 @@ export async function callAI(
       text = result.reply;
     } else {
       text = await callCloudflareAI(aiBinding, config.model, [
-        { role: "system", content: `当前时间: ${getCurrentTimeStr()}。当用户提到"今天/昨天/明天/上个月/本月/下周/几点"等相对时间时，基于以上时间准确换算。当用户问到新闻、时事、热点时，调用 get_news 工具获取中文新闻。\n当用户先让你列出某类数据，然后说"看第X条/这条的详情/内容"时，优先从之前的查询结果中直接引用对应内容回答。如果查询结果中已有完整内容，不需要重复调用工具。如果结果中只有标题没有详情，再调用对应服务的详情工具获取。\n\n${system}` },
+        { role: "system", content: `当前时间: ${getCurrentTimeStr()}。当用户提到"今天/昨天/明天/上个月/本月/下周/几点"等相对时间时，基于以上时间准确换算。当用户问到新闻、时事、热点时，调用 get_news 工具获取中文新闻。\n当用户先让你列出某类数据（如新闻、记录、清单），然后说"第X条/第一条/详情"时，必须直接从你刚才列出的列表内容中回答对应条目，不要调用任何工具。只有当你没有列出过该列表、且结果中确实没有详情时，才调用对应服务的详情工具获取。\n\n${system}` },
         { role: "user", content: cleanMsg },
       ], config.maxTokens);
     }
