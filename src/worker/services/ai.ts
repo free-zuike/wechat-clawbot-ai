@@ -453,31 +453,59 @@ function executeBuiltinTool(toolCall: { id: string; function: { name: string; ar
   return Promise.resolve(null);
 }
 
-// 获取中文新闻：调用用户部署的 NewsNow 实例
+// 获取中文新闻：调用 NewsNow 实例（默认公共实例，失败时回退 HN）
 // NewsNow API: GET /api/s?id=<source>，source 如 weibo/zhihu/baidu/toutiao/thepaper/36kr/ithome/bilibili/tencent/ifeng/sspai/juejin/douyin/hupu
+const NEWS_NOW_DEFAULT = "https://newsnow.busiyi.world";
 async function executeNewsNow(source: string, baseUrl?: string): Promise<string> {
-  const base = (baseUrl || "").trim().replace(/\/+$/, "");
-  if (!base) return "新闻服务未配置（NEWS_NOW_BASE_URL 未设置）";
+  const base = (baseUrl || NEWS_NOW_DEFAULT).trim().replace(/\/+$/, "");
   try {
-    const sources = (source || "").trim();
-    const url = sources
-      ? `${base}/api/s?id=${encodeURIComponent(sources)}`
-      : `${base}/api/s?id=zhihu`;
-    const resp = await fetch(url, {
-      headers: { "Content-Type": "application/json", "Accept": "application/json" },
-      signal: AbortSignal.timeout(10000),
-    });
-    if (!resp.ok) return `新闻获取失败 (HTTP ${resp.status})`;
-    const data = await resp.json() as any;
-    // NewsNow 返回: { status, id, updatedTime, items: [{title, url, extra}] }
-    const items = data?.items;
-    if (Array.isArray(items) && items.length > 0) {
-      return items.slice(0, 15).map((it: any, i: number) =>
-        `${i + 1}. ${it.title || "无标题"}\n   ${it.url || ""}${it.extra?.info ? `\n   ${it.extra.info}` : ""}`
-      ).join("\n\n");
+    // 未指定源时，并行拉取几个主流中文源，选最成功的一个
+    const requested = (source || "").trim();
+    const sourceList = requested ? [requested] : ["weibo", "zhihu", "baidu", "toutiao", "thepaper"];
+    const results = await Promise.all(
+      sourceList.map(async (src) => {
+        try {
+          const resp = await fetch(`${base}/api/s?id=${encodeURIComponent(src)}`, {
+            headers: { "Content-Type": "application/json", "Accept": "application/json" },
+            signal: AbortSignal.timeout(8000),
+          });
+          if (!resp.ok) return null;
+          const data = await resp.json() as any;
+          const items = data?.items;
+          if (Array.isArray(items) && items.length > 0) {
+            return { src, items: items.slice(0, 10) };
+          }
+          return null;
+        } catch { return null; }
+      })
+    );
+    const ok = results.filter(Boolean) as Array<{ src: string; items: any[] }>;
+    if (ok.length > 0) {
+      // 合并所有成功源的新闻，去重
+      const seen = new Set<string>();
+      const lines: string[] = [];
+      let count = 0;
+      for (const { src, items } of ok) {
+        for (const it of items) {
+          const title = it.title || "";
+          if (!title || seen.has(title)) continue;
+          seen.add(title);
+          lines.push(`${count + 1}. [${src}] ${title}\n   ${it.url || ""}`);
+          count++;
+          if (count >= 15) break;
+        }
+        if (count >= 15) break;
+      }
+      if (lines.length > 0) return lines.join("\n\n");
     }
+    // NewsNow 失败（如 D1 过载），回退到 HN 热门
+    const hn = await tryHackerNews(sourceList.join(" ") || "news");
+    if (hn) return "NewsNow 暂不可用，以下是技术社区热门：\n" + hn;
     return "没有获取到新闻";
   } catch (e: any) {
+    // 最终回退 HN
+    const hn = await tryHackerNews(source || "news");
+    if (hn) return "NewsNow 暂不可用，以下是技术社区热门：\n" + hn;
     return `新闻获取失败: ${e?.message || String(e)}`;
   }
 }
