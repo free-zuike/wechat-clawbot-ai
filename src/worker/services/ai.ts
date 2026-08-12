@@ -1275,7 +1275,7 @@ export async function generateImage(
   Logger.info("[ai] Generating image", { prompt: prompt.slice(0, 80), model: imageModel, adapter: adapter.id, refImageCount: refImages.length, size: imageSize, keyCount: keys.length });
 
   if (provider && provider !== "cloudflare" && baseUrl && keys.length > 0 && adapter.image) {
-    for (let attempt = 0; attempt <= retries && attempt < keys.length; attempt++) {
+    for (let attempt = 0; attempt <= retries; attempt++) {
       const currentKey = keys[attempt] || keys[0];
       try {
         const { base, version } = parseApiUrl(baseUrl);

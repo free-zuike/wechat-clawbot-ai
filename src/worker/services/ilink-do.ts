@@ -831,11 +831,12 @@ export class ILinkConnectionDO implements DurableObject {
       const ctxToken = msg.context_token;
 
       // 白名单检查：如果配置了 allowlist，只允许指定用户使用 AI 对话
+      // 注意：from 为空时也拦截（防止绕过白名单），除非 allowlist 未配置
       const allowlist = cfg.allowlist || "";
-      if (allowlist && from) {
+      if (allowlist) {
         const allowed = allowlist.split(/[\n,，]+/).map((s: string) => s.trim()).filter(Boolean);
-        if (allowed.length > 0 && !allowed.includes(from)) {
-          Logger.info(`[DO] Blocked message from non-allowlisted user: ${from}`);
+        if (allowed.length > 0 && !(from && allowed.includes(from))) {
+          Logger.info(`[DO] Blocked message from non-allowlisted user: ${from || "(empty)"}`);
           await this.markMessageProcessed(`${useCreds?.accountId || "default"}:${this.generateMessageId(msg, text || "")}`);
           return;
         }
@@ -1173,6 +1174,8 @@ export class ILinkConnectionDO implements DurableObject {
       } catch (e: any) {
         aiFailCount++;
         Logger.error("[DO] AI processing failed", { error: e.message, from });
+        // 取消 typing 状态（避免微信显示"对方正在输入..."）
+        sendTypingStatus(useCreds!, from, ctxToken, false).catch(() => {});
         // 如果已经发过回复，不发重复错误消息（避免 sendTextChunked 部分失败后还发"抱歉"）
         if (!replyContent) {
           try {
@@ -1184,7 +1187,7 @@ export class ILinkConnectionDO implements DurableObject {
         // AI 失败时通过 MCP 推送工具（如 BeeSwarm）发送后台告警
         try {
           const { sendAlert } = await import("../services/mcp");
-          sendAlert(this.env.DB, "🤖 AI 调用失败", `用户: ${from}\n错误: ${e.message?.slice(0, 200) || "未知错误"}`).catch(() => {});
+          await sendAlert(this.env.DB, "🤖 AI 调用失败", `用户: ${from}\n错误: ${e.message?.slice(0, 200) || "未知错误"}`);
         } catch {}
       }
 
