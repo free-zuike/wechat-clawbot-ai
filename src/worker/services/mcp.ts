@@ -258,6 +258,15 @@ async function mcpRequest(
   try {
     const data = JSON.parse(rawBody);
     if (data.error) return { error: data.error, sessionId };
+    // 处理 2026-07-28 的 resultType 字段
+    const result = data.result;
+    if (result && result.resultType === "input_required") {
+      // MRTR（Multi Round-Trip Request）：服务器需要更多输入才能完成
+      // 当前场景（工具调用）不处理 MRTR，返回提示信息
+      Logger.warn("[mcp] Server requested additional input (MRTR)", { inputRequests: result.inputRequests });
+      return { result: { content: [{ type: "text", text: `服务器需要额外输入: ${JSON.stringify(result.inputRequests)}` }], isError: true }, sessionId };
+    }
+    // 兼容旧版服务器（无 resultType 字段）：视为 "complete"
     return { result: data.result, sessionId };
   } catch {
     return { error: { code: -32700, message: "Parse error: invalid JSON" } };
@@ -265,6 +274,7 @@ async function mcpRequest(
 }
 
 // 解析 SSE 事件流，找到匹配 requestId 的响应
+// 同时记录 progress/cancelled 通知（2026-07-28 通知随响应流返回）
 function parseSSEResponse(body: string, requestId: number, sessionId: string | null): { result?: any; error?: any; sessionId?: string | null } {
   let lastResult: any = null;
   let lastError: any = null;
@@ -283,6 +293,19 @@ function parseSSEResponse(body: string, requestId: number, sessionId: string | n
     if (!dataStr) continue;
     try {
       const msg = JSON.parse(dataStr);
+      // 处理服务器通知（无 id 的 JSON-RPC 通知）
+      if (msg.method === "notifications/progress") {
+        Logger.info("[mcp] Progress notification", { progress: msg.params?.progress, total: msg.params?.total });
+        continue;
+      }
+      if (msg.method === "notifications/cancelled") {
+        Logger.warn("[mcp] Request cancelled by server", { requestId: msg.params?.requestId });
+        continue;
+      }
+      if (msg.method === "notifications/message") {
+        Logger.info("[mcp] Server message", { level: msg.params?.level, message: msg.params?.message });
+        continue;
+      }
       if (msg.id === requestId) {
         if (msg.error) lastError = msg.error;
         else lastResult = msg.result;
@@ -984,7 +1007,11 @@ function formatToolResult(toolCall: MCPToolCall, result?: any): MCPToolResult {
     const textParts = content
       .filter((c: any) => c.type === "text")
       .map((c: any) => c.text || "");
-    const text = textParts.join("\n") || JSON.stringify(content);
+    // 处理 structured 类型（2026-07-28 新增的结构化输出）
+    const structuredParts = content
+      .filter((c: any) => c.type === "structured")
+      .map((c: any) => JSON.stringify(c.structured || c));
+    const text = [...textParts, ...structuredParts].join("\n") || JSON.stringify(content);
     // 检查是否有 isError 标记
     const isError = content.some((c: any) => c.type === "error");
     return { callId: toolCall.callId, name: toolCall.name, content: text, isError: isError || undefined };
