@@ -27,8 +27,6 @@ export interface Env {
   ILINK_CONNECTION: DurableObjectNamespace<ILinkConnectionDO>;
   ACCOUNT_ID?: string;
   CF_API_TOKEN?: string;
-  SEARCH_API_KEY?: string;   // 可选：搜索 API 密钥（如 Bing Search API，Azure 申请）
-  SEARCH_API_URL?: string;   // 可选：搜索 API 地址，默认 https://api.bing.microsoft.com/v7.0/search
 }
 
 function detectImageMime(data: Uint8Array): string {

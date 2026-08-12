@@ -192,8 +192,6 @@ export async function handleChat(request: Request, env: Env): Promise<Response> 
       apiKey: aiConfig.apiKey,
       maxTokens: aiConfig.maxTokens,
       maxContextChars: aiConfig.maxContextChars,
-      searchApiKey: env.SEARCH_API_KEY,
-      searchApiUrl: env.SEARCH_API_URL,
       newsnowBaseUrl: (kv.newsnowBaseUrl as string) || "",
       thinking: aiConfig.thinking,
       mcpServers,
