@@ -416,6 +416,10 @@ export async function loadAllMCPServers(db: D1Database | null): Promise<MCPServe
 
 export async function saveMCPServers(db: D1Database | null, servers: MCPServerConfig[]): Promise<void> {
   if (!db) return;
+  // 服务器配置变更后清除时代缓存，避免陈旧检测结果
+  for (const s of servers) {
+    eraCache.delete(s.id);
+  }
   // 确保表存在
   await ensureMCPServersTable(db);
   try {

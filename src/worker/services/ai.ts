@@ -154,8 +154,6 @@ async function executeWebSearch(query: string, searchBaseUrl?: string, searchTok
   }
 }
 
-async function UNUSED_MARKER() {}
-
 // 获取今日热门新闻（HN 前端 RSS + Wikipedia 每日大事）
 async function tryTopNews(): Promise<string | null> {
   const parts: string[] = [];

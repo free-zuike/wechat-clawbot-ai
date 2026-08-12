@@ -830,7 +830,7 @@ export class ILinkConnectionDO implements DurableObject {
       // 白名单检查：如果配置了 allowlist，只允许指定用户使用 AI 对话
       const allowlist = cfg.allowlist || "";
       if (allowlist && from) {
-        const allowed = allowlist.split(",").map((s: string) => s.trim()).filter(Boolean);
+        const allowed = allowlist.split(/[\n,，]+/).map((s: string) => s.trim()).filter(Boolean);
         if (allowed.length > 0 && !allowed.includes(from)) {
           Logger.info(`[DO] Blocked message from non-allowlisted user: ${from}`);
           await this.markMessageProcessed(`${useCreds?.accountId || "default"}:${this.generateMessageId(msg, text || "")}`);
@@ -1166,7 +1166,7 @@ export class ILinkConnectionDO implements DurableObject {
         // 取消 typing 状态
         sendTypingStatus(useCreds!, from, ctxToken, false).catch(() => {});
 
-        Logger.info("[DO] Message processed", { from, replyLength: reply.length, chunks });
+        Logger.info("[DO] Message processed", { from, replyLength: reply.length });
       } catch (e: any) {
         aiFailCount++;
         Logger.error("[DO] AI processing failed", { error: e.message, from });

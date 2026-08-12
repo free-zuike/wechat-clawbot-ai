@@ -214,7 +214,7 @@ export async function handleChat(request: Request, env: Env): Promise<Response> 
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     Logger.error(`[chat][${requestId}] error`, { error: msg });
-    await logToDO(env, "text", trimmed, "", aiConfig.provider || "unknown", aiConfig.model || "default", "failed", msg);
+    await logToDO(env, "text", trimmed, "", aiConfig?.provider || "unknown", aiConfig?.model || "default", "failed", msg);
     return json({ reply: "错误: " + msg, source: "error" } satisfies ChatResponse);
   }
 }
