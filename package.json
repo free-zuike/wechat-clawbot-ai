@@ -10,7 +10,8 @@
     "deploy": "npm run build && wrangler deploy",
     "dev:worker": "wrangler dev src/worker/index.ts",
     "preview": "vite preview",
-    "tail": "wrangler tail"
+    "tail": "wrangler tail",
+    "test": "vitest run --config vitest.config.ts"
   },
   "dependencies": {
     "qrcode": "^1.5.4",
@@ -22,6 +23,7 @@
     "@vitejs/plugin-vue": "^5.2.4",
     "typescript": "^5.9.3",
     "vite": "^5.4.21",
+    "vitest": "^4.1.10",
     "wrangler": "^3.80.0"
   }
 }

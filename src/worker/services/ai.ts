@@ -551,7 +551,7 @@ async function executeNewsNow(source: string, baseUrl?: string): Promise<string>
 }
 
 // 将工具返回的 JSON 转成自然语言，避免 AI 解析 JSON 时编造数字
-function formatToolContent(raw: string): string {
+export function formatToolContent(raw: string): string {
   if (!raw) return raw;
   const trimmed = raw.trim();
   if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return raw;
