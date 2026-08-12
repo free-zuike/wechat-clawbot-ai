@@ -200,7 +200,7 @@ export async function handleChat(request: Request, env: Env): Promise<Response> 
       db: env.DB,
       aiBinding: env.AI,
       mediaProvider: aiConfig.provider,
-      mediaModel: aiConfig.model,
+      mediaModel: imageModel || aiConfig.model,
       mediaBaseUrl: aiConfig.baseUrl,
       mediaApiKey: aiConfig.apiKey,
       mediaAllKeys: aiConfig.allKeys,
