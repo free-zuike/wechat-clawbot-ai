@@ -702,7 +702,9 @@ export async function callAIWithContext(
 
   // 注入当前日期（通用，不针对特定 MCP），让 AI 正确换算"今天/上个月/本月"等相对时间
   const messages = buildMessagesWithContext(
-    `当前时间: ${getCurrentTimeStr()}。当用户提到"今天/昨天/明天/上个月/本月/下周/几点"等相对时间时，基于以上时间准确换算。当用户问到新闻、时事、最新信息等需要联网查询的问题时，调用 web_search 工具搜索。\n\n${system}`,
+    `当前时间: ${getCurrentTimeStr()}。当用户提到"今天/昨天/明天/上个月/本月/下周/几点"等相对时间时，基于以上时间准确换算。当用户问到新闻、时事、最新信息等需要联网查询的问题时，调用 web_search 工具搜索。\n` +
+    `当用户先让你列出某类数据（如笔记、记录、清单），然后说"看第X条/这条的详情/内容"时，必须调用该服务的"获取详情/读取单条"工具（如 get_memo、get_transaction 等），传入上一步返回的那条记录的 ID，来获取完整内容，而不是重新调用列表工具或猜测。\n\n` +
+    system,
     cleanMsg,
     context,
     config.maxContextChars
@@ -749,15 +751,11 @@ export async function callAIWithContext(
 
   Logger.info(`[ai] AI reply for ${userId}`, { replyLength: reply.length, provider: config.provider });
 
-  // 始终保存上下文（含 MCP 工具结果，供后续对话引用）
+  // 始终保存上下文（含 MCP 工具结果，保留 ID 等关键信息）
   const now = Date.now();
   context.messages.push({ role: "user", content: cleanMsg.slice(0, 500), timestamp: now });
   if (reply) {
     context.messages.push({ role: "assistant", content: reply.slice(0, 500), timestamp: now });
-  }
-  // 保存工具返回结果摘要，让 AI 能记住"查到了什么"（作为带标记的 assistant 消息，避免 tool 角色缺 tool_call_id 报错）
-  for (const tr of toolResults) {
-    context.messages.push({ role: "assistant", content: `[上次查询结果] ${tr.slice(0, 500)}`, timestamp: now });
   }
   if (context.messages.length > MAX_CONTEXT_MESSAGES) {
     context.messages = context.messages.slice(-MAX_CONTEXT_MESSAGES);
@@ -821,7 +819,7 @@ export async function callAI(
         apiKey: config.apiKey,
         model: config.model,
         messages: [
-          { role: "system", content: `当前时间: ${getCurrentTimeStr()}。当用户提到"今天/昨天/明天/上个月/本月/下周/几点"等相对时间时，基于以上时间准确换算。当用户问到新闻、时事、最新信息等需要联网查询的问题时，调用 web_search 工具搜索。\n\n${system}` },
+          { role: "system", content: `当前时间: ${getCurrentTimeStr()}。当用户提到"今天/昨天/明天/上个月/本月/下周/几点"等相对时间时，基于以上时间准确换算。当用户问到新闻、时事、最新信息等需要联网查询的问题时，调用 web_search 工具搜索。\n当用户先让你列出某类数据，然后说"看第X条/这条的详情/内容"时，必须调用该服务的"获取详情/读取单条"工具，传入上一步返回的那条记录的 ID，来获取完整内容，而不是重新调用列表工具或猜测。\n\n${system}` },
           { role: "user", content: cleanMsg },
         ],
         maxTokens: config.maxTokens,
@@ -836,7 +834,7 @@ export async function callAI(
       text = result.reply;
     } else {
       text = await callCloudflareAI(aiBinding, config.model, [
-        { role: "system", content: `当前时间: ${getCurrentTimeStr()}。当用户提到"今天/昨天/明天/上个月/本月/下周/几点"等相对时间时，基于以上时间准确换算。当用户问到新闻、时事、最新信息等需要联网查询的问题时，调用 web_search 工具搜索。\n\n${system}` },
+        { role: "system", content: `当前时间: ${getCurrentTimeStr()}。当用户提到"今天/昨天/明天/上个月/本月/下周/几点"等相对时间时，基于以上时间准确换算。当用户问到新闻、时事、最新信息等需要联网查询的问题时，调用 web_search 工具搜索。\n当用户先让你列出某类数据，然后说"看第X条/这条的详情/内容"时，必须调用该服务的"获取详情/读取单条"工具，传入上一步返回的那条记录的 ID，来获取完整内容，而不是重新调用列表工具或猜测。\n\n${system}` },
         { role: "user", content: cleanMsg },
       ], config.maxTokens);
     }
