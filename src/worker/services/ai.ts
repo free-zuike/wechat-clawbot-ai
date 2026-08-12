@@ -1,6 +1,7 @@
 // AI 服务 - 支持 Cloudflare Workers AI + OpenAI 兼容 API
 
 import { Logger } from "../utils/error";
+import { getAdapter, type ProviderResponseConfig } from "./adapters";
 import {
   getContextFromSQLite,
   saveContextToSQLite,
@@ -898,7 +899,7 @@ export async function callAIWithContext(
     } else {
       reply = await callCloudflareAI(aiBinding, config.model, messages, config.maxTokens);
     }
-    } catch (e: any) {
+  } catch (e: any) {
     Logger.error(`[ai] AI call failed for ${userId}`, { error: e?.message || String(e) });
     return "AI 暂时无法回答，请稍后重试";
   }
@@ -1250,8 +1251,6 @@ async function fetchImageUrl(url: string): Promise<Uint8Array | null> {
 }
 
 // ========== 图片生成 ==========
-
-import { getAdapter, type ProviderResponseConfig } from "./adapters";
 
 export async function generateImage(
   aiBinding: any,
