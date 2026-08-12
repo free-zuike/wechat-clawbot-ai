@@ -41,7 +41,7 @@ export interface ProcessedMessage {
 interface RuntimeCache {
   credentials: { botToken: string; accountId: string; baseUrl: string; userId: string; syncBuf: string } | null;
   credentialsLoadedAt: number;
-  config: { aiSystemPrompt: string; aiModel: string; aiProvider: string; aiBaseUrl: string; aiApiKey: string; aiMaxTokens: number; aiMaxContextChars: number; aiImageModel: string; aiVideoModel: string; allKeys: string[]; aiMaxRetries: number; responseConfig: any; mcpServers: any[]; newsnowBaseUrl: string; searchBaseUrl: string; searchToken: string; webhook: { enabled: boolean; url: string; title: string; apiKey: string; channels: string[] } } | null;
+  config: { aiSystemPrompt: string; aiModel: string; aiProvider: string; aiBaseUrl: string; aiApiKey: string; aiMaxTokens: number; aiMaxContextChars: number; aiImageModel: string; aiVideoModel: string; allKeys: string[]; aiMaxRetries: number; responseConfig: any; mcpServers: any[]; newsnowBaseUrl: string; searchBaseUrl: string; searchToken: string; allowlist: string; webhook: { enabled: boolean; url: string; title: string; apiKey: string; channels: string[] } } | null;
   configLoadedAt: number;
 }
 
@@ -799,7 +799,7 @@ export class ILinkConnectionDO implements DurableObject {
       const { loadAllMCPServers } = await import("../services/mcp");
       mcpServers = (await loadAllMCPServers(this.env.DB)).filter((s: any) => s.enabled);
     } catch (_e) {}
-    const cfg = { aiSystemPrompt, aiModel, aiProvider, aiBaseUrl, aiApiKey, aiMaxTokens, aiMaxContextChars, aiImageModel, aiVideoModel, allKeys, aiMaxRetries, responseConfig, aiCustomProviders: (kvConfig.aiCustomProviders as any[]) || [], mcpServers, newsnowBaseUrl, searchBaseUrl, searchToken, webhook: { enabled: webhookEnabled, url: webhookUrl, title: webhookTitle, apiKey: webhookApiKey, channels: webhookChannels } };
+    const cfg = { aiSystemPrompt, aiModel, aiProvider, aiBaseUrl, aiApiKey, aiMaxTokens, aiMaxContextChars, aiImageModel, aiVideoModel, allKeys, aiMaxRetries, responseConfig, aiCustomProviders: (kvConfig.aiCustomProviders as any[]) || [], mcpServers, newsnowBaseUrl, searchBaseUrl, searchToken, allowlist: (kvConfig.allowlist as string) || "", webhook: { enabled: webhookEnabled, url: webhookUrl, title: webhookTitle, apiKey: webhookApiKey, channels: webhookChannels } };
     this.cache.config = cfg;
     this.cache.configLoadedAt = now;
     return cfg;
@@ -826,6 +826,17 @@ export class ILinkConnectionDO implements DurableObject {
       let text = extractMessageText(msg);
       const from = msg.from_user_id;
       const ctxToken = msg.context_token;
+
+      // 白名单检查：如果配置了 allowlist，只允许指定用户使用 AI 对话
+      const allowlist = cfg.allowlist || "";
+      if (allowlist && from) {
+        const allowed = allowlist.split(",").map((s: string) => s.trim()).filter(Boolean);
+        if (allowed.length > 0 && !allowed.includes(from)) {
+          Logger.info(`[DO] Blocked message from non-allowlisted user: ${from}`);
+          await this.markMessageProcessed(`${useCreds?.accountId || "default"}:${this.generateMessageId(msg, text || "")}`);
+          return;
+        }
+      }
 
       // 缓存消息 ID → 内容（供引用消息查询）
       const msgId = msg.message_id || msg.seq || 0;
