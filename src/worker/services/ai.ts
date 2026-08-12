@@ -454,22 +454,23 @@ function executeBuiltinTool(toolCall: { id: string; function: { name: string; ar
 }
 
 // 获取中文新闻：调用用户部署的 NewsNow 实例
+// NewsNow API: GET /api/s?id=<source>，source 如 weibo/zhihu/baidu/toutiao/thepaper/36kr/ithome/bilibili/tencent/ifeng/sspai/juejin/douyin/hupu
 async function executeNewsNow(source: string, baseUrl?: string): Promise<string> {
   const base = (baseUrl || "").trim().replace(/\/+$/, "");
   if (!base) return "新闻服务未配置（NEWS_NOW_BASE_URL 未设置）";
   try {
     const sources = (source || "").trim();
     const url = sources
-      ? `${base}/api/ss?source=${encodeURIComponent(sources)}`
-      : `${base}/api/ss`;
+      ? `${base}/api/s?id=${encodeURIComponent(sources)}`
+      : `${base}/api/s?id=zhihu`;
     const resp = await fetch(url, {
       headers: { "Content-Type": "application/json", "Accept": "application/json" },
       signal: AbortSignal.timeout(10000),
     });
     if (!resp.ok) return `新闻获取失败 (HTTP ${resp.status})`;
     const data = await resp.json() as any;
-    // 兼容多种返回结构
-    const items = data?.items || data?.data?.items || data;
+    // NewsNow 返回: { status, id, updatedTime, items: [{title, url, extra}] }
+    const items = data?.items;
     if (Array.isArray(items) && items.length > 0) {
       return items.slice(0, 15).map((it: any, i: number) =>
         `${i + 1}. ${it.title || "无标题"}\n   ${it.url || ""}${it.extra?.info ? `\n   ${it.extra.info}` : ""}`
