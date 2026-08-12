@@ -103,6 +103,13 @@ const BUILTIN_TOOLS = [{
     description: "搜索互联网获取实时信息，从维基百科、技术社区、DuckDuckGo 等多个来源聚合结果。当用户问到新闻、知识、技术问题等需要联网查询的问题时调用",
     parameters: { type: "object", properties: { q: { type: "string", description: "搜索关键词（必填）" } }, required: ["q"] },
   },
+}, {
+  type: "function",
+  function: {
+    name: "get_news",
+    description: "获取中文实时新闻和热点，从微博热搜、知乎热榜、今日头条、澎湃新闻、36氪、IT之家、B站等中文源聚合。当用户问到「今天有什么新闻/热点/热搜」时调用",
+    parameters: { type: "object", properties: { source: { type: "string", description: "新闻源，可选：weibo/zhihu/baidu/toutiao/thepaper/36kr/ithome/bilibili/tencent/ifeng/sspai/juejin/douyin/hupu，留空返回全部热门" } } },
+  },
 }];
 
 // 网页搜索：使用公共 API（Wikipedia、HN 等），这些不会屏蔽 Workers IP
@@ -421,7 +428,7 @@ function stripTags(str: string): string {
   return str.replace(/<[^>]*>/g, "").replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#x27;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").trim();
 }
 
-function executeBuiltinTool(toolCall: { id: string; function: { name: string; arguments: string } }, searchApiKey?: string, searchApiUrl?: string): Promise<MCPToolResult | null> {
+function executeBuiltinTool(toolCall: { id: string; function: { name: string; arguments: string } }, searchApiKey?: string, searchApiUrl?: string, newsnowBaseUrl?: string): Promise<MCPToolResult | null> {
   if (toolCall.function.name === "get_current_datetime") {
     const now = new Date();
     const tz = "Asia/Shanghai";
@@ -438,7 +445,40 @@ function executeBuiltinTool(toolCall: { id: string; function: { name: string; ar
     try { args = JSON.parse(toolCall.function.arguments || "{}"); } catch {}
     return executeWebSearch(args.q || "", searchApiKey, searchApiUrl).then(content => ({ callId: toolCall.id, name: "web_search", content }));
   }
+  if (toolCall.function.name === "get_news") {
+    let args: Record<string, any> = {};
+    try { args = JSON.parse(toolCall.function.arguments || "{}"); } catch {}
+    return executeNewsNow(args.source || "", newsnowBaseUrl).then(content => ({ callId: toolCall.id, name: "get_news", content }));
+  }
   return Promise.resolve(null);
+}
+
+// 获取中文新闻：调用用户部署的 NewsNow 实例
+async function executeNewsNow(source: string, baseUrl?: string): Promise<string> {
+  const base = (baseUrl || "").trim().replace(/\/+$/, "");
+  if (!base) return "新闻服务未配置（NEWS_NOW_BASE_URL 未设置）";
+  try {
+    const sources = (source || "").trim();
+    const url = sources
+      ? `${base}/api/ss?source=${encodeURIComponent(sources)}`
+      : `${base}/api/ss`;
+    const resp = await fetch(url, {
+      headers: { "Content-Type": "application/json", "Accept": "application/json" },
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!resp.ok) return `新闻获取失败 (HTTP ${resp.status})`;
+    const data = await resp.json() as any;
+    // 兼容多种返回结构
+    const items = data?.items || data?.data?.items || data;
+    if (Array.isArray(items) && items.length > 0) {
+      return items.slice(0, 15).map((it: any, i: number) =>
+        `${i + 1}. ${it.title || "无标题"}\n   ${it.url || ""}${it.extra?.info ? `\n   ${it.extra.info}` : ""}`
+      ).join("\n\n");
+    }
+    return "没有获取到新闻";
+  } catch (e: any) {
+    return `新闻获取失败: ${e?.message || String(e)}`;
+  }
 }
 
 // 将工具返回的 JSON 转成自然语言，避免 AI 解析 JSON 时编造数字
@@ -502,6 +542,7 @@ async function callOpenAICompatible(params: {
   maxToolRounds?: number;
   searchApiKey?: string;    // 搜索 API 密钥
   searchApiUrl?: string;    // 搜索 API 地址
+  newsnowBaseUrl?: string;  // NewsNow 部署地址
 }): Promise<{ reply: string; toolResults: string[] }> {
   const url = params.baseUrl.trim().replace(/\/+$/, "");
 
@@ -574,7 +615,7 @@ async function callOpenAICompatible(params: {
     const builtinResults: MCPToolResult[] = [];
     const mcpOnlyCalls: typeof allToolCalls = [];
     for (const tc of allToolCalls) {
-      const builtin = await executeBuiltinTool(tc, params.searchApiKey, params.searchApiUrl);
+      const builtin = await executeBuiltinTool(tc, params.searchApiKey, params.searchApiUrl, params.newsnowBaseUrl);
       if (builtin) {
         builtinResults.push(builtin);
       } else {
@@ -651,6 +692,7 @@ interface AIConfig {
   maxContextChars?: number;  // 模型上下文窗口（字符数），默认 12000
   searchApiKey?: string;     // 搜索 API 密钥（如 Bing Search API），用于可靠联网搜索
   searchApiUrl?: string;     // 搜索 API 地址，默认 https://api.bing.microsoft.com/v7.0/search
+  newsnowBaseUrl?: string;   // NewsNow 部署地址，用于获取中文新闻
   thinking?: boolean;
   mcpServers?: MCPServerConfig[];
   db?: D1Database | null;
@@ -688,6 +730,7 @@ export async function callAIWithContext(
     maxContextChars: aiConfig?.maxContextChars || 12000,
     searchApiKey: aiConfig?.searchApiKey,
     searchApiUrl: aiConfig?.searchApiUrl,
+    newsnowBaseUrl: aiConfig?.newsnowBaseUrl,
     thinking: aiConfig?.thinking || false,
     mcpServers: aiConfig?.mcpServers || [],
     db: aiConfig?.db || null,
@@ -738,6 +781,7 @@ export async function callAIWithContext(
         db: config.db,
         searchApiKey: config.searchApiKey,
         searchApiUrl: config.searchApiUrl,
+        newsnowBaseUrl: config.newsnowBaseUrl,
       });
       reply = result.reply;
       toolResults = result.toolResults;
@@ -789,6 +833,7 @@ export async function callAI(
     maxContextChars: aiConfig?.maxContextChars || 12000,
     searchApiKey: aiConfig?.searchApiKey,
     searchApiUrl: aiConfig?.searchApiUrl,
+    newsnowBaseUrl: aiConfig?.newsnowBaseUrl,
     thinking: aiConfig?.thinking || false,
     mcpServers: aiConfig?.mcpServers || [],
     db: aiConfig?.db || null,
@@ -830,6 +875,7 @@ export async function callAI(
         db: config.db,
         searchApiKey: config.searchApiKey,
         searchApiUrl: config.searchApiUrl,
+        newsnowBaseUrl: config.newsnowBaseUrl,
       });
       text = result.reply;
     } else {

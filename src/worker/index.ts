@@ -29,6 +29,7 @@ export interface Env {
   CF_API_TOKEN?: string;
   SEARCH_API_KEY?: string;   // 可选：搜索 API 密钥（如 Bing Search API，Azure 申请）
   SEARCH_API_URL?: string;   // 可选：搜索 API 地址，默认 https://api.bing.microsoft.com/v7.0/search
+  NEWS_NOW_BASE_URL?: string; // 可选：NewsNow 部署地址，用于获取中文新闻
 }
 
 function detectImageMime(data: Uint8Array): string {
