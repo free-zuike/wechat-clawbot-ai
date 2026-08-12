@@ -1,6 +1,6 @@
 {
   "name": "wechat-clawbot-ai",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "private": true,
   "description": "基于 Cloudflare Workers + Worker AI 的微信个人号机器人（架构参考 bee-swarm）",
   "type": "module",
