@@ -110,6 +110,20 @@ const BUILTIN_TOOLS = [{
     description: "搜索互联网获取实时信息，调用 cloudflare-search 聚合搜索引擎（Google/Brave/DuckDuckGo），返回带标题、描述和链接的搜索结果。当用户需要查询最新信息、知识、网站时调用",
     parameters: { type: "object", properties: { q: { type: "string", description: "搜索关键词（必填）" } }, required: ["q"] },
   },
+}, {
+  type: "function",
+  function: {
+    name: "generate_image",
+    description: "AI 生成图片。当用户说「画/生成/制作一张图片」时调用此工具，根据描述生成图片",
+    parameters: { type: "object", properties: { prompt: { type: "string", description: "图片描述（必填）" }, size: { type: "string", description: "可选：图片尺寸，如 1024x1024" } }, required: ["prompt"] },
+  },
+}, {
+  type: "function",
+  function: {
+    name: "generate_video",
+    description: "AI 生成视频。当用户说「生成视频/制作视频」时调用此工具，根据描述生成视频",
+    parameters: { type: "object", properties: { prompt: { type: "string", description: "视频描述（必填）" } }, required: ["prompt"] },
+  },
 }];
 
 // 网页搜索：调用 cloudflare-search 聚合搜索引擎
@@ -416,7 +430,13 @@ function stripTags(str: string): string {
   return str.replace(/<[^>]*>/g, "").replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#x27;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").trim();
 }
 
-function executeBuiltinTool(toolCall: { id: string; function: { name: string; arguments: string } }, newsnowBaseUrl?: string, searchBaseUrl?: string, searchToken?: string): Promise<MCPToolResult | null> {
+async function executeBuiltinTool(
+  toolCall: { id: string; function: { name: string; arguments: string } },
+  newsnowBaseUrl?: string,
+  searchBaseUrl?: string,
+  searchToken?: string,
+  mediaConfig?: { aiBinding: any; provider: string; model: string; baseUrl: string; apiKey: string; allKeys: string[]; maxRetries: number; responseConfig: any }
+): Promise<MCPToolResult | null> {
   if (toolCall.function.name === "get_current_datetime") {
     const now = new Date();
     const tz = "Asia/Shanghai";
@@ -426,19 +446,42 @@ function executeBuiltinTool(toolCall: { id: string; function: { name: string; ar
     const dateStr = `${get("year")}年${get("month")}月${get("day")}日`;
     const weekdayStr = weekdayMap[get("weekday")] || get("weekday");
     const timeStr = `${get("hour")}:${get("minute")}:${get("second")}`;
-    return Promise.resolve({ callId: toolCall.id, name: "get_current_datetime", content: `当前日期: ${dateStr}（星期${weekdayStr}），当前时间: ${timeStr}（中国时区）` });
+    return { callId: toolCall.id, name: "get_current_datetime", content: `当前日期: ${dateStr}（星期${weekdayStr}），当前时间: ${timeStr}（中国时区）` };
   }
   if (toolCall.function.name === "web_search") {
     let args: Record<string, any> = {};
     try { args = JSON.parse(toolCall.function.arguments || "{}"); } catch {}
-    return executeWebSearch(args.q || "", searchBaseUrl, searchToken).then(content => ({ callId: toolCall.id, name: "web_search", content }));
+    const content = await executeWebSearch(args.q || "", searchBaseUrl, searchToken);
+    return { callId: toolCall.id, name: "web_search", content };
   }
   if (toolCall.function.name === "get_news") {
     let args: Record<string, any> = {};
     try { args = JSON.parse(toolCall.function.arguments || "{}"); } catch {}
-    return executeNewsNow(args.source || "", newsnowBaseUrl).then(content => ({ callId: toolCall.id, name: "get_news", content }));
+    const content = await executeNewsNow(args.source || "", newsnowBaseUrl);
+    return { callId: toolCall.id, name: "get_news", content };
   }
-  return Promise.resolve(null);
+  if (toolCall.function.name === "generate_image") {
+    let args: Record<string, any> = {};
+    try { args = JSON.parse(toolCall.function.arguments || "{}"); } catch {}
+    if (!mediaConfig?.aiBinding) return { callId: toolCall.id, name: "generate_image", content: "图片生成服务未配置", isError: true };
+    const result = await generateImage(mediaConfig.aiBinding, args.prompt || "", mediaConfig.model, mediaConfig.provider, mediaConfig.baseUrl, mediaConfig.apiKey, undefined, args.size, mediaConfig.allKeys, mediaConfig.maxRetries, undefined, mediaConfig.responseConfig);
+    if (result.data) {
+      const dataStr = typeof result.data === "string" ? result.data : `[图片数据 ${result.data.length} 字节]`;
+      return { callId: toolCall.id, name: "generate_image", content: `✅ 图片已生成\n${dataStr.slice(0, 500)}` };
+    }
+    return { callId: toolCall.id, name: "generate_image", content: "图片生成失败", isError: true };
+  }
+  if (toolCall.function.name === "generate_video") {
+    let args: Record<string, any> = {};
+    try { args = JSON.parse(toolCall.function.arguments || "{}"); } catch {}
+    if (!mediaConfig?.aiBinding) return { callId: toolCall.id, name: "generate_video", content: "视频生成服务未配置", isError: true };
+    const result = await submitVideoTask(mediaConfig.aiBinding, args.prompt || "", mediaConfig.model, mediaConfig.provider, mediaConfig.baseUrl, mediaConfig.apiKey, undefined, undefined, undefined);
+    if (result) {
+      return { callId: toolCall.id, name: "generate_video", content: result.url ? `✅ 视频已生成: ${result.url}` : `✅ 视频任务已提交: ${result.taskId}` };
+    }
+    return { callId: toolCall.id, name: "generate_video", content: "视频生成失败", isError: true };
+  }
+  return null;
 }
 
 // 获取中文新闻：调用 NewsNow 实例（默认公共实例，失败时回退 HN）
@@ -561,14 +604,23 @@ async function callOpenAICompatible(params: {
   maxTokens: number;
   temperature?: number;
   thinking?: boolean;
-  tools?: any[];            // MCP 工具定义（OpenAI 格式）
+  tools?: any[];
   mcpServers?: MCPServerConfig[];
   mcpTools?: MCPToolDefinition[];
   db?: D1Database | null;
   maxToolRounds?: number;
-  newsnowBaseUrl?: string;  // NewsNow 部署地址
-  searchBaseUrl?: string;   // cloudflare-search 部署地址
-  searchToken?: string;     // cloudflare-search Token
+  newsnowBaseUrl?: string;
+  searchBaseUrl?: string;
+  searchToken?: string;
+  // 媒体生成配置（供 generate_image / generate_video 内置工具使用）
+  aiBinding?: any;
+  mediaProvider?: string;
+  mediaModel?: string;
+  mediaBaseUrl?: string;
+  mediaApiKey?: string;
+  mediaAllKeys?: string[];
+  mediaMaxRetries?: number;
+  mediaResponseConfig?: any;
 }): Promise<{ reply: string; toolResults: string[] }> {
   const url = params.baseUrl.trim().replace(/\/+$/, "");
 
@@ -641,7 +693,16 @@ async function callOpenAICompatible(params: {
     const builtinResults: MCPToolResult[] = [];
     const mcpOnlyCalls: typeof allToolCalls = [];
     for (const tc of allToolCalls) {
-      const builtin = await executeBuiltinTool(tc, params.newsnowBaseUrl, params.searchBaseUrl, params.searchToken);
+      const builtin = await executeBuiltinTool(tc, params.newsnowBaseUrl, params.searchBaseUrl, params.searchToken, {
+      aiBinding: params.aiBinding,
+      provider: params.mediaProvider || "",
+      model: params.mediaModel || "",
+      baseUrl: params.mediaBaseUrl || "",
+      apiKey: params.mediaApiKey || "",
+      allKeys: params.mediaAllKeys || [],
+      maxRetries: params.mediaMaxRetries ?? 2,
+      responseConfig: params.mediaResponseConfig,
+    });
       if (builtin) {
         builtinResults.push(builtin);
       } else {
@@ -715,13 +776,22 @@ interface AIConfig {
   baseUrl: string;
   apiKey: string;
   maxTokens: number;
-  maxContextChars?: number;  // 模型上下文窗口（字符数），默认 12000
-  newsnowBaseUrl?: string;   // NewsNow 部署地址，用于获取中文新闻
-  searchBaseUrl?: string;    // cloudflare-search 部署地址，用于网页搜索
-  searchToken?: string;      // cloudflare-search Token
+  maxContextChars?: number;
+  newsnowBaseUrl?: string;
+  searchBaseUrl?: string;
+  searchToken?: string;
   thinking?: boolean;
   mcpServers?: MCPServerConfig[];
   db?: D1Database | null;
+  // 媒体生成配置
+  aiBinding?: any;
+  mediaProvider?: string;
+  mediaModel?: string;
+  mediaBaseUrl?: string;
+  mediaApiKey?: string;
+  mediaAllKeys?: string[];
+  mediaMaxRetries?: number;
+  mediaResponseConfig?: any;
 }
 
 // ========== 带上下文的 AI 调用（微信消息处理）==========
@@ -760,6 +830,14 @@ export async function callAIWithContext(
     thinking: aiConfig?.thinking || false,
     mcpServers: aiConfig?.mcpServers || [],
     db: aiConfig?.db || null,
+    aiBinding: aiBinding,
+    mediaProvider: aiConfig?.mediaProvider,
+    mediaModel: aiConfig?.mediaModel,
+    mediaBaseUrl: aiConfig?.mediaBaseUrl,
+    mediaApiKey: aiConfig?.mediaApiKey,
+    mediaAllKeys: aiConfig?.mediaAllKeys,
+    mediaMaxRetries: aiConfig?.mediaMaxRetries,
+    mediaResponseConfig: aiConfig?.mediaResponseConfig,
   };
 
   if (config.provider !== "cloudflare" && !config.model) {
@@ -808,6 +886,14 @@ export async function callAIWithContext(
         newsnowBaseUrl: config.newsnowBaseUrl,
         searchBaseUrl: config.searchBaseUrl,
         searchToken: config.searchToken,
+        aiBinding: config.aiBinding,
+        mediaProvider: config.mediaProvider,
+        mediaModel: config.mediaModel,
+        mediaBaseUrl: config.mediaBaseUrl,
+        mediaApiKey: config.mediaApiKey,
+        mediaAllKeys: config.mediaAllKeys,
+        mediaMaxRetries: config.mediaMaxRetries,
+        mediaResponseConfig: config.mediaResponseConfig,
       });
       reply = result.reply;
       toolResults = result.toolResults;
@@ -867,6 +953,14 @@ export async function callAI(
     thinking: aiConfig?.thinking || false,
     mcpServers: aiConfig?.mcpServers || [],
     db: aiConfig?.db || null,
+    aiBinding: aiBinding,
+    mediaProvider: aiConfig?.mediaProvider,
+    mediaModel: aiConfig?.mediaModel,
+    mediaBaseUrl: aiConfig?.mediaBaseUrl,
+    mediaApiKey: aiConfig?.mediaApiKey,
+    mediaAllKeys: aiConfig?.mediaAllKeys,
+    mediaMaxRetries: aiConfig?.mediaMaxRetries,
+    mediaResponseConfig: aiConfig?.mediaResponseConfig,
   };
 
   if (config.provider !== "cloudflare" && !config.model) {
@@ -906,6 +1000,14 @@ export async function callAI(
         newsnowBaseUrl: config.newsnowBaseUrl,
         searchBaseUrl: config.searchBaseUrl,
         searchToken: config.searchToken,
+        aiBinding: config.aiBinding,
+        mediaProvider: config.mediaProvider,
+        mediaModel: config.mediaModel,
+        mediaBaseUrl: config.mediaBaseUrl,
+        mediaApiKey: config.mediaApiKey,
+        mediaAllKeys: config.mediaAllKeys,
+        mediaMaxRetries: config.mediaMaxRetries,
+        mediaResponseConfig: config.mediaResponseConfig,
       });
       text = result.reply;
     } else {

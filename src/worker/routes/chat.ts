@@ -198,6 +198,14 @@ export async function handleChat(request: Request, env: Env): Promise<Response> 
       thinking: aiConfig.thinking,
       mcpServers,
       db: env.DB,
+      aiBinding: env.AI,
+      mediaProvider: aiConfig.provider,
+      mediaModel: aiConfig.model,
+      mediaBaseUrl: aiConfig.baseUrl,
+      mediaApiKey: aiConfig.apiKey,
+      mediaAllKeys: aiConfig.allKeys,
+      mediaMaxRetries: aiConfig.maxRetries,
+      mediaResponseConfig: aiConfig.responseConfig,
     });
 
     Logger.info(`[chat][${requestId}] reply`, { length: reply.length });
