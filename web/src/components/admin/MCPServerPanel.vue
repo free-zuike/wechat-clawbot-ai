@@ -2,7 +2,10 @@
   <div class="card">
     <div class="section-header">
       <h2>🔌 MCP Server 管理</h2>
-      <button class="btn secondary" :disabled="loading" @click="loadServers">🔄 刷新</button>
+      <div class="header-actions">
+        <button class="btn secondary" :disabled="loading" @click="loadServers">🔄 刷新</button>
+        <button class="btn" @click="showForm(null)">+ 添加 MCP Server</button>
+      </div>
     </div>
     <div class="desc">配置 MCP (Model Context Protocol) 服务器，AI 可在对话中调用其提供的工具</div>
 
@@ -17,6 +20,7 @@
           {{ s.enabled ? '已启用' : '已禁用' }}
         </span>
         <div class="server-actions">
+          <button class="btn tiny secondary" title="获取工具" @click="refreshTools(s.id)">🔄</button>
           <button class="btn tiny secondary" @click="editServer(s)">✏️</button>
           <button class="btn tiny danger" @click="deleteServer(s.id)">🗑️</button>
         </div>
@@ -24,7 +28,6 @@
       <div class="server-url">{{ s.url }}</div>
       <div class="server-tools">
         <span class="tool-count">{{ (s.tools || []).length }} 个工具</span>
-        <button v-if="s.enabled" class="btn tiny secondary" @click="refreshTools(s.id)">🔄 获取工具</button>
       </div>
       <div v-if="s.tools && s.tools.length > 0" class="tool-list">
         <div v-for="t in s.tools" :key="t.name" class="tool-item">
@@ -33,9 +36,6 @@
         </div>
       </div>
     </div>
-
-    <!-- 添加按钮 -->
-    <button class="btn secondary" style="margin-top: 12px" @click="showForm(null)">+ 添加 MCP Server</button>
 
     <!-- 编辑/新增表单弹窗 -->
     <Teleport to="body">
@@ -182,6 +182,7 @@ onMounted(() => {
 
 <style scoped>
 .section-header { display: flex; justify-content: space-between; align-items: center; }
+.section-header .header-actions { display: flex; gap: 8px; }
 .section-header h2 { margin: 0; }
 .mcp-server-item { border: 1px solid var(--border-light); border-radius: 8px; padding: 12px; margin-top: 10px; background: var(--bg-card); }
 .server-header { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
