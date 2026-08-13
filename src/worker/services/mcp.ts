@@ -1240,7 +1240,10 @@ async function initializeSession(db: D1Database, server: MCPServerConfig): Promi
 // 确保旧版会话有效，若无效则重新初始化
 async function ensureLegacySession(db: D1Database, server: MCPServerConfig): Promise<boolean> {
   const session = await loadSession(db, server.id);
-  if (session) return true; // 已有有效会话
+  // 有真实会话（sessionId 非空）→ 可用
+  if (session?.sessionId) return true;
+  // 有 stateless 标记（session 存在但 sessionId 为空）→ 不可用，走 stateless
+  if (session && !session.sessionId) return false;
 
   try {
     await initializeSession(db, server);
