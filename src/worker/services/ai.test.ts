@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseApiUrl, formatToolContent, extractImageSize } from "./ai";
+import { parseApiUrl, formatToolContent, extractImageSize, isVagueFollowUp } from "./ai";
 
 describe("parseApiUrl", () => {
   it("should parse standard OpenAI URL", () => {
@@ -58,6 +58,60 @@ describe("formatToolContent", () => {
   it("should handle invalid JSON gracefully", () => {
     const result = formatToolContent("{invalid json}");
     expect(result).toBe("{invalid json}");
+  });
+});
+
+describe("isVagueFollowUp", () => {
+  it("should detect '列出来' as vague follow-up", () => {
+    expect(isVagueFollowUp("给我列出来")).toBe(true);
+  });
+
+  it("should detect '是哪一条' as vague follow-up", () => {
+    expect(isVagueFollowUp("是哪一条")).toBe(true);
+  });
+
+  it("should detect '我需要详细记录' as vague follow-up (contains 详细)", () => {
+    expect(isVagueFollowUp("我需要详细记录")).toBe(true);
+  });
+
+  it("should detect '具体点' / '展开说说' as vague follow-up", () => {
+    expect(isVagueFollowUp("具体点")).toBe(true);
+    expect(isVagueFollowUp("展开说说")).toBe(true);
+  });
+
+  it("should detect '还有呢' / '然后呢' as vague follow-up", () => {
+    expect(isVagueFollowUp("还有呢")).toBe(true);
+    expect(isVagueFollowUp("然后呢")).toBe(true);
+  });
+
+  it("should detect '第一条' as vague follow-up", () => {
+    expect(isVagueFollowUp("第一条")).toBe(true);
+  });
+
+  it("should detect any ordinal like 第四条 / 第12条 / 第二条", () => {
+    expect(isVagueFollowUp("第四条")).toBe(true);
+    expect(isVagueFollowUp("第12条")).toBe(true);
+    expect(isVagueFollowUp("第二条")).toBe(true);
+    expect(isVagueFollowUp("第100个")).toBe(true);
+  });
+
+  it("should NOT treat long/complex questions as vague follow-up", () => {
+    expect(isVagueFollowUp("今天天气怎么样，我需要知道明天要不要带伞")).toBe(false);
+  });
+
+  it("should NOT treat standalone nouns as vague follow-up", () => {
+    expect(isVagueFollowUp("天气")).toBe(false);
+    expect(isVagueFollowUp("余额")).toBe(false);
+  });
+
+  it("should NOT treat clear full questions as vague follow-up", () => {
+    expect(isVagueFollowUp("过去30天有哪些推送失败的")).toBe(false);
+    expect(isVagueFollowUp("这个月有多少失败的推送记录")).toBe(false);
+  });
+
+  it("should handle empty and whitespace input", () => {
+    expect(isVagueFollowUp("")).toBe(false);
+    expect(isVagueFollowUp("   ")).toBe(false);
   });
 });
 

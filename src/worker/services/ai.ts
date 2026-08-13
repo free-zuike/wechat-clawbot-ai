@@ -78,6 +78,22 @@ export function tryQuickReply(text: string): string | null {
   return null;
 }
 
+// 检测模糊回指：用户用简短短语指代上一条回复中的内容
+// 如"列出来"、"展开说说"、"是哪一条"等，不依赖 AI 模型理解上下文
+export function isVagueFollowUp(text: string): boolean {
+  const clean = text.trim().toLowerCase();
+  if (clean.length > 20) return false;
+  const vaguePatterns = [
+    "列出来", "列一下", "列", "展开", "具体", "详细", "说说",
+    "是哪", "哪个", "哪条", "这条", "那个", "上一条", "还有呢", "然后呢",
+    "继续", "接着", "所以", "什么意思", "为什么",
+    "给我看", "看看", "看看详情", "具体内容",
+  ];
+  if (vaguePatterns.some(p => clean.includes(p))) return true;
+  // 通用序数回指：第X条/第X个（X 为数字或中文数字）
+  return /第[一二三四五六七八九十百\d]+[条个]/.test(clean);
+}
+
 // ========== OpenAI 兼容 API 调用 ==========
 
 // 获取当前日期时间字符串（中国时区 Asia/Shanghai），通用辅助函数
@@ -846,12 +862,24 @@ export async function callAIWithContext(
   const system = systemPrompt || DEFAULT_SYSTEM_PROMPT;
   const context = db ? await getContextFromD1(db, userId) : await getContextFromSQLite(storage, userId);
 
+  // 检测模糊回指：用户说"列出来"/"是哪一条"等短句时，自动注入上一条回复的上下文
+  // 避免 AI 模型无法关联前文，比在 system prompt 里列关键词更可靠
+  let augmentedMsg = cleanMsg;
+  if (isVagueFollowUp(cleanMsg)) {
+    const lastAssistant = [...context.messages].reverse().find(m => m.role === "assistant");
+    if (lastAssistant) {
+      const topic = lastAssistant.content.replace(/\n+/g, " ").slice(0, 150);
+      augmentedMsg = `[上一条回复提到: ${topic}]\n用户接着说: ${cleanMsg}`;
+      Logger.info(`[ai] Augmented follow-up for ${userId}`, { original: cleanMsg, augmented: augmentedMsg.slice(0, 200) });
+    }
+  }
+
   // 注入当前日期（通用，不针对特定 MCP），让 AI 正确换算"今天/上个月/本月"等相对时间
   const messages = buildMessagesWithContext(
     `当前时间: ${getCurrentTimeStr()}。当用户提到"今天/昨天/明天/上个月/本月/下周/几点"等相对时间时，基于以上时间准确换算。当用户问到新闻、时事、热点时，调用 get_news 工具获取中文新闻。\n` +
-    `当用户先让你列出某类数据（如新闻、记录、清单），然后说"第X条/第一条/详情"时，必须直接从你刚才列出的列表内容中回答对应条目，不要调用任何工具。只有当你没有列出过该列表、且结果中确实没有详情时，才调用对应服务的详情工具获取。\n\n` +
+    `注意对话连续性：用户可能会用简短回复（如"列出来"、"展开说说"、"是哪一条"、"具体点"等）来指代上一条回复中提到的内容，你需要根据对话历史理解上下文，不要当成一个独立的新问题。如果用户说"列出来"而上一轮你提到了某类数据，就直接列出那些数据。\n\n` +
     system,
-    cleanMsg,
+    augmentedMsg,
     context,
     config.maxContextChars
   );
@@ -987,7 +1015,7 @@ export async function callAI(
         apiKey: config.apiKey,
         model: config.model,
         messages: [
-          { role: "system", content: `当前时间: ${getCurrentTimeStr()}。当用户提到"今天/昨天/明天/上个月/本月/下周/几点"等相对时间时，基于以上时间准确换算。当用户问到新闻、时事、热点时，调用 get_news 工具获取中文新闻。\n当用户先让你列出某类数据（如新闻、记录、清单），然后说"第X条/第一条/详情"时，必须直接从你刚才列出的列表内容中回答对应条目，不要调用任何工具。只有当你没有列出过该列表、且结果中确实没有详情时，才调用对应服务的详情工具获取。\n\n${system}` },
+          { role: "system", content: `当前时间: ${getCurrentTimeStr()}。当用户提到"今天/昨天/明天/上个月/本月/下周/几点"等相对时间时，基于以上时间准确换算。当用户问到新闻、时事、热点时，调用 get_news 工具获取中文新闻。\n注意对话连续性：用户可能会用简短回复（如"列出来"、"展开说说"、"是哪一条"、"具体点"等）来指代上一条回复中提到的内容，你需要根据对话历史理解上下文，不要当成一个独立的新问题。如果用户说"列出来"而上一轮你提到了某类数据，就直接列出那些数据。\n\n${system}` },
           { role: "user", content: cleanMsg },
         ],
         maxTokens: config.maxTokens,
@@ -1011,7 +1039,7 @@ export async function callAI(
       text = result.reply;
     } else {
       text = await callCloudflareAI(aiBinding, config.model, [
-        { role: "system", content: `当前时间: ${getCurrentTimeStr()}。当用户提到"今天/昨天/明天/上个月/本月/下周/几点"等相对时间时，基于以上时间准确换算。当用户问到新闻、时事、热点时，调用 get_news 工具获取中文新闻。\n当用户先让你列出某类数据（如新闻、记录、清单），然后说"第X条/第一条/详情"时，必须直接从你刚才列出的列表内容中回答对应条目，不要调用任何工具。只有当你没有列出过该列表、且结果中确实没有详情时，才调用对应服务的详情工具获取。\n\n${system}` },
+        { role: "system", content: `当前时间: ${getCurrentTimeStr()}。当用户提到"今天/昨天/明天/上个月/本月/下周/几点"等相对时间时，基于以上时间准确换算。当用户问到新闻、时事、热点时，调用 get_news 工具获取中文新闻。\n注意对话连续性：用户可能会用简短回复（如"列出来"、"展开说说"、"是哪一条"、"具体点"等）来指代上一条回复中提到的内容，你需要根据对话历史理解上下文，不要当成一个独立的新问题。如果用户说"列出来"而上一轮你提到了某类数据，就直接列出那些数据。\n\n${system}` },
         { role: "user", content: cleanMsg },
       ], config.maxTokens);
     }
