@@ -41,6 +41,7 @@ type Preset = {
   apiKeys?: string[];
   maxTokens?: number;
   maxContextChars?: number;
+  thinking?: boolean;
   responseConfig?: Record<string, any>;
 };
 

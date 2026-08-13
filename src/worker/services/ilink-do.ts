@@ -46,6 +46,8 @@ interface RuntimeCache {
 }
 
 export class ILinkConnectionDO implements DurableObject {
+  // RPC 品牌标记：满足 DurableObjectNamespace<T> 的 DurableObjectBranded 约束
+  declare readonly ["__DURABLE_OBJECT_BRAND"]: never;
   private doState: DurableObjectState;
   private state: ILINKSessionState;
   private env: any;

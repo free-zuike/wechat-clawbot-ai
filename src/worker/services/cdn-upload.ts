@@ -387,10 +387,12 @@ export async function uploadFileSimple(
 ): Promise<void> {
   Logger.info("[iLink] Simple upload", { url: uploadUrl.substring(0, 80), size: fileData.byteLength, contentType });
   
+  // TS 5.9: Uint8Array 默认是 Uint8Array<ArrayBufferLike>，与 BodyInit 不兼容，显式归一化
+  const body = fileData instanceof Uint8Array ? fileData.buffer as ArrayBuffer : fileData;
   const resp = await fetch(uploadUrl, {
     method: "PUT",
     headers: { "Content-Type": contentType },
-    body: fileData,
+    body,
     signal: AbortSignal.timeout(DEFAULT_UPLOAD_MS),
   });
   
