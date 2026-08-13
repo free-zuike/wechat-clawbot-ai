@@ -348,6 +348,21 @@ function confirmRename() {
   renameTarget.value = null;
 }
 
+function addProvider() {
+  if (!newName.value.trim()) return;
+  const id = `custom_${Date.now().toString(36)}`;
+  (props.config.aiCustomProviders || []).push({
+    id,
+    name: newName.value.trim(),
+    icon: newIcon.value,
+  });
+  selectProvider(id);
+  showAddModal.value = false;
+  newName.value = "";
+  newIcon.value = "🤖";
+  emit("save");
+}
+
 function handleSave() {
   syncCurrentToPreset();
   emit("save");

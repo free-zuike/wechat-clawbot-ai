@@ -394,9 +394,12 @@ async function handleLoadConfig() {
     config.aiCustomProviders = d.aiCustomProviders || [];
     config.aiPresets = d.aiPresets || [];
     if (config.aiCustomProviders.length === 0 && config.aiPresets.length > 0) {
-      config.aiCustomProviders = config.aiPresets.map((p: any) => ({
-        id: p.id, name: p.name || p.id.replace("custom_", "提供商 "), icon: "🤖",
-      }));
+      // 旧数据迁移：只转换非 cloudflare 的 preset 为自定义提供商
+      config.aiCustomProviders = config.aiPresets
+        .filter((p: any) => p.id !== "cloudflare")
+        .map((p: any) => ({
+          id: p.id, name: p.name || p.id.replace("custom_", "提供商 "), icon: "🤖",
+        }));
     }
     configResult.value = d.hasEnvOverride ? "✅ 已加载当前配置（注意：当前有环境变量覆盖）" : "✅ 已加载当前配置";
   } catch (e: any) { if (e instanceof ApiError && e.isCancelled) return; configResult.value = "❌ 加载失败: " + handleApiError(e, "加载失败"); }
