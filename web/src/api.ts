@@ -451,6 +451,8 @@ export async function saveMCPServer(data: {
   toolPrefix?: string;
   oauthClientId?: string;
   oauthClientSecret?: string;
+  oauthToken?: string;
+  oauthAuthorizer?: string;
 }): Promise<{ ok: boolean; serverId: string; server: MCPServer }> {
   return apiFetch("/api/mcp", {
     method: "POST",

@@ -30,6 +30,7 @@ describe("buildMeta", () => {
       tools: {},
       resources: {},
       prompts: {},
+      extensions: { "io.modelcontextprotocol/tasks": {} },
     });
   });
 

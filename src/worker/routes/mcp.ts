@@ -65,7 +65,7 @@ export async function handleMCP(request: Request, env: Env): Promise<Response> {
       return json({ error: "INVALID_JSON", message: "无效的 JSON" }, 400);
     }
 
-    const { id, name, url: serverUrl, apiKey, enabled, toolPrefix, oauthClientId, oauthClientSecret } = body;
+    const { id, name, url: serverUrl, apiKey, enabled, toolPrefix, oauthClientId, oauthClientSecret, oauthToken, oauthAuthorizer } = body;
     if (!name || !serverUrl) {
       return json({ error: "VALIDATION_ERROR", message: "名称和 URL 为必填" }, 400);
     }
@@ -90,21 +90,24 @@ export async function handleMCP(request: Request, env: Env): Promise<Response> {
       promptsFetchedAt: existing?.promptsFetchedAt,
       oauthClientId: oauthClientId || existing?.oauthClientId,
       oauthClientSecret: oauthClientSecret || existing?.oauthClientSecret,
-      oauthToken: existing?.oauthToken,
+      oauthToken: oauthToken || existing?.oauthToken,
       oauthTokenExpiresAt: existing?.oauthTokenExpiresAt,
-      oauthAuthorizer: existing?.oauthAuthorizer,
+      oauthAuthorizer: oauthAuthorizer || existing?.oauthAuthorizer,
     };
 
     // 只保存这一个 server（逐条 upsert，不涉及其他 server）
     try {
       await saveMCPServers(env.DB, [server]);
       // 单独保存 OAuth 配置（saveMCPServers 的 SQL 未包含 OAuth 列）
-      if (oauthClientId || oauthClientSecret || existing?.oauthClientId) {
+      if (oauthClientId || oauthClientSecret || oauthToken || oauthAuthorizer || existing?.oauthClientId) {
         await env.DB.prepare(
-          `UPDATE mcp_servers SET oauth_client_id = ?, oauth_client_secret = ?, updated_at = ? WHERE id = ?`
+          `UPDATE mcp_servers SET oauth_client_id = ?, oauth_client_secret = ?, oauth_token = ?, oauth_token_expires_at = ?, oauth_authorizer = ?, updated_at = ? WHERE id = ?`
         ).bind(
           server.oauthClientId || null,
           server.oauthClientSecret || null,
+          server.oauthToken || null,
+          server.oauthTokenExpiresAt || null,
+          server.oauthAuthorizer || null,
           new Date().toISOString(),
           serverId
         ).run().catch(() => {});

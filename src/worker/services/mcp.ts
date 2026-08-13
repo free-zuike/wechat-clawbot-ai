@@ -94,6 +94,9 @@ export function buildMeta(): Record<string, any> {
       tools: {},
       resources: {},
       prompts: {},
+      extensions: {
+        "io.modelcontextprotocol/tasks": {},
+      },
     },
     "io.modelcontextprotocol/clientInfo": CLIENT_INFO,
   };
@@ -1005,7 +1008,7 @@ async function executeToolCall(
         isError: true,
       };
     }
-    return formatToolResult(toolCall, result);
+    return await formatToolResult(toolCall, result, server);
   }
 
   // 旧版：确保会话 → tools/call
@@ -1033,24 +1036,71 @@ async function executeToolCall(
     };
   }
 
-  return formatToolResult(toolCall, result);
+  return await formatToolResult(toolCall, result, server);
 }
 
 // 统一格式化工具结果（兼容 2026-07-28 的 resultType/content 结构和旧版结构）
-function formatToolResult(toolCall: MCPToolCall, result?: any): MCPToolResult {
+async function formatToolResult(toolCall: MCPToolCall, result?: any, server?: MCPServerConfig): Promise<MCPToolResult> {
+  // 处理 Tasks 扩展：服务器返回了异步任务，需要轮询
+  if (result?.resultType === "task" && result?.taskId) {
+    return pollTask(server, toolCall, result);
+  }
   const content = result?.content || [];
   if (Array.isArray(content)) {
     const textParts = content
       .filter((c: any) => c.type === "text")
       .map((c: any) => c.text || "");
-    // 处理 structured 类型（2026-07-28 新增的结构化输出）
     const structuredParts = content
       .filter((c: any) => c.type === "structured")
       .map((c: any) => JSON.stringify(c.structured || c));
     const text = [...textParts, ...structuredParts].join("\n") || JSON.stringify(content);
-    // 检查是否有 isError 标记
     const isError = content.some((c: any) => c.type === "error");
     return { callId: toolCall.callId, name: toolCall.name, content: text, isError: isError || undefined };
+  }
+  return { callId: toolCall.callId, name: toolCall.name, content: JSON.stringify(result) };
+}
+
+// 轮询 Tasks 扩展的异步任务
+async function pollTask(server: MCPServerConfig | undefined, toolCall: MCPToolCall, taskResult: any): Promise<MCPToolResult> {
+  if (!server) return { callId: toolCall.callId, name: toolCall.name, content: "任务轮询缺少服务器配置", isError: true };
+  const taskId = taskResult.taskId;
+  const pollInterval = taskResult.pollIntervalMs || 1000;
+  const maxPolls = 60;
+
+  for (let i = 0; i < maxPolls; i++) {
+    await new Promise(r => setTimeout(r, pollInterval));
+    try {
+      const { result, error } = await mcpRequest(
+        null as any, // 任务轮询不依赖会话
+        { ...server, era: "modern" },
+        "tasks/get", { taskId }
+      );
+      if (error) return { callId: toolCall.callId, name: toolCall.name, content: `任务查询失败: ${JSON.stringify(error)}`, isError: true };
+      const status = result?.status || result?.meta?.status;
+      if (status === "completed") {
+        return formatResultSimple(toolCall, result?.result || result);
+      }
+      if (status === "failed") {
+        return { callId: toolCall.callId, name: toolCall.name, content: `任务失败: ${JSON.stringify(result?.error || result)}`, isError: true };
+      }
+      if (status === "cancelled") {
+        return { callId: toolCall.callId, name: toolCall.name, content: "任务已取消", isError: true };
+      }
+      if (status === "input_required") {
+        return { callId: toolCall.callId, name: toolCall.name, content: `任务需要额外输入: ${JSON.stringify(result?.inputRequests || result)}`, isError: true };
+      }
+    } catch {
+      return { callId: toolCall.callId, name: toolCall.name, content: "任务轮询异常", isError: true };
+    }
+  }
+  return { callId: toolCall.callId, name: toolCall.name, content: "任务超时", isError: true };
+}
+
+function formatResultSimple(toolCall: MCPToolCall, result?: any): MCPToolResult {
+  const content = result?.content || [];
+  if (Array.isArray(content)) {
+    const text = content.filter((c: any) => c.type === "text").map((c: any) => c.text || "").join("\n") || JSON.stringify(content);
+    return { callId: toolCall.callId, name: toolCall.name, content: text };
   }
   return { callId: toolCall.callId, name: toolCall.name, content: JSON.stringify(result) };
 }

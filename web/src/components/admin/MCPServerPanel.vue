@@ -53,6 +53,10 @@
             <div class="field"><label>工具前缀</label><input v-model="form.toolPrefix" class="input" placeholder="默认：mcp_服务ID" /><div class="field-hint">工具名称前缀，避免名称冲突。留空自动生成</div></div>
             <div class="field"><label>OAuth Client ID（可选）</label><input v-model="form.oauthClientId" class="input" placeholder="可选" /><div class="field-hint">MCP 服务器指定 OAuth 认证时填写</div></div>
             <div class="field"><label>OAuth Client Secret（可选）</label><input v-model="form.oauthClientSecret" class="input" type="password" placeholder="可选" /></div>
+            <div v-if="editingId && (form.oauthAuthorizer || form.oauthToken)" class="oauth-section">
+              <div class="field"><label>OAuth Authorization URL</label><input v-model="form.oauthAuthorizer" class="input" placeholder="自动发现" /><div class="field-hint">服务器自动发现或手动输入的授权端点</div></div>
+              <div class="field"><label>手动 Access Token（可选）</label><input v-model="form.oauthToken" class="input" type="password" placeholder="已自动获取的或手动输入的 Token" /><div class="field-hint">从授权服务器获取到的 token，或自动获取的 token</div></div>
+            </div>
           </div>
           <div class="modal-footer">
             <button class="btn secondary" @click="formVisible = false">取消</button>
@@ -76,7 +80,7 @@ const saving = ref(false);
 const result = ref("");
 const formVisible = ref(false);
 const editingId = ref<string | null>(null);
-const form = ref({ name: "", url: "", apiKey: "", enabled: true, toolPrefix: "", oauthClientId: "", oauthClientSecret: "" });
+const form = ref({ name: "", url: "", apiKey: "", enabled: true, toolPrefix: "", oauthClientId: "", oauthClientSecret: "", oauthToken: "", oauthAuthorizer: "" });
 
 async function loadServers() {
   loading.value = true;
@@ -101,10 +105,12 @@ function showForm(server: MCPServer | null) {
       toolPrefix: server.toolPrefix || "",
       oauthClientId: (server as any).oauthClientId || "",
       oauthClientSecret: (server as any).oauthClientSecret || "",
+      oauthToken: (server as any).oauthToken || "",
+      oauthAuthorizer: (server as any).oauthAuthorizer || "",
     };
   } else {
     editingId.value = null;
-    form.value = { name: "", url: "", apiKey: "", enabled: true, toolPrefix: "", oauthClientId: "", oauthClientSecret: "" };
+    form.value = { name: "", url: "", apiKey: "", enabled: true, toolPrefix: "", oauthClientId: "", oauthClientSecret: "", oauthToken: "", oauthAuthorizer: "" };
   }
   formVisible.value = true;
 }
@@ -129,6 +135,8 @@ async function saveServer() {
       toolPrefix: form.value.toolPrefix.trim() || undefined,
       oauthClientId: form.value.oauthClientId.trim() || undefined,
       oauthClientSecret: form.value.oauthClientSecret.trim() || undefined,
+      oauthToken: form.value.oauthToken.trim() || undefined,
+      oauthAuthorizer: form.value.oauthAuthorizer.trim() || undefined,
     });
     if (data.ok) {
       result.value = "✅ 保存成功";
@@ -206,4 +214,5 @@ onMounted(() => {
 .field label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 4px; }
 .field-hint { font-size: 12px; color: var(--text-secondary); margin-top: 4px; }
 .checkbox-label { display: flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; }
+.oauth-section { margin-top: 8px; padding: 8px; border: 1px dashed var(--border-light); border-radius: 6px; }
 </style>
