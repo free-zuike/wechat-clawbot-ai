@@ -98,6 +98,17 @@ export async function handleMCP(request: Request, env: Env): Promise<Response> {
     // 只保存这一个 server（逐条 upsert，不涉及其他 server）
     try {
       await saveMCPServers(env.DB, [server]);
+      // 单独保存 OAuth 配置（saveMCPServers 的 SQL 未包含 OAuth 列）
+      if (oauthClientId || oauthClientSecret || existing?.oauthClientId) {
+        await env.DB.prepare(
+          `UPDATE mcp_servers SET oauth_client_id = ?, oauth_client_secret = ?, updated_at = ? WHERE id = ?`
+        ).bind(
+          server.oauthClientId || null,
+          server.oauthClientSecret || null,
+          new Date().toISOString(),
+          serverId
+        ).run().catch(() => {});
+      }
       Logger.info("[mcp] server saved", { id: serverId, name: server.name });
       return json({
         ok: true,
