@@ -33,6 +33,13 @@ export interface MCPServerConfig {
   prompts?: MCPPromptDefinition[];
   /** 提示词获取时间戳 */
   promptsFetchedAt?: number;
+  /** OAuth client credentials */
+  oauthClientId?: string;
+  oauthClientSecret?: string;
+  oauthToken?: string;
+  oauthTokenExpiresAt?: number;
+  /** OAuth 授权服务器端点（从服务器 discover 响应中获取） */
+  oauthAuthorizer?: string;
 }
 
 export interface MCPToolDefinition {
@@ -227,6 +234,19 @@ async function mcpRequest(
     return { error: { code: -32000, message: `Network error: ${e?.message || "fetch failed"}` } };
   }
 
+  // 401 → 尝试 OAuth 认证
+  if (resp.status === 401) {
+    const token = await handleOAuthIfNeeded(db, server, { code: 401 });
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+      try {
+        resp = await fetch(endpoint, { method: "POST", headers, body: JSON.stringify(body) });
+      } catch (e: any) {
+        return { error: { code: -32000, message: `Network error: ${e?.message || "fetch failed"}` } };
+      }
+    }
+  }
+
   // 旧版会话过期 → 通知调用方重新初始化
   if (resp.status === 404 && !isModern && !options?.noSession) {
     return { error: { code: -32000, message: "SESSION_EXPIRED" }, sessionId: null };
@@ -258,6 +278,12 @@ async function mcpRequest(
   try {
     const data = JSON.parse(rawBody);
     if (data.error) return { error: data.error, sessionId };
+    // 提取 OAuth 元数据
+    const oauthMeta = extractOAuthMeta(data.result);
+    if (oauthMeta.authorizer && !server.oauthAuthorizer) {
+      server.oauthAuthorizer = oauthMeta.authorizer;
+      Logger.info("[mcp] OAuth authorizer discovered", { server: server.name, authorizer: oauthMeta.authorizer });
+    }
     // 处理 2026-07-28 的 resultType 字段
     const result = data.result;
     if (result && result.resultType === "input_required") {
@@ -416,11 +442,16 @@ export async function ensureMCPServersTable(db: D1Database): Promise<void> {
         updated_at TEXT NOT NULL
       )`
     ).run();
-    // 迁移旧表：添加 resources/prompts 列（如果不存在，ALTER 会报错则忽略）
+    // 迁移旧表：添加 resources/prompts/oauth 列（如果不存在，ALTER 会报错则忽略）
     await db.prepare(`ALTER TABLE mcp_servers ADD COLUMN resources TEXT`).run().catch(() => {});
     await db.prepare(`ALTER TABLE mcp_servers ADD COLUMN resources_fetched_at INTEGER`).run().catch(() => {});
     await db.prepare(`ALTER TABLE mcp_servers ADD COLUMN prompts TEXT`).run().catch(() => {});
     await db.prepare(`ALTER TABLE mcp_servers ADD COLUMN prompts_fetched_at INTEGER`).run().catch(() => {});
+    await db.prepare(`ALTER TABLE mcp_servers ADD COLUMN oauth_client_id TEXT`).run().catch(() => {});
+    await db.prepare(`ALTER TABLE mcp_servers ADD COLUMN oauth_client_secret TEXT`).run().catch(() => {});
+    await db.prepare(`ALTER TABLE mcp_servers ADD COLUMN oauth_token TEXT`).run().catch(() => {});
+    await db.prepare(`ALTER TABLE mcp_servers ADD COLUMN oauth_token_expires_at INTEGER`).run().catch(() => {});
+    await db.prepare(`ALTER TABLE mcp_servers ADD COLUMN oauth_authorizer TEXT`).run().catch(() => {});
   } catch (e: any) {
     Logger.warn("[mcp] Failed to ensure mcp_servers table", { error: e?.message });
     throw e;
@@ -448,6 +479,11 @@ export async function loadMCPServers(db: D1Database | null): Promise<MCPServerCo
       resourcesFetchedAt: r.resources_fetched_at || undefined,
       prompts: r.prompts ? JSON.parse(r.prompts) : undefined,
       promptsFetchedAt: r.prompts_fetched_at || undefined,
+      oauthClientId: r.oauth_client_id || undefined,
+      oauthClientSecret: r.oauth_client_secret || undefined,
+      oauthToken: r.oauth_token || undefined,
+      oauthTokenExpiresAt: r.oauth_token_expires_at || undefined,
+      oauthAuthorizer: r.oauth_authorizer || undefined,
     })).filter(s => s.enabled);
   } catch (e: any) {
     Logger.warn("[mcp] Failed to load MCP servers", { error: e?.message });
@@ -1208,5 +1244,144 @@ export async function sendAlert(db: D1Database | null, title: string, body: stri
     Logger.warn("[mcp] No push-capable MCP tool found for alert");
   } catch (e: any) {
     Logger.warn("[mcp] Alert failed", { error: e?.message });
+  }
+}
+
+// ========== OAuth 认证 ==========
+
+// 从服务器响应中提取 OAuth 元数据（2026-07-28 规范）
+function extractOAuthMeta(result?: any): { authorizer?: string; resource?: string } {
+  const meta = result?._meta;
+  if (!meta) return {};
+  const oauth = meta["io.modelcontextprotocol/oauth"] || meta["oauth"];
+  if (!oauth) return {};
+  return {
+    authorizer: oauth.authorizationServer || oauth.authorizer,
+    resource: oauth.resource,
+  };
+}
+
+// 确保 OAuth token 有效，失效则刷新
+async function ensureOAuthToken(db: D1Database, server: MCPServerConfig): Promise<string | null> {
+  // 如果没有配置 client_id，无法使用 OAuth
+  if (!server.oauthClientId || !server.oauthClientSecret) return null;
+
+  // 如果 token 还有效（5 分钟内不过期），直接返回
+  if (server.oauthToken && server.oauthTokenExpiresAt && server.oauthTokenExpiresAt > Date.now() + 300_000) {
+    return server.oauthToken;
+  }
+
+  const authorizer = server.oauthAuthorizer;
+  if (!authorizer) return null;
+
+  try {
+    const resp = await fetch(authorizer, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "client_credentials",
+        client_id: server.oauthClientId,
+        client_secret: server.oauthClientSecret,
+        resource: server.url,
+      }).toString(),
+    });
+    if (!resp.ok) {
+      Logger.warn("[mcp] OAuth token request failed", { status: resp.status, server: server.name });
+      return null;
+    }
+    const data = await resp.json() as any;
+    const token = data.access_token;
+    const expiresIn = data.expires_in || 3600;
+    if (token) {
+      server.oauthToken = token;
+      server.oauthTokenExpiresAt = Date.now() + expiresIn * 1000;
+      // 异步保存到数据库
+      saveMCPServers(db, [server]).catch(() => {});
+      return token;
+    }
+  } catch (e: any) {
+    Logger.warn("[mcp] OAuth token request error", { error: e?.message, server: server.name });
+  }
+  return null;
+}
+
+// 在 mcpRequest 中调用：如果收到 401 且服务器有 OAuth 元数据，尝试获取 token
+async function handleOAuthIfNeeded(db: D1Database, server: MCPServerConfig, error: any): Promise<string | null> {
+  // 只在 401 时尝试 OAuth
+  if (error?.code !== 401) return null;
+  return ensureOAuthToken(db, server);
+}
+
+// ========== subscriptions/listen（2026-07-28 变更通知流） ==========
+
+// 订阅服务器变更通知，收到通知后调用回调函数
+// 适用于 DO 中作为后台任务运行
+export async function subscribeToListChanges(
+  server: MCPServerConfig,
+  onNotification: (type: string) => void
+): Promise<void> {
+  try {
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      "Accept": "text/event-stream",
+      "MCP-Protocol-Version": MCP_PROTOCOL_VERSION,
+    };
+    if (server.apiKey) headers["Authorization"] = `Bearer ${server.apiKey}`;
+    if (server.oauthToken) headers["Authorization"] = `Bearer ${server.oauthToken}`;
+
+    const resp = await fetch(server.url.replace(/\/+$/, ""), {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "subscriptions/listen",
+        params: {
+          subscriptions: ["toolsListChanged", "promptsListChanged", "resourcesListChanged"],
+        },
+      }),
+    });
+
+    if (!resp.ok || !resp.body) return;
+
+    // 读取 SSE 流
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      // 解析 SSE 事件
+      const events = buffer.split("\n\n");
+      buffer = events.pop() || "";
+
+      for (const event of events) {
+        if (!event.trim()) continue;
+        let dataStr = "";
+        for (const line of event.split("\n")) {
+          if (line.startsWith("data: ")) {
+            dataStr = line.slice(6);
+            break;
+          }
+        }
+        if (!dataStr) continue;
+        try {
+          const msg = JSON.parse(dataStr);
+          // 处理变更通知
+          if (msg.method === "notifications/tools/list_changed") {
+            onNotification("tools");
+          } else if (msg.method === "notifications/prompts/list_changed") {
+            onNotification("prompts");
+          } else if (msg.method === "notifications/resources/list_changed") {
+            onNotification("resources");
+          }
+        } catch {}
+      }
+    }
+  } catch (e: any) {
+    Logger.warn("[mcp] subscriptions/listen connection ended", { server: server.name, error: e?.message });
   }
 }
