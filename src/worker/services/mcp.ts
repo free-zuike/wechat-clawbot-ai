@@ -211,7 +211,8 @@ async function mcpRequest(
     // 现代模式：无会话，每请求带 _meta
     // 2026-07-28 要求标准请求头 Mcp-Method / Mcp-Name
     headers["Mcp-Method"] = method;
-    headers["Mcp-Name"] = method;
+    // Mcp-Name: 对 tools/call 传工具名，其他方法传方法名
+    headers["Mcp-Name"] = (method === "tools/call" && params?.name) ? String(params.name) : method;
     headers["MCP-Protocol-Version"] = MCP_PROTOCOL_VERSION;
     body = { jsonrpc: "2.0", id: requestId, method, _meta: buildMeta() };
   } else {
