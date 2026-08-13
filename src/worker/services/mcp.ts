@@ -1197,7 +1197,7 @@ async function initializeSession(db: D1Database, server: MCPServerConfig): Promi
       Logger.warn(`[mcp] Server ${server.name} does not support initialize, using stateless mode`);
       await saveSession(db, server.id, {
         sessionId: null,
-        protocolVersion: "2024-11-05",
+        protocolVersion: LEGACY_PROTOCOL_VERSION,
         serverCapabilities: {},
         expiresAt: 0,
       });
