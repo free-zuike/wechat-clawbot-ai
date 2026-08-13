@@ -110,13 +110,29 @@ jobs:
       - name: Setup Queue
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ steps.account.outputs.account_id }}
         run: |
-          # 队列不存在时会报错，忽略即可（已存在则跳过）
-          set +e
-          npx wrangler queues create clawbot-tasks 2>&1 | tail -2
-          set -e
-          echo "✅ Queue clawbot-tasks 就绪"
+          ACCOUNT_ID="${{ steps.account.outputs.account_id }}"
+          # 检查队列是否存在（queue_name 字段）
+          QUEUE_LIST=$(curl -s -X GET \
+            "https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}/queues" \
+            -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+            -H "Content-Type: application/json")
+          QUEUE_EXISTS=$(echo "$QUEUE_LIST" | jq -r '.result[] | select(.queue_name=="clawbot-tasks") | .queue_name' | head -n1)
+          if [ -z "$QUEUE_EXISTS" ] || [ "$QUEUE_EXISTS" = "null" ]; then
+            QUEUE_CREATE=$(curl -s -X POST \
+              "https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}/queues" \
+              -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+              -H "Content-Type: application/json" \
+              -d '{"queue_name":"clawbot-tasks"}')
+            echo "创建队列响应: $QUEUE_CREATE"
+            if ! echo "$QUEUE_CREATE" | jq -e '.result.queue_id' >/dev/null 2>&1; then
+              echo "❌ Queue 创建失败，请确认 token 有 Queues 权限"
+              exit 1
+            fi
+            echo "✅ Queue clawbot-tasks 已创建"
+          else
+            echo "✅ Queue clawbot-tasks 已存在"
+          fi
 
       - name: Update wrangler.toml with resource IDs
         run: |
