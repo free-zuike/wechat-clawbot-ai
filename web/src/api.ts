@@ -431,6 +431,11 @@ export interface MCPServer {
   toolPrefix?: string;
   tools?: Array<{ name: string; description: string; inputSchema: Record<string, any> }>;
   toolsFetchedAt?: number;
+  oauthClientId?: string;
+  oauthClientSecret?: string;
+  oauthToken?: string;
+  oauthTokenExpiresAt?: number;
+  oauthAuthorizer?: string;
 }
 
 export async function fetchMCPServers(): Promise<{ ok: boolean; servers: MCPServer[] }> {
@@ -444,6 +449,8 @@ export async function saveMCPServer(data: {
   apiKey?: string;
   enabled?: boolean;
   toolPrefix?: string;
+  oauthClientId?: string;
+  oauthClientSecret?: string;
 }): Promise<{ ok: boolean; serverId: string; server: MCPServer }> {
   return apiFetch("/api/mcp", {
     method: "POST",

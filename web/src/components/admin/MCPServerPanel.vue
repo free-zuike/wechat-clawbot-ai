@@ -51,6 +51,8 @@
             <div class="field"><label>API Key（可选）</label><input v-model="form.apiKey" class="input" type="password" placeholder="可选" /></div>
             <div class="field"><label class="checkbox-label"><input type="checkbox" v-model="form.enabled" /> 启用</label></div>
             <div class="field"><label>工具前缀</label><input v-model="form.toolPrefix" class="input" placeholder="默认：mcp_服务ID" /><div class="field-hint">工具名称前缀，避免名称冲突。留空自动生成</div></div>
+            <div class="field"><label>OAuth Client ID（可选）</label><input v-model="form.oauthClientId" class="input" placeholder="可选" /><div class="field-hint">MCP 服务器指定 OAuth 认证时填写</div></div>
+            <div class="field"><label>OAuth Client Secret（可选）</label><input v-model="form.oauthClientSecret" class="input" type="password" placeholder="可选" /></div>
           </div>
           <div class="modal-footer">
             <button class="btn secondary" @click="formVisible = false">取消</button>
@@ -74,7 +76,7 @@ const saving = ref(false);
 const result = ref("");
 const formVisible = ref(false);
 const editingId = ref<string | null>(null);
-const form = ref({ name: "", url: "", apiKey: "", enabled: true, toolPrefix: "" });
+const form = ref({ name: "", url: "", apiKey: "", enabled: true, toolPrefix: "", oauthClientId: "", oauthClientSecret: "" });
 
 async function loadServers() {
   loading.value = true;
@@ -97,10 +99,12 @@ function showForm(server: MCPServer | null) {
       apiKey: server.apiKey || "",
       enabled: server.enabled,
       toolPrefix: server.toolPrefix || "",
+      oauthClientId: (server as any).oauthClientId || "",
+      oauthClientSecret: (server as any).oauthClientSecret || "",
     };
   } else {
     editingId.value = null;
-    form.value = { name: "", url: "", apiKey: "", enabled: true, toolPrefix: "" };
+    form.value = { name: "", url: "", apiKey: "", enabled: true, toolPrefix: "", oauthClientId: "", oauthClientSecret: "" };
   }
   formVisible.value = true;
 }
@@ -123,6 +127,8 @@ async function saveServer() {
       apiKey: form.value.apiKey || undefined,
       enabled: form.value.enabled,
       toolPrefix: form.value.toolPrefix.trim() || undefined,
+      oauthClientId: form.value.oauthClientId.trim() || undefined,
+      oauthClientSecret: form.value.oauthClientSecret.trim() || undefined,
     });
     if (data.ok) {
       result.value = "✅ 保存成功";

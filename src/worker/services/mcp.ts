@@ -1295,8 +1295,12 @@ async function ensureOAuthToken(db: D1Database, server: MCPServerConfig): Promis
     if (token) {
       server.oauthToken = token;
       server.oauthTokenExpiresAt = Date.now() + expiresIn * 1000;
-      // 异步保存到数据库
-      saveMCPServers(db, [server]).catch(() => {});
+      // 直接更新数据库中的 token 字段
+      try {
+        await db.prepare(
+          `UPDATE mcp_servers SET oauth_token = ?, oauth_token_expires_at = ?, updated_at = ? WHERE id = ?`
+        ).bind(token, server.oauthTokenExpiresAt, new Date().toISOString(), server.id).run();
+      } catch {}
       return token;
     }
   } catch (e: any) {
