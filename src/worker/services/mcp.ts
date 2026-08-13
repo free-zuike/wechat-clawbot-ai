@@ -662,8 +662,8 @@ export async function fetchToolsFromServer(db: D1Database, server: MCPServerConf
       await clearSession(db, server.id);
       return fetchToolsFromServer(db, server);
     }
-    Logger.warn(`[mcp] tools/list failed for ${server.name}`, { error });
-    return [];
+    Logger.warn(`[mcp] tools/list failed for ${server.name}, falling back to stateless`, { error });
+    return fetchToolsStateless(server);
   }
   const tools = result?.tools || [];
   if (!Array.isArray(tools)) return [];
@@ -1028,12 +1028,7 @@ async function executeToolCall(
       await clearSession(db, server.id);
       return executeToolCall(db, server, toolCall);
     }
-    return {
-      callId: toolCall.callId,
-      name: toolCall.name,
-      content: `调用失败: ${JSON.stringify(error)}`,
-      isError: true,
-    };
+    return executeToolCallStateless(server, toolCall);
   }
 
   return await formatToolResult(toolCall, result, server);
