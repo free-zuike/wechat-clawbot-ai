@@ -798,6 +798,9 @@ interface AIConfig {
   thinking?: boolean;
   mcpServers?: MCPServerConfig[];
   db?: D1Database | null;
+  // Cloudflare 账号信息（用于 Cloudflare AI 走 OpenAI 兼容 API 以支持工具调用）
+  accountId?: string;
+  cfApiToken?: string;
   // 媒体生成配置
   aiBinding?: any;
   mediaProvider?: string;
@@ -853,6 +856,8 @@ export async function callAIWithContext(
     mediaAllKeys: aiConfig?.mediaAllKeys,
     mediaMaxRetries: aiConfig?.mediaMaxRetries,
     mediaResponseConfig: aiConfig?.mediaResponseConfig,
+    accountId: aiConfig?.accountId,
+    cfApiToken: aiConfig?.cfApiToken,
   };
 
   if (config.provider !== "cloudflare" && !config.model) {
@@ -889,7 +894,11 @@ export async function callAIWithContext(
   let reply = "";
   let toolResults: string[] = [];
   try {
-    if (config.provider !== "cloudflare") {
+    // Cloudflare Workers AI binding 不支持 tool calling，有 MCP 工具时走 Cloudflare REST API
+    const useCloudflareApi = config.provider === "cloudflare"
+      && config.mcpServers && config.mcpServers.length > 0
+      && config.accountId && config.cfApiToken;
+    if (config.provider !== "cloudflare" || useCloudflareApi) {
       // 加载 MCP 工具
       let mcpTools: MCPToolDefinition[] = [];
       let openAITools: any[] = [];
@@ -899,9 +908,14 @@ export async function callAIWithContext(
         Logger.info(`[ai] Loaded ${mcpTools.length} MCP tools for ${userId}`);
       }
 
+      const effectiveBaseUrl = useCloudflareApi
+        ? `https://api.cloudflare.com/client/v4/accounts/${config.accountId}/ai/v1`
+        : config.baseUrl;
+      const effectiveApiKey = useCloudflareApi ? config.cfApiToken : config.apiKey;
+
       const result = await callOpenAICompatible({
-        baseUrl: config.baseUrl,
-        apiKey: config.apiKey,
+        baseUrl: effectiveBaseUrl,
+        apiKey: effectiveApiKey,
         model: config.model,
         messages,
         maxTokens: config.maxTokens,
@@ -988,6 +1002,8 @@ export async function callAI(
     mediaAllKeys: aiConfig?.mediaAllKeys,
     mediaMaxRetries: aiConfig?.mediaMaxRetries,
     mediaResponseConfig: aiConfig?.mediaResponseConfig,
+    accountId: aiConfig?.accountId,
+    cfApiToken: aiConfig?.cfApiToken,
   };
 
   if (config.provider !== "cloudflare" && !config.model) {
@@ -1000,7 +1016,11 @@ export async function callAI(
 
   try {
     let text = "";
-    if (config.provider !== "cloudflare") {
+    // Cloudflare Workers AI binding 不支持 tool calling，有 MCP 工具时走 Cloudflare REST API
+    const useCloudflareApi = config.provider === "cloudflare"
+      && config.mcpServers && config.mcpServers.length > 0
+      && config.accountId && config.cfApiToken;
+    if (config.provider !== "cloudflare" || useCloudflareApi) {
       // 加载 MCP 工具
       let mcpTools: MCPToolDefinition[] = [];
       let openAITools: any[] = [];
@@ -1011,8 +1031,10 @@ export async function callAI(
       }
 
       const result = await callOpenAICompatible({
-        baseUrl: config.baseUrl,
-        apiKey: config.apiKey,
+        baseUrl: useCloudflareApi
+          ? `https://api.cloudflare.com/client/v4/accounts/${config.accountId}/ai/v1`
+          : config.baseUrl,
+        apiKey: useCloudflareApi ? config.cfApiToken : config.apiKey,
         model: config.model,
         messages: [
           { role: "system", content: `当前时间: ${getCurrentTimeStr()}。当用户提到"今天/昨天/明天/上个月/本月/下周/几点"等相对时间时，基于以上时间准确换算。当用户问到新闻、时事、热点时，调用 get_news 工具获取中文新闻。\n注意对话连续性：用户可能会用简短回复（如"列出来"、"展开说说"、"是哪一条"、"具体点"等）来指代上一条回复中提到的内容，你需要根据对话历史理解上下文，不要当成一个独立的新问题。如果用户说"列出来"而上一轮你提到了某类数据，就直接列出那些数据。\n\n${system}` },

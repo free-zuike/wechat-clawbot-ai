@@ -206,6 +206,8 @@ export async function handleChat(request: Request, env: Env): Promise<Response> 
       mediaAllKeys: aiConfig.allKeys,
       mediaMaxRetries: aiConfig.maxRetries,
       mediaResponseConfig: aiConfig.responseConfig,
+      accountId: env.ACCOUNT_ID,
+      cfApiToken: env.CF_API_TOKEN,
     });
 
     Logger.info(`[chat][${requestId}] reply`, { length: reply.length });
