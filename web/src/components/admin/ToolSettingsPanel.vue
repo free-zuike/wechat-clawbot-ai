@@ -5,13 +5,13 @@
 
     <div class="tool-section">
       <h3>🗞️ 中文新闻 (get_news)</h3>
-      <div class="desc">默认使用 NewsNow 公共实例，配置地址可使用自己的部署</div>
+      <div class="desc">默认使用 NewsNow 公共实例，无需配置即可用；公共实例可能不稳，可自建：<a href="https://github.com/ourongxing/newsnow" target="_blank" rel="noopener">ourongxing/newsnow</a>（Cloudflare Pages 构建：<code>pnpm run build</code>，输出 <code>dist/output/public</code>）</div>
       <div class="field"><label>NewsNow 地址</label><input v-model="config.newsnowBaseUrl" class="input" placeholder="https://newsnow.xxx.workers.dev" /><div class="field-hint">留空使用默认公共实例 newsnow.busiyi.world</div></div>
     </div>
 
     <div class="tool-section">
       <h3>🔍 网页搜索 (web_search)</h3>
-      <div class="desc">部署 cloudflare-search 后配置地址，用于通用网页搜索（Google/Brave/DuckDuckGo）</div>
+      <div class="desc">依赖自建项目 <a href="https://github.com/Yrobot/cloudflare-search" target="_blank" rel="noopener">Yrobot/cloudflare-search</a>（聚合 Google/Brave/DuckDuckGo/Bing）。<strong>未部署时该工具不可用</strong>，AI 会提示"搜索服务未配置"。部署：<code>git clone ... && npx wrangler deploy</code> 后填入 Worker 地址</div>
       <div class="field"><label>搜索服务地址</label><input v-model="config.searchBaseUrl" class="input" placeholder="https://your-search.workers.dev" /><div class="field-hint">cloudflare-search 的 Worker 地址</div></div>
       <div class="field"><label>Token（可选）</label><input v-model="config.searchToken" class="input" type="password" placeholder="如配置了 TOKEN 则必填" /><div class="field-hint">cloudflare-search 的鉴权 Token</div></div>
     </div>
@@ -62,7 +62,9 @@ async function handleSave() {
 <style scoped>
 .tool-section { margin-top: 16px; padding: 12px; border: 1px solid var(--border-light); border-radius: 8px; }
 .tool-section h3 { margin: 0 0 4px; font-size: 15px; }
-.desc { font-size: 12px; color: var(--text-dim); margin-bottom: 8px; }
+.desc { font-size: 12px; color: var(--text-dim); margin-bottom: 8px; line-height: 1.6; }
+.desc a { color: var(--link); }
+.desc code { background: var(--bg-skeleton-1); padding: 1px 5px; border-radius: 4px; font-size: 11px; }
 .field { margin-bottom: 12px; }
 .field label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 4px; }
 .textarea { min-height: 96px; resize: vertical; font-family: monospace; font-size: 12px; }
