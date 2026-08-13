@@ -79,12 +79,23 @@ const saving = ref(false);
 const formVisible = ref(false);
 const editingId = ref<string | null>(null);
 const toast = ref({ show: false, message: "", type: "success" });
-let toastTimer: any = null;
+const toastQueue = ref<Array<{ message: string; type: string }>>([]);
+let showingToast = false;
 
 function showToast(message: string, type = "success") {
-  toast.value = { show: true, message, type };
-  if (toastTimer) clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { toast.value.show = false; }, 3000);
+  toastQueue.value.push({ message, type });
+  if (!showingToast) processToastQueue();
+}
+
+function processToastQueue() {
+  if (toastQueue.value.length === 0) { showingToast = false; return; }
+  showingToast = true;
+  const item = toastQueue.value.shift()!;
+  toast.value = { show: true, message: item.message, type: item.type };
+  setTimeout(() => {
+    toast.value.show = false;
+    setTimeout(processToastQueue, 200);
+  }, 2500);
 }
 const form = ref({ name: "", url: "", apiKey: "", enabled: true, toolPrefix: "", oauthClientId: "", oauthClientSecret: "", oauthToken: "", oauthAuthorizer: "" });
 
