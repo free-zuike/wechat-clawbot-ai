@@ -144,7 +144,7 @@ async function loadSession(db: D1Database, serverId: string): Promise<MCPSession
     }
     return {
       sessionId: row.session_id || null,
-      protocolVersion: row.protocol_version || LEGACY_PROTOCOL_VERSION,
+      protocolVersion: row.protocol_version === "2024-11-05" ? LEGACY_PROTOCOL_VERSION : (row.protocol_version || LEGACY_PROTOCOL_VERSION),
       serverCapabilities: row.server_capabilities ? JSON.parse(row.server_capabilities) : {},
       expiresAt: row.expires_at || 0,
     };
@@ -1240,10 +1240,7 @@ async function initializeSession(db: D1Database, server: MCPServerConfig): Promi
 // 确保旧版会话有效，若无效则重新初始化
 async function ensureLegacySession(db: D1Database, server: MCPServerConfig): Promise<boolean> {
   const session = await loadSession(db, server.id);
-  // 有真实会话（sessionId 非空）→ 可用
-  if (session?.sessionId) return true;
-  // 有 stateless 标记（session 存在但 sessionId 为空）→ 不可用，走 stateless
-  if (session && !session.sessionId) return false;
+  if (session) return true; // 已有会话（包括 sessionId 为空的 stateless 标记）
 
   try {
     await initializeSession(db, server);
