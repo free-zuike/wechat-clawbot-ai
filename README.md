@@ -25,6 +25,17 @@
 
 ## 🚀 快速开始（Fork 后部署）
 
+### 方式一：GitHub Actions 自动部署（推荐）
+
+仓库已内置 `.github/workflows/deploy.yml`，**只需配置 1 个 Secret** 即可自动完成全部部署（自动创建/复用 D1、KV、Queue 并执行迁移）：
+
+1. Fork 仓库到你的 GitHub
+2. 进入 Settings → **Secrets and variables** → **Actions** → **New repository secret**
+3. 添加 `CLOUDFLARE_API_TOKEN`，值为你的 Cloudflare **API Token**（需具备 Account 级别权限：Worker Scripts Edit、D1、Workers KV、Workers Queues；account_id 会从 token 自动解析，无需配置）
+4. 手动触发 Actions 中的 **Deploy to Cloudflare Workers**（或直接 push 到 main 分支自动触发）
+
+### 方式二：本地手动部署
+
 ```bash
 # 1. Fork 仓库到你的 GitHub
 
@@ -82,6 +93,52 @@ API Key: （可选）
 - 工具描述自动追加参数说明和服务名标签，帮助 AI 正确选择
 - MCP 工具结果自动保存到上下文，支持"看第X条"等追问
 - 支持多服务器同时接入，AI 按需路由
+
+---
+
+## 🛠️ 内置工具及其依赖服务
+
+以下内置工具**默认随 Worker 部署**，但部分依赖外部服务。**在管理后台「🛠️ 内置工具设置」面板中配置对应地址**（部署后进入 `https://<你的域名>/` → 系统配置 → 工具设置）：
+
+| 内置工具 | 功能 | 依赖服务 | 说明 |
+|---------|------|---------|------|
+| `get_current_datetime` | 日期/时间（Asia/Shanghai） | **无** | 开箱即用 |
+| `get_news` | 中文新闻聚合 | **NewsNow**（可选自建） | 默认使用公共实例 `https://newsnow.busiyi.world`；如需自建请参考下方 |
+| `web_search` | 通用网页搜索 | **cloudflare-search**（需自建） | 未配置地址时该工具不可用，AI 会提示"搜索服务未配置" |
+| `generate_image` | AI 生图 | AI 提供商能力 | 需要 AI 配置中指定支持生图的模型（如智谱 CogView） |
+| `generate_video` | AI 生视频 | AI 提供商能力 | 需要 AI 配置中指定支持生视频的模型（如智谱 CogVideoX） |
+
+### 🔍 web_search：部署 cloudflare-search
+
+搜索工具依赖开源项目 **[Yrobot/cloudflare-search](https://github.com/Yrobot/cloudflare-search)**（Cloudflare Workers 聚合搜索：Google/Brave/DuckDuckGo/Bing 并行搜索）：
+
+```bash
+git clone https://github.com/Yrobot/cloudflare-search.git
+cd cloudflare-search
+npx wrangler login
+npx wrangler deploy   # 得到一个 Worker 地址，如 https://your-search.workers.dev
+# 若不想被滥用，可在其 wrangler.toml 中配置 TOKEN
+```
+
+部署后在 ClawBot 管理后台「内置工具设置」填入：
+```
+搜索服务地址: https://your-search.workers.dev   (配置了 TOKEN 则 URL 带 ?token=xxx 或填入下方 Token 字段)
+Token: 如 cloudflare-search 配置了鉴权则必填
+```
+
+### 🗞️ get_news：自建 NewsNow（可选）
+
+新闻工具默认使用公共实例 `https://newsnow.busiyi.world`，公共实例可能不稳定或限流。可自建开源项目 **[ourongxing/newsnow](https://github.com/ourongxing/newsnow)**（Cloudflare Pages / Vercel / Docker 均可）：
+
+```bash
+git clone https://github.com/ourongxing/newsnow.git
+cd newsnow
+# Cloudflare Pages 构建配置：
+#   构建命令: pnpm run build
+#   输出目录: dist/output/public
+```
+
+部署后把地址填入管理后台「内置工具设置」→ `NewsNow 地址`，留空则使用公共实例。
 
 ---
 
@@ -189,6 +246,7 @@ npx wrangler tail
 | 📊 状态监控 | 轮询状态、账号信息 |
 | 🎯 操作面板 | 手动拉取、微信绑定、WebSocket 实时消息 |
 | ⚙️ 系统配置 | AI 提供商、密钥、模型、上下文长度、人设提示词 |
+| 🛠️ 内置工具设置 | get_news（NewsNow 地址）、web_search（cloudflare-search 地址/Token）、白名单 |
 | 🔌 MCP 管理 | MCP 服务器增删改查、工具列表、连接测试 |
 | 🤖 AI 测试 | 直接对话测试（支持 Markdown、引用、编辑） |
 | 📝 生成记录 | 文字/图片/视频历史，含提供商、密钥序号、来源 |
