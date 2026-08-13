@@ -466,6 +466,6 @@ export async function deleteMCPServer(id: string): Promise<{ ok: boolean }> {
 }
 
 export async function refreshMCPTools(id: string): Promise<{ ok: boolean; tools: any[] }> {
-  return apiFetch(`/api/mcp?id=${encodeURIComponent(id)}`, { method: "PUT" });
+  return apiFetch(`/api/mcp?id=${encodeURIComponent(id)}`, { method: "PUT", timeout: 30000 });
 }
 
