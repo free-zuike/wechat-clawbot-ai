@@ -39,6 +39,7 @@
 
     <!-- 编辑/新增表单弹窗 -->
     <Teleport to="body">
+      <div v-if="toast.show" :class="['toast', toast.type]">{{ toast.message }}</div>
       <div v-if="formVisible" class="modal-overlay" @click.self="formVisible = false">
         <div class="modal">
           <div class="modal-header">
@@ -65,8 +66,6 @@
         </div>
       </div>
     </Teleport>
-
-    <div v-if="result" :class="['result-box', result.includes('✅') ? 'success' : '']">{{ result }}</div>
   </div>
 </template>
 
@@ -77,9 +76,16 @@ import { fetchMCPServers, saveMCPServer, deleteMCPServer, refreshMCPTools, type 
 const servers = ref<MCPServer[]>([]);
 const loading = ref(false);
 const saving = ref(false);
-const result = ref("");
 const formVisible = ref(false);
 const editingId = ref<string | null>(null);
+const toast = ref({ show: false, message: "", type: "success" });
+let toastTimer: any = null;
+
+function showToast(message: string, type = "success") {
+  toast.value = { show: true, message, type };
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { toast.value.show = false; }, 3000);
+}
 const form = ref({ name: "", url: "", apiKey: "", enabled: true, toolPrefix: "", oauthClientId: "", oauthClientSecret: "", oauthToken: "", oauthAuthorizer: "" });
 
 async function loadServers() {
@@ -88,7 +94,7 @@ async function loadServers() {
     const data = await fetchMCPServers();
     if (data && data.servers) servers.value = data.servers;
   } catch (e: any) {
-    result.value = "❌ 加载失败: " + (e.message || "未知错误");
+    showToast("❌ 加载失败: " + (e.message || "未知错误"), "error");
   } finally {
     loading.value = false;
   }
@@ -121,7 +127,7 @@ function editServer(server: MCPServer) {
 
 async function saveServer() {
   if (!form.value.name.trim() || !form.value.url.trim()) {
-    result.value = "⚠️ 名称和 URL 为必填";
+    showToast("⚠️ 名称和 URL 为必填", "error");
     return;
   }
   saving.value = true;
@@ -139,12 +145,12 @@ async function saveServer() {
       oauthAuthorizer: form.value.oauthAuthorizer.trim() || undefined,
     });
     if (data.ok) {
-      result.value = "✅ 保存成功";
+      showToast("✅ 保存成功");
       formVisible.value = false;
       await loadServers();
     }
   } catch (e: any) {
-    result.value = "❌ 保存失败: " + (e.message || "未知错误");
+    showToast("❌ 保存失败: " + (e.message || "未知错误"), "error");
   } finally {
     saving.value = false;
   }
@@ -155,11 +161,11 @@ async function deleteServer(id: string) {
   try {
     const data = await deleteMCPServer(id);
     if (data.ok) {
-      result.value = "✅ 已删除";
+      showToast("✅ 已删除");
       await loadServers();
     }
   } catch (e: any) {
-    result.value = "❌ 删除失败: " + (e.message || "未知错误");
+    showToast("❌ 删除失败: " + (e.message || "未知错误"), "error");
   }
 }
 
@@ -167,11 +173,13 @@ async function refreshTools(id: string) {
   try {
     const data = await refreshMCPTools(id);
     if (data.ok) {
-      result.value = `✅ 已获取 ${data.tools.length} 个工具`;
+      showToast(`✅ 已获取 ${data.tools.length} 个工具`);
       await loadServers();
+    } else {
+      showToast(`❌ ${data.error || "获取失败"}`, "error");
     }
   } catch (e: any) {
-    result.value = "❌ 获取工具失败: " + (e.message || "未知错误");
+    showToast("❌ " + (e.message || "未知错误"), "error");
   }
 }
 
@@ -209,11 +217,13 @@ onMounted(() => {
 .btn.tiny { padding: 4px 10px; font-size: 12px; }
 .btn.danger { color: var(--error); border-color: var(--error); }
 .empty-state { text-align: center; padding: 40px; color: var(--text-dim); }
-.result-box { margin-top: 12px; padding: 10px; border-radius: 6px; border: 1px solid var(--border-light); font-size: 13px; }
-.result-box.success { background: var(--alert-success-bg); color: var(--alert-success-text); border-color: var(--alert-success-text); }
 .field { margin-bottom: 12px; }
 .field label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 4px; }
 .field-hint { font-size: 12px; color: var(--text-secondary); margin-top: 4px; }
 .checkbox-label { display: flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; }
 .oauth-section { margin-top: 8px; padding: 8px; border: 1px dashed var(--border-light); border-radius: 6px; }
+.toast { position: fixed; top: 20px; right: 20px; z-index: 2000; padding: 10px 20px; border-radius: 8px; font-size: 14px; font-weight: 600; box-shadow: 0 4px 16px rgba(0,0,0,0.2); animation: fadeIn 0.3s; }
+.toast.success { background: var(--alert-success-bg); color: var(--alert-success-text); border: 1px solid var(--alert-success-text); }
+.toast.error { background: var(--alert-error-bg, #fef2f2); color: var(--alert-error-text, #dc2626); border: 1px solid var(--alert-error-text, #dc2626); }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
 </style>
