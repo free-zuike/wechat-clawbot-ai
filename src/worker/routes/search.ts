@@ -92,7 +92,11 @@ export async function handleSearchTest(request: Request, env: Env): Promise<Resp
       }
       const title = match[2].replace(/<[^>]+>/g, "").trim();
       const description = match[3].replace(/<[^>]+>/g, "").trim();
-      if (title && url) {
+      // 过滤微软推广页和 Bing 自身链接（无 cookie 会话时 Bing 会返回微软官网/Office 等无关结果）
+      const msDomains = /(^|\.)(microsoft|office|live|outlook|msn|bing|windows|sharepoint)\.com$/i;
+      let hostname = "";
+      try { hostname = new URL(url).hostname; } catch {}
+      if (title && url && !msDomains.test(hostname)) {
         items.push({ title, url, description });
       }
     }
