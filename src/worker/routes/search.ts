@@ -23,7 +23,8 @@ export async function handleSearchTest(request: Request, env: Env): Promise<Resp
     });
 
     if (!resp.ok) {
-      return json({ ok: false, error: `浏览器搜索失败 (HTTP ${resp.status})` });
+      const errBody = await resp.text().catch(() => "");
+      return json({ ok: false, error: `浏览器搜索失败 (HTTP ${resp.status}): ${errBody.slice(0, 300)}` });
     }
 
     const data = await resp.json() as any;
