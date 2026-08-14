@@ -90,6 +90,9 @@ export function isVagueFollowUp(text: string): boolean {
     "给我看", "看看", "看看详情", "具体内容",
   ];
   if (vaguePatterns.some(p => clean.includes(p))) return true;
+  // 天气回指：用户只说"明天的天气/后天呢/这周天气"等短句，但没提城市名
+  // 限制：只匹配 10 字以内的纯天气查询，超过说明是完整句子
+  if (clean.length <= 10 && /^(今天|明天|后天|昨天|本周|下周|这周|下[周个]?星期|这[周个]?星期|未来|后面|接下来)\s*的?\s*天气/.test(clean)) return true;
   // 通用序数回指：第X条/第X个（X 为数字或中文数字）
   return /第[一二三四五六七八九十百\d]+[条个]/.test(clean);
 }
