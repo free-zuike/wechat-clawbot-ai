@@ -17,7 +17,8 @@ export async function handleSearchTest(request: Request, env: Env): Promise<Resp
 
   try {
     const searchUrl = `https://www.bing.com/search?q=${encodeURIComponent(q)}&count=10`;
-    const resp = await env.BROWSER.quickAction("content", {
+    // 用 links 动作获取页面所有链接，Bing 搜索结果链接包含真实 URL
+    const resp = await env.BROWSER.quickAction("links", {
       url: searchUrl,
     });
 
@@ -27,24 +28,17 @@ export async function handleSearchTest(request: Request, env: Env): Promise<Resp
     }
 
     const data = await resp.json() as any;
-    if (!data?.success || !data?.result) {
+    if (!data?.success || !Array.isArray(data?.result)) {
       return json({ ok: false, error: "浏览器搜索返回空结果" });
     }
 
-    const html = data.result as string;
-    // 查找搜索结果区域（第一个 <li class="b_algo">）
-    const resultsStart = html.indexOf('<li class="b_algo"');
-    const resultsSample = resultsStart !== -1 ? html.slice(resultsStart, resultsStart + 800) : "未找到 b_algo";
-    console.log(`[search-test] HTML length: ${html.length}, results sample: ${resultsSample}`);
+    // 过滤 Bing 搜索结果的真实链接（排除 Bing 自身链接）
+    const allLinks = data.result as string[];
     const items: Array<{ title: string; url: string; description: string }> = [];
-    // Bing 搜索结果的多种格式
-    const linkRe = /<h2[^>]*>[\s\S]*?<a[^>]*href="(https?:\/\/[^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
-    let m: RegExpExecArray | null;
-    while ((m = linkRe.exec(html)) !== null && items.length < 10) {
-      const itemUrl = m[1];
-      const title = m[2].replace(/<[^>]*>/g, "").trim();
-      if (title && !itemUrl.includes("bing.com")) {
-        items.push({ title, url: itemUrl, description: "" });
+    for (const link of allLinks) {
+      if (link.startsWith("http") && !link.includes("bing.com") && !link.includes("microsoft.com")) {
+        items.push({ title: link, url: link, description: "" });
+        if (items.length >= 8) break;
       }
     }
 

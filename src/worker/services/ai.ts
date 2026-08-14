@@ -209,29 +209,23 @@ async function executeWebSearch(query: string, searchBaseUrl?: string, searchTok
   return result ? `【来源: ${source}】\n${result}` : "没有找到相关结果";
 }
 
-// 用 Cloudflare Browser Run 搜索 Bing（免费版每天 2 次会话，不会被限流）
+// 用 Cloudflare Browser Run 搜索 Bing（免费版每天 10 分钟，不会被限流）
 async function executeBrowserSearch(browserBinding: any, query: string): Promise<string | null> {
   const searchUrl = `https://www.bing.com/search?q=${encodeURIComponent(query)}&count=10`;
-  const resp = await browserBinding.quickAction("content", {
+  const resp = await browserBinding.quickAction("links", {
     url: searchUrl,
   });
   if (!resp.ok) return null;
   const data = await resp.json() as any;
-  if (!data?.success || !data?.result) return null;
+  if (!data?.success || !Array.isArray(data?.result)) return null;
 
-  // 从 HTML 中提取搜索结果链接
-  const html = data.result as string;
+  // 过滤 Bing 搜索结果的真实链接（排除 Bing 自身链接）
+  const allLinks = data.result as string[];
   const results: string[] = [];
-  // 找到搜索结果区域：<li class="b_algo"> 中的 <h2><a href="...">
-  const algoStart = html.indexOf('<li class="b_algo"');
-  const searchArea = algoStart !== -1 ? html.slice(algoStart) : html;
-  const linkRe = /<h2[^>]*>[\s\S]*?<a[^>]*href="(https?:\/\/[^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
-  let m: RegExpExecArray | null;
-  while ((m = linkRe.exec(html)) !== null && results.length < 10) {
-    const url = m[1];
-    const title = m[2].replace(/<[^>]*>/g, "").trim();
-    if (title && !url.includes("bing.com")) {
-      results.push(`${results.length + 1}. ${title}\n   ${url}`);
+  for (const link of allLinks) {
+    if (link.startsWith("http") && !link.includes("bing.com") && !link.includes("microsoft.com")) {
+      results.push(`${results.length + 1}. ${link}\n   ${link}`);
+      if (results.length >= 8) break;
     }
   }
   return results.length > 0 ? results.join("\n\n") : null;
