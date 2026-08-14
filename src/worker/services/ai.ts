@@ -154,7 +154,7 @@ const BUILTIN_TOOLS = [{
 }];
 
 // 网页搜索：调用 cloudflare-search 聚合搜索引擎
-async function executeWebSearch(query: string, searchBaseUrl?: string, searchToken?: string): Promise<string> {
+async function executeWebSearch(query: string, searchBaseUrl?: string, searchToken?: string, browserBinding?: any): Promise<string> {
   const q = (query || "").trim();
   if (!q) return "搜索关键词为空";
   const base = (searchBaseUrl || "").trim().replace(/\/+$/, "");
@@ -188,10 +188,46 @@ async function executeWebSearch(query: string, searchBaseUrl?: string, searchTok
     tryHackerNews(q),
   ]);
   const parts = results.filter(Boolean) as string[];
+
+  // 如果免费源都没结果，且浏览器 binding 可用 → 用浏览器搜索 Bing
+  if (parts.length === 0 && browserBinding) {
+    try {
+      const bingResult = await executeBrowserSearch(browserBinding, q);
+      if (bingResult) return bingResult;
+    } catch { /* 忽略 */ }
+  }
+
   if (parts.length > 0) {
     return parts.map((p, i) => `【来源${i + 1}】\n${p}`).join("\n\n---\n\n");
   }
   return "没有找到相关结果";
+}
+
+// 用 Cloudflare Browser Run 搜索 Bing（免费版每天 2 次会话，不会被限流）
+async function executeBrowserSearch(browserBinding: any, query: string): Promise<string | null> {
+  const searchUrl = `https://www.bing.com/search?q=${encodeURIComponent(query)}&count=10`;
+  const resp = await browserBinding.quickAction("content", {
+    url: searchUrl,
+    waitUntil: "networkidle0",
+  });
+  if (!resp.ok) return null;
+  const data = await resp.json() as any;
+  if (!data?.success || !data?.result) return null;
+
+  // 从 HTML 中提取搜索结果链接
+  const html = data.result as string;
+  const results: string[] = [];
+  // Bing 搜索结果链接在 <h2><a href="..."> 中
+  const linkRe = /<h2[^>]*>.*?<a[^>]*href="(https?:\/\/[^"]+)"[^>]*>(.*?)<\/a>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = linkRe.exec(html)) !== null && results.length < 10) {
+    const url = m[1];
+    const title = m[2].replace(/<[^>]*>/g, "").trim();
+    if (title && !url.includes("bing.com")) {
+      results.push(`${results.length + 1}. ${title}\n   ${url}`);
+    }
+  }
+  return results.length > 0 ? results.join("\n\n") : null;
 }
 
 // 获取今日热门新闻（HN 前端 RSS + Wikipedia 每日大事）
@@ -473,7 +509,8 @@ async function executeBuiltinTool(
   newsnowBaseUrl?: string,
   searchBaseUrl?: string,
   searchToken?: string,
-  mediaConfig?: { aiBinding: any; provider: string; model: string; baseUrl: string; apiKey: string; allKeys: string[]; maxRetries: number; responseConfig: any }
+  mediaConfig?: { aiBinding: any; provider: string; model: string; baseUrl: string; apiKey: string; allKeys: string[]; maxRetries: number; responseConfig: any },
+  browserBinding?: any,
 ): Promise<MCPToolResult | null> {
   if (toolCall.function.name === "get_current_datetime") {
     const now = new Date();
@@ -489,7 +526,7 @@ async function executeBuiltinTool(
   if (toolCall.function.name === "web_search") {
     let args: Record<string, any> = {};
     try { args = JSON.parse(toolCall.function.arguments || "{}"); } catch {}
-    const content = await executeWebSearch(args.q || "", searchBaseUrl, searchToken);
+    const content = await executeWebSearch(args.q || "", searchBaseUrl, searchToken, browserBinding);
     return { callId: toolCall.id, name: "web_search", content };
   }
   if (toolCall.function.name === "get_news") {
@@ -659,6 +696,8 @@ async function callOpenAICompatible(params: {
   mediaAllKeys?: string[];
   mediaMaxRetries?: number;
   mediaResponseConfig?: any;
+  // 浏览器绑定（用于搜索兜底，Cloudflare Browser Run）
+  browserBinding?: any;
 }): Promise<{ reply: string; toolResults: string[] }> {
   const url = params.baseUrl.trim().replace(/\/+$/, "");
 
@@ -740,7 +779,7 @@ async function callOpenAICompatible(params: {
       allKeys: params.mediaAllKeys || [],
       maxRetries: params.mediaMaxRetries ?? 2,
       responseConfig: params.mediaResponseConfig,
-    });
+    }, params.browserBinding);
       if (builtin) {
         builtinResults.push(builtin);
       } else {
@@ -833,6 +872,8 @@ interface AIConfig {
   mediaAllKeys?: string[];
   mediaMaxRetries?: number;
   mediaResponseConfig?: any;
+  // 浏览器绑定（用于搜索兜底，Cloudflare Browser Run）
+  browserBinding?: any;
 }
 
 // ========== 带上下文的 AI 调用（微信消息处理）==========
@@ -881,6 +922,7 @@ export async function callAIWithContext(
     mediaResponseConfig: aiConfig?.mediaResponseConfig,
     accountId: aiConfig?.accountId,
     cfApiToken: aiConfig?.cfApiToken,
+    browserBinding: aiConfig?.browserBinding,
   };
 
   if (config.provider !== "cloudflare" && !config.model) {
@@ -958,6 +1000,7 @@ export async function callAIWithContext(
         mediaAllKeys: config.mediaAllKeys,
         mediaMaxRetries: config.mediaMaxRetries,
         mediaResponseConfig: config.mediaResponseConfig,
+        browserBinding: config.browserBinding,
       });
       reply = result.reply;
       toolResults = result.toolResults;
@@ -1027,6 +1070,7 @@ export async function callAI(
     mediaResponseConfig: aiConfig?.mediaResponseConfig,
     accountId: aiConfig?.accountId,
     cfApiToken: aiConfig?.cfApiToken,
+    browserBinding: aiConfig?.browserBinding,
   };
 
   if (config.provider !== "cloudflare" && !config.model) {
@@ -1080,6 +1124,7 @@ export async function callAI(
         mediaAllKeys: config.mediaAllKeys,
         mediaMaxRetries: config.mediaMaxRetries,
         mediaResponseConfig: config.mediaResponseConfig,
+        browserBinding: config.browserBinding,
       });
       text = result.reply;
     } else {

@@ -1137,7 +1137,7 @@ export class ILinkConnectionDO implements DurableObject {
           from,
           text,
           systemPrompt,
-          { provider: cfg.aiProvider, model: aiModel, baseUrl: cfg.aiBaseUrl, apiKey: cfg.aiApiKey, maxTokens: cfg.aiMaxTokens, maxContextChars: cfg.aiMaxContextChars, newsnowBaseUrl: cfg.newsnowBaseUrl, searchBaseUrl: cfg.searchBaseUrl, searchToken: cfg.searchToken, mcpServers: cfg.mcpServers, db: this.env.DB, aiBinding: this.env.AI, mediaProvider: cfg.aiProvider, mediaModel: cfg.aiImageModel, mediaBaseUrl: cfg.aiBaseUrl, mediaApiKey: cfg.aiApiKey, mediaAllKeys: cfg.allKeys, mediaMaxRetries: cfg.aiMaxRetries, mediaResponseConfig: cfg.responseConfig, accountId: this.env.ACCOUNT_ID, cfApiToken: this.env.CF_API_TOKEN },
+          { provider: cfg.aiProvider, model: aiModel, baseUrl: cfg.aiBaseUrl, apiKey: cfg.aiApiKey, maxTokens: cfg.aiMaxTokens, maxContextChars: cfg.aiMaxContextChars, newsnowBaseUrl: cfg.newsnowBaseUrl, searchBaseUrl: cfg.searchBaseUrl, searchToken: cfg.searchToken, mcpServers: cfg.mcpServers, db: this.env.DB, aiBinding: this.env.AI, mediaProvider: cfg.aiProvider, mediaModel: cfg.aiImageModel, mediaBaseUrl: cfg.aiBaseUrl, mediaApiKey: cfg.aiApiKey, mediaAllKeys: cfg.allKeys, mediaMaxRetries: cfg.aiMaxRetries, mediaResponseConfig: cfg.responseConfig, accountId: this.env.ACCOUNT_ID, cfApiToken: this.env.CF_API_TOKEN, browserBinding: this.env.BROWSER },
           this.env.DB
         );
 

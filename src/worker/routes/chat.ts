@@ -208,6 +208,7 @@ export async function handleChat(request: Request, env: Env): Promise<Response> 
       mediaResponseConfig: aiConfig.responseConfig,
       accountId: env.ACCOUNT_ID,
       cfApiToken: env.CF_API_TOKEN,
+      browserBinding: env.BROWSER,
     });
 
     Logger.info(`[chat][${requestId}] reply`, { length: reply.length });

@@ -28,6 +28,10 @@ crons = ["*/2 * * * *"]
 [ai]
 binding = "AI"
 
+# ===== 浏览器渲染（搜索兜底，免费版每天 2 次会话）=====
+[browser]
+binding = "BROWSER"
+
 # ===== Queues（异步任务）=====
 [[queues.producers]]
 queue = "clawbot-tasks"
