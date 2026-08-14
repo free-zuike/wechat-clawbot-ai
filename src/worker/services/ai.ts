@@ -181,25 +181,14 @@ async function executeWebSearch(query: string, searchBaseUrl?: string, searchTok
     } catch { /* 忽略 */ }
   }
 
-  // 无 cloudflare-search 或搜索失败 → 用内置免费搜索源兜底
-  const results = await Promise.all([
-    tryWikipedia(q),
-    tryDuckDuckGoQ(q),
-    tryHackerNews(q),
-  ]);
-  const parts = results.filter(Boolean) as string[];
-
-  // 如果免费源都没结果，且浏览器 binding 可用 → 用浏览器搜索 Bing
-  if (parts.length === 0 && browserBinding) {
+  // 无 cloudflare-search 或搜索失败 → 有浏览器 binding 则用浏览器搜索 Bing
+  if (browserBinding) {
     try {
       const bingResult = await executeBrowserSearch(browserBinding, q);
       if (bingResult) return bingResult;
     } catch { /* 忽略 */ }
   }
 
-  if (parts.length > 0) {
-    return parts.map((p, i) => `【来源${i + 1}】\n${p}`).join("\n\n---\n\n");
-  }
   return "没有找到相关结果";
 }
 
