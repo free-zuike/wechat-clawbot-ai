@@ -28,9 +28,8 @@
           <div v-if="searchResult.isError" class="search-error">{{ searchResult.error }}</div>
           <div v-else-if="searchResult.type === 'image'" class="image-grid">
             <template v-if="(searchResult.items || []).length > 0">
-              <a v-for="(item, i) in searchResult.items" :key="item.url" :href="item.url" target="_blank" rel="noopener" class="image-item" :class="{ broken: item.broken }" :title="item.title">
-                <img v-if="!item.broken" :src="item.url" :alt="item.title || '图片'" loading="lazy" decoding="async" @error="markBroken(item)" />
-                <span v-else class="image-broken">⚠️ 加载失败</span>
+              <a v-for="(item, i) in searchResult.items" :key="item.url" :href="item.url" target="_blank" rel="noopener" class="image-item" :title="item.title">
+                <img :src="item.url" :alt="item.title || '图片'" loading="lazy" decoding="async" />
               </a>
               <div class="search-result-header">共 {{ searchResult.items.length }} 张图片（点击查看原图）</div>
             </template>
@@ -82,11 +81,6 @@ const searchQuery = ref("");
 const searchType = ref("web");
 const searching = ref(false);
 const searchResult = ref<{ isError: boolean; type?: string; items?: any[]; error?: string } | null>(null);
-
-// 图片加载失败时标记为不可用（不移除，保留位置）
-function markBroken(item: any) {
-  item.broken = true;
-}
 
 async function handleSave() {
   saving.value = true;
@@ -156,11 +150,31 @@ async function testSearch() {
       searchResult.value = { isError: true, error: data.error || "搜索失败" };
       return;
     }
-    searchResult.value = {
-      isError: false,
-      type: data.type || (isImage ? "image" : "web"),
-      items: (data.items || []).slice(0, isImage ? 12 : 8),
-    };
+
+    if (isImage) {
+      // 图片搜索：用 Image() 预加载验证，只保留能加载的原图
+      const candidates = (data.items || []).slice(0, 20);
+      const validItems: any[] = [];
+      await Promise.all(candidates.map((item: any) => new Promise<void>((resolve) => {
+        const img = new Image();
+        let resolved = false;
+        const done = () => { if (!resolved) { resolved = true; resolve(); } };
+        img.onload = () => { validItems.push(item); done(); };
+        img.onerror = () => done();
+        img.onabort = () => done();
+        setTimeout(done, 5000);
+        img.src = item.url;
+      })));
+      searchResult.value = {
+        isError: false, type: "image",
+        items: validItems.slice(0, 12),
+      };
+    } else {
+      searchResult.value = {
+        isError: false, type: "web",
+        items: (data.items || []).slice(0, 8),
+      };
+    }
   } catch (e: any) {
     searchResult.value = { isError: true, error: `请求失败: ${e?.message || "未知错误"}` };
   } finally {
@@ -195,9 +209,7 @@ async function testSearch() {
 .search-item-desc { font-size: 11px; color: var(--text-secondary); }
 .image-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; }
 .image-item { display: block; border-radius: 6px; overflow: hidden; border: 1px solid var(--border-light); background: var(--bg-skeleton-1); aspect-ratio: 1; }
-.image-item.broken { background: var(--alert-error-bg); display: flex; align-items: center; justify-content: center; }
 .image-item img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.image-broken { font-size: 11px; color: var(--text-muted); text-align: center; }
 .search-empty { text-align: center; color: var(--text-dim); padding: 12px; }
 .save-bar { margin-top: 16px; }
 .result-box { margin-top: 12px; padding: 10px; border-radius: 6px; border: 1px solid var(--border-light); font-size: 13px; }
