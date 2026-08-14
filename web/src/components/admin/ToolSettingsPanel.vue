@@ -28,10 +28,11 @@
           <div v-if="searchResult.isError" class="search-error">{{ searchResult.error }}</div>
           <div v-else-if="searchResult.type === 'image'" class="image-grid">
             <template v-if="(searchResult.items || []).length > 0">
-              <a v-for="(item, i) in searchResult.items" :key="item.url" :href="item.url" target="_blank" rel="noopener" class="image-item" :title="item.title">
-                <img :src="item.thumb || item.url" :alt="item.title || '图片'" loading="lazy" @error="removeImage(searchResult, item)" />
+              <a v-for="(item, i) in searchResult.items" :key="item.url" :href="item.url" target="_blank" rel="noopener" class="image-item" :class="{ broken: item.broken }" :title="item.title">
+                <img v-if="!item.broken" :src="item.url" :alt="item.title || '图片'" loading="lazy" decoding="async" @error="markBroken(item)" />
+                <span v-else class="image-broken">⚠️ 加载失败</span>
               </a>
-              <div class="search-result-header">共 {{ searchResult.items.length }} 张图片（点击查看原图，已自动过滤无法加载的）</div>
+              <div class="search-result-header">共 {{ searchResult.items.length }} 张图片（点击查看原图）</div>
             </template>
             <div v-else class="search-empty">所有图片都无法加载</div>
           </div>
@@ -82,11 +83,9 @@ const searchType = ref("web");
 const searching = ref(false);
 const searchResult = ref<{ isError: boolean; type?: string; items?: any[]; error?: string } | null>(null);
 
-// 图片加载失败时从结果中移除（自动过滤无法访问的图片）
-function removeImage(result: any, item: any) {
-  if (!result || !Array.isArray(result.items)) return;
-  const idx = result.items.findIndex((x: any) => x.url === item.url || x.thumb === item.thumb);
-  if (idx !== -1) result.items.splice(idx, 1);
+// 图片加载失败时标记为不可用（不移除，保留位置）
+function markBroken(item: any) {
+  item.broken = true;
 }
 
 async function handleSave() {
@@ -196,7 +195,9 @@ async function testSearch() {
 .search-item-desc { font-size: 11px; color: var(--text-secondary); }
 .image-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; }
 .image-item { display: block; border-radius: 6px; overflow: hidden; border: 1px solid var(--border-light); background: var(--bg-skeleton-1); aspect-ratio: 1; }
+.image-item.broken { background: var(--alert-error-bg); display: flex; align-items: center; justify-content: center; }
 .image-item img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.image-broken { font-size: 11px; color: var(--text-muted); text-align: center; }
 .search-empty { text-align: center; color: var(--text-dim); padding: 12px; }
 .save-bar { margin-top: 16px; }
 .result-box { margin-top: 12px; padding: 10px; border-radius: 6px; border: 1px solid var(--border-light); font-size: 13px; }
