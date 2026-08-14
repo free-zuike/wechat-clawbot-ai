@@ -9,6 +9,7 @@ export async function handleSearchTest(request: Request, env: Env): Promise<Resp
 
   const url = new URL(request.url);
   const q = url.searchParams.get("q")?.trim();
+  const type = url.searchParams.get("type") || "web";
   if (!q) return json({ error: "缺少搜索关键词 q" }, 400);
 
   if (!env.BROWSER) {
@@ -16,6 +17,46 @@ export async function handleSearchTest(request: Request, env: Env): Promise<Resp
   }
 
   try {
+    // 图片搜索：Bing Images
+    if (type === "image") {
+      const searchUrl = `https://www.bing.com/images/search?q=${encodeURIComponent(q)}`;
+      const resp = await env.BROWSER.quickAction("content", { url: searchUrl });
+      if (!resp.ok) {
+        return json({ ok: false, error: `图片搜索失败 (HTTP ${resp.status})` });
+      }
+      const data = await resp.json() as any;
+      if (!data?.success || !data?.result) {
+        return json({ ok: false, error: "图片搜索返回空结果" });
+      }
+      const html = data.result as string;
+      const items: Array<{ url: string; thumb?: string; title: string }> = [];
+      // Bing 图片搜索：murl 是原图 URL，m 是缩略图
+      const imgRe = /class="iusc"[^>]*m="([^"]+)"/g;
+      let match: RegExpExecArray | null;
+      while ((match = imgRe.exec(html)) !== null && items.length < 12) {
+        try {
+          const meta = JSON.parse(match[1].replace(/&quot;/g, '"').replace(/\\"/g, '"'));
+          if (meta.murl) {
+            items.push({
+              url: meta.murl,
+              thumb: meta.m || undefined,
+              title: meta.t || "",
+            });
+            if (items.length >= 12) break;
+          }
+        } catch {}
+      }
+      // 兜底：data-src 缩略图
+      if (items.length === 0) {
+        const thumbRe = /data-src="(https?:\/\/[^"]+\.(?:jpg|jpeg|png|gif|webp)[^"]*)"/gi;
+        while ((match = thumbRe.exec(html)) !== null && items.length < 12) {
+          items.push({ url: match[1], title: "" });
+        }
+      }
+      return json({ ok: true, type: "image", items, count: items.length });
+    }
+
+    // 网页搜索
     const searchUrl = `https://www.bing.com/search?q=${encodeURIComponent(q)}`;
     const resp = await env.BROWSER.quickAction("content", {
       url: searchUrl,
@@ -56,7 +97,7 @@ export async function handleSearchTest(request: Request, env: Env): Promise<Resp
       }
     }
 
-    return json({ ok: true, items, count: items.length });
+    return json({ ok: true, type: "web", items, count: items.length });
   } catch (e: any) {
     return json({ ok: false, error: `搜索失败: ${e?.message || "未知错误"}` });
   }

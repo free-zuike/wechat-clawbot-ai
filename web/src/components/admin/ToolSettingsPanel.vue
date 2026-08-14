@@ -17,17 +17,27 @@
       <div class="field">
         <label>🔎 搜索测试</label>
         <div class="search-test-row">
+          <select v-model="searchType" class="input type-select">
+            <option value="web">🌐 网页搜索</option>
+            <option value="image">🖼️ 图片搜索</option>
+          </select>
           <input v-model="searchQuery" class="input" placeholder="输入搜索关键词测试" @keyup.enter="testSearch" />
           <button class="btn tiny" :disabled="searching" @click="testSearch">{{ searching ? '搜索中...' : '搜索测试' }}</button>
         </div>
         <div v-if="searchResult" :class="['search-result-box', searchResult.isError ? 'error' : '']">
           <div v-if="searchResult.isError" class="search-error">{{ searchResult.error }}</div>
+          <div v-else-if="searchResult.type === 'image'" class="image-grid">
+            <a v-for="(item, i) in searchResult.items" :key="i" :href="item.url" target="_blank" rel="noopener" class="image-item" :title="item.title">
+              <img :src="item.thumb || item.url" :alt="item.title || '图片'" loading="lazy" @error="(e: any) => handleImgError(e, item)" />
+            </a>
+            <div class="search-result-header">共 {{ searchResult.items.length }} 张图片（点击查看原图）</div>
+          </div>
           <div v-else class="search-items">
             <div class="search-result-header">共 {{ searchResult.items.length }} 条结果</div>
             <div v-for="(item, i) in searchResult.items" :key="i" class="search-item">
-              <div class="search-item-title">{{ item.title }}</div>
-              <div class="search-item-url">{{ item.url }}</div>
-              <div class="search-item-desc">{{ item.description }}</div>
+              <a :href="item.url" target="_blank" rel="noopener" class="search-item-title">{{ item.title }}</a>
+              <a :href="item.url" target="_blank" rel="noopener" class="search-item-url">{{ item.url }}</a>
+              <div v-if="item.description" class="search-item-desc">{{ item.description }}</div>
             </div>
           </div>
         </div>
@@ -65,8 +75,15 @@ const props = defineProps<{
 const saving = ref(false);
 const result = ref("");
 const searchQuery = ref("");
+const searchType = ref("web");
 const searching = ref(false);
-const searchResult = ref<{ isError: boolean; items?: any[]; error?: string } | null>(null);
+const searchResult = ref<{ isError: boolean; type?: string; items?: any[]; error?: string } | null>(null);
+
+// 图片加载失败时回退到原图地址
+function handleImgError(e: any, item: any) {
+  if (e.target.src !== item.url) e.target.src = item.url;
+  else e.target.style.display = "none";
+}
 
 async function handleSave() {
   saving.value = true;
@@ -93,12 +110,13 @@ async function testSearch() {
   if (!q) return;
   const baseUrl = props.config.searchBaseUrl?.trim();
   const token = props.config.searchToken?.trim();
+  const isImage = searchType.value === "image";
 
   searching.value = true;
   searchResult.value = null;
   try {
-    // 有 cloudflare-search → 直接调用
-    if (baseUrl) {
+    // 图片搜索始终走后端 API（浏览器搜索）
+    if (!isImage && baseUrl) {
       const url = token
         ? `${baseUrl.replace(/\/+$/, "")}/search?q=${encodeURIComponent(q)}&token=${encodeURIComponent(token)}`
         : `${baseUrl.replace(/\/+$/, "")}/search?q=${encodeURIComponent(q)}`;
@@ -120,13 +138,13 @@ async function testSearch() {
         searchResult.value = { isError: true, error: `搜索结果为空\n${diag}` };
         return;
       }
-      searchResult.value = { isError: false, items: items.slice(0, 8) };
+      searchResult.value = { isError: false, type: "web", items: items.slice(0, 8) };
       return;
     }
 
-    // 无 cloudflare-search → 通过后端 API 调用浏览器搜索
+    // 浏览器搜索（网页或图片）
     const authToken = localStorage.getItem("clawbot_auth") || "";
-    const resp = await fetch(`/api/search-test?q=${encodeURIComponent(q)}`, {
+    const resp = await fetch(`/api/search-test?q=${encodeURIComponent(q)}&type=${isImage ? "image" : "web"}`, {
       headers: { Authorization: `Bearer ${authToken}` },
       signal: AbortSignal.timeout(30000),
     });
@@ -135,7 +153,11 @@ async function testSearch() {
       searchResult.value = { isError: true, error: data.error || "搜索失败" };
       return;
     }
-    searchResult.value = { isError: false, items: (data.items || []).slice(0, 8) };
+    searchResult.value = {
+      isError: false,
+      type: data.type || (isImage ? "image" : "web"),
+      items: (data.items || []).slice(0, isImage ? 12 : 8),
+    };
   } catch (e: any) {
     searchResult.value = { isError: true, error: `请求失败: ${e?.message || "未知错误"}` };
   } finally {
@@ -156,15 +178,21 @@ async function testSearch() {
 .field-hint { font-size: 11px; color: var(--text-secondary); margin-top: 4px; }
 .search-test-row { display: flex; gap: 6px; align-items: center; }
 .search-test-row .input { flex: 1; }
+.type-select { width: 120px; flex-shrink: 0; }
 .search-result-box { margin-top: 8px; padding: 10px; border-radius: 6px; border: 1px solid var(--border-light); font-size: 12px; max-height: 300px; overflow-y: auto; }
 .search-result-box.error { background: var(--alert-error-bg); color: var(--alert-error-text); white-space: pre-wrap; }
 .search-error { color: var(--alert-error-text); }
 .search-result-header { font-size: 11px; color: var(--text-muted); margin-bottom: 6px; font-weight: 600; }
 .search-items { display: flex; flex-direction: column; gap: 8px; }
 .search-item { padding: 6px 8px; border-radius: 4px; background: var(--bg-skeleton-1); }
-.search-item-title { font-weight: 600; color: var(--link); }
-.search-item-url { font-size: 11px; color: var(--text-muted); word-break: break-all; margin: 2px 0; }
+.search-item-title { font-weight: 600; color: var(--link); text-decoration: none; display: block; }
+.search-item-title:hover { text-decoration: underline; }
+.search-item-url { font-size: 11px; color: var(--text-muted); word-break: break-all; margin: 2px 0; display: block; text-decoration: none; }
+.search-item-url:hover { text-decoration: underline; }
 .search-item-desc { font-size: 11px; color: var(--text-secondary); }
+.image-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; }
+.image-item { display: block; border-radius: 6px; overflow: hidden; border: 1px solid var(--border-light); background: var(--bg-skeleton-1); aspect-ratio: 1; }
+.image-item img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .search-empty { text-align: center; color: var(--text-dim); padding: 12px; }
 .save-bar { margin-top: 16px; }
 .result-box { margin-top: 12px; padding: 10px; border-radius: 6px; border: 1px solid var(--border-light); font-size: 13px; }
