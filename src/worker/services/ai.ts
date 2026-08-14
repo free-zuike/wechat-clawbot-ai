@@ -154,21 +154,20 @@ const BUILTIN_TOOLS = [{
 }];
 
 // 网页搜索：调用 cloudflare-search 聚合搜索引擎
-async function executeWebSearch(query: string, searchBaseUrl?: string, searchToken?: string, browserBinding?: any): Promise<string> {
+async function executeWebSearch(query: string, searchBaseUrl?: string, searchToken?: string, browserBinding?: any, searchEngine?: string): Promise<string> {
   const q = (query || "").trim();
   if (!q) return "搜索关键词为空";
   const base = (searchBaseUrl || "").trim().replace(/\/+$/, "");
+  const preferBrowser = searchEngine === "browser";
 
-  // 配置了 cloudflare-search → 优先使用
-  if (base) {
+  // 按优先级尝试搜索源
+  async function tryCloudflare(): Promise<string | null> {
+    if (!base) return null;
     try {
       const url = searchToken
         ? `${base}/search?q=${encodeURIComponent(q)}&token=${encodeURIComponent(searchToken)}`
         : `${base}/search?q=${encodeURIComponent(q)}`;
-      const resp = await fetch(url, {
-        headers: { "Accept": "application/json" },
-        signal: AbortSignal.timeout(15000),
-      });
+      const resp = await fetch(url, { headers: { "Accept": "application/json" }, signal: AbortSignal.timeout(15000) });
       if (resp.ok) {
         const data = await resp.json() as any;
         const items = data?.results;
@@ -178,18 +177,36 @@ async function executeWebSearch(query: string, searchBaseUrl?: string, searchTok
           ).join("\n\n");
         }
       }
-    } catch { /* 忽略 */ }
+    } catch {}
+    return null;
   }
 
-  // 无 cloudflare-search 或搜索失败 → 有浏览器 binding 则用浏览器搜索 Bing
-  if (browserBinding) {
+  async function tryBrowser(): Promise<string | null> {
+    if (!browserBinding) return null;
     try {
-      const bingResult = await executeBrowserSearch(browserBinding, q);
-      if (bingResult) return bingResult;
-    } catch { /* 忽略 */ }
+      const result = await executeBrowserSearch(browserBinding, q);
+      return result;
+    } catch {}
+    return null;
   }
 
-  return "没有找到相关结果";
+  // 根据优先级顺序尝试
+  let result: string | null = null;
+  let source = "";
+  if (preferBrowser && browserBinding) {
+    result = await tryBrowser();
+    source = "浏览器搜索";
+  }
+  if (!result && base) {
+    result = await tryCloudflare();
+    source = "cloudflare-search";
+  }
+  if (!result && !preferBrowser && browserBinding) {
+    result = await tryBrowser();
+    source = "浏览器搜索";
+  }
+
+  return result ? `【来源: ${source}】\n${result}` : "没有找到相关结果";
 }
 
 // 用 Cloudflare Browser Run 搜索 Bing（免费版每天 2 次会话，不会被限流）
@@ -307,6 +324,7 @@ async function executeBuiltinTool(
   searchToken?: string,
   mediaConfig?: { aiBinding: any; provider: string; model: string; baseUrl: string; apiKey: string; allKeys: string[]; maxRetries: number; responseConfig: any },
   browserBinding?: any,
+  searchEngine?: string,
 ): Promise<MCPToolResult | null> {
   if (toolCall.function.name === "get_current_datetime") {
     const now = new Date();
@@ -322,7 +340,7 @@ async function executeBuiltinTool(
   if (toolCall.function.name === "web_search") {
     let args: Record<string, any> = {};
     try { args = JSON.parse(toolCall.function.arguments || "{}"); } catch {}
-    const content = await executeWebSearch(args.q || "", searchBaseUrl, searchToken, browserBinding);
+    const content = await executeWebSearch(args.q || "", searchBaseUrl, searchToken, browserBinding, searchEngine);
     return { callId: toolCall.id, name: "web_search", content };
   }
   if (toolCall.function.name === "get_news") {
@@ -483,6 +501,7 @@ async function callOpenAICompatible(params: {
   newsnowBaseUrl?: string;
   searchBaseUrl?: string;
   searchToken?: string;
+  searchEngine?: string;
   // 媒体生成配置（供 generate_image / generate_video 内置工具使用）
   aiBinding?: any;
   mediaProvider?: string;
@@ -575,7 +594,7 @@ async function callOpenAICompatible(params: {
       allKeys: params.mediaAllKeys || [],
       maxRetries: params.mediaMaxRetries ?? 2,
       responseConfig: params.mediaResponseConfig,
-    }, params.browserBinding);
+    }, params.browserBinding, params.searchEngine);
       if (builtin) {
         builtinResults.push(builtin);
       } else {
@@ -653,6 +672,7 @@ interface AIConfig {
   newsnowBaseUrl?: string;
   searchBaseUrl?: string;
   searchToken?: string;
+  searchEngine?: string;
   thinking?: boolean;
   mcpServers?: MCPServerConfig[];
   db?: D1Database | null;
@@ -705,6 +725,7 @@ export async function callAIWithContext(
     newsnowBaseUrl: aiConfig?.newsnowBaseUrl,
     searchBaseUrl: aiConfig?.searchBaseUrl,
     searchToken: aiConfig?.searchToken,
+    searchEngine: aiConfig?.searchEngine,
     thinking: aiConfig?.thinking || false,
     mcpServers: aiConfig?.mcpServers || [],
     db: aiConfig?.db || null,
@@ -788,6 +809,7 @@ export async function callAIWithContext(
         newsnowBaseUrl: config.newsnowBaseUrl,
         searchBaseUrl: config.searchBaseUrl,
         searchToken: config.searchToken,
+        searchEngine: config.searchEngine,
         aiBinding: config.aiBinding,
         mediaProvider: config.mediaProvider,
         mediaModel: config.mediaModel,
@@ -853,6 +875,7 @@ export async function callAI(
     newsnowBaseUrl: aiConfig?.newsnowBaseUrl,
     searchBaseUrl: aiConfig?.searchBaseUrl,
     searchToken: aiConfig?.searchToken,
+    searchEngine: aiConfig?.searchEngine,
     thinking: aiConfig?.thinking || false,
     mcpServers: aiConfig?.mcpServers || [],
     db: aiConfig?.db || null,
@@ -912,6 +935,7 @@ export async function callAI(
         newsnowBaseUrl: config.newsnowBaseUrl,
         searchBaseUrl: config.searchBaseUrl,
         searchToken: config.searchToken,
+        searchEngine: config.searchEngine,
         aiBinding: config.aiBinding,
         mediaProvider: config.mediaProvider,
         mediaModel: config.mediaModel,

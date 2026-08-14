@@ -32,6 +32,14 @@
           </div>
         </div>
       </div>
+      <div class="field">
+        <label>🌐 搜索优先级</label>
+        <select v-model="config.searchEngine" class="input">
+          <option value="">自动（cloudflare-search → 浏览器）</option>
+          <option value="browser">优先使用浏览器（浏览器 → cloudflare-search）</option>
+        </select>
+        <div class="field-hint">选择搜索源的优先顺序。浏览器搜索每天免费 10 分钟，不会被限流</div>
+      </div>
     </div>
 
     <div class="tool-section">
@@ -52,7 +60,7 @@ import { ref } from "vue";
 import { saveConfig } from "../../api";
 
 const props = defineProps<{
-  config: { newsnowBaseUrl?: string; searchBaseUrl?: string; searchToken?: string; allowlist?: string };
+  config: { newsnowBaseUrl?: string; searchBaseUrl?: string; searchToken?: string; searchEngine?: string; allowlist?: string };
 }>();
 const saving = ref(false);
 const result = ref("");
@@ -68,6 +76,7 @@ async function handleSave() {
       newsnowBaseUrl: props.config.newsnowBaseUrl || "",
       searchBaseUrl: props.config.searchBaseUrl || "",
       searchToken: props.config.searchToken || "",
+      searchEngine: props.config.searchEngine || "",
       allowlist: props.config.allowlist || "",
     });
     if (d.ok) result.value = "✅ 工具配置已保存";
