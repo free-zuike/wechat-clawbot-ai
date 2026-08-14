@@ -23,12 +23,12 @@
         <div v-if="searchResult" :class="['search-result-box', searchResult.isError ? 'error' : '']">
           <div v-if="searchResult.isError" class="search-error">{{ searchResult.error }}</div>
           <div v-else class="search-items">
+            <div class="search-result-header">共 {{ searchResult.items.length }} 条结果</div>
             <div v-for="(item, i) in searchResult.items" :key="i" class="search-item">
               <div class="search-item-title">{{ item.title }}</div>
               <div class="search-item-url">{{ item.url }}</div>
               <div class="search-item-desc">{{ item.description }}</div>
             </div>
-            <div v-if="searchResult.items.length === 0" class="search-empty">无结果</div>
           </div>
         </div>
       </div>
@@ -99,8 +99,12 @@ async function testSearch() {
     }
     const data = await resp.json() as any;
     const items = data?.results || data?.items || [];
+    const numResults = data?.number_of_results ?? items.length;
     if (!Array.isArray(items) || items.length === 0) {
-      searchResult.value = { isError: true, error: "搜索成功但返回结果为空，请检查搜索服务配置" };
+      const diag = data?.unresponsive_engines?.length
+        ? `（以下引擎无响应: ${data.unresponsive_engines.join(", ")}）`
+        : "（搜索引擎可能未返回结果）";
+      searchResult.value = { isError: true, error: `搜索结果为空 ${diag}\n返回字段: ${Object.keys(data).join(", ")}` };
       return;
     }
     searchResult.value = { isError: false, items: items.slice(0, 8) };
@@ -125,8 +129,9 @@ async function testSearch() {
 .search-test-row { display: flex; gap: 6px; align-items: center; }
 .search-test-row .input { flex: 1; }
 .search-result-box { margin-top: 8px; padding: 10px; border-radius: 6px; border: 1px solid var(--border-light); font-size: 12px; max-height: 300px; overflow-y: auto; }
-.search-result-box.error { background: var(--alert-error-bg); color: var(--alert-error-text); }
+.search-result-box.error { background: var(--alert-error-bg); color: var(--alert-error-text); white-space: pre-wrap; }
 .search-error { color: var(--alert-error-text); }
+.search-result-header { font-size: 11px; color: var(--text-muted); margin-bottom: 6px; font-weight: 600; }
 .search-items { display: flex; flex-direction: column; gap: 8px; }
 .search-item { padding: 6px 8px; border-radius: 4px; background: var(--bg-skeleton-1); }
 .search-item-title { font-weight: 600; color: var(--link); }
