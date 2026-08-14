@@ -32,10 +32,13 @@ export async function handleSearchTest(request: Request, env: Env): Promise<Resp
     }
 
     const html = data.result as string;
-    // 调试：输出 HTML 前 500 字符看结构
-    console.log(`[search-test] HTML length: ${html.length}, sample: ${html.slice(0, 500)}`);
+    // 查找搜索结果区域
+    const resultsStart = html.indexOf('class="b_algo"');
+    const resultsSample = resultsStart !== -1 ? html.slice(resultsStart, resultsStart + 800) : html.slice(0, 800);
+    console.log(`[search-test] HTML length: ${html.length}, results sample: ${resultsSample}`);
     const items: Array<{ title: string; url: string; description: string }> = [];
-    const linkRe = /<h2[^>]*>.*?<a[^>]*href="(https?:\/\/[^"]+)"[^>]*>(.*?)<\/a>/gi;
+    // Bing 搜索结果的多种格式
+    const linkRe = /<h2[^>]*>.*?<a[^>]*href="(https?:\/\/[^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
     let m: RegExpExecArray | null;
     while ((m = linkRe.exec(html)) !== null && items.length < 10) {
       const itemUrl = m[1];

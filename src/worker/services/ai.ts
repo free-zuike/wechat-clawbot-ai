@@ -222,8 +222,8 @@ async function executeBrowserSearch(browserBinding: any, query: string): Promise
   // 从 HTML 中提取搜索结果链接
   const html = data.result as string;
   const results: string[] = [];
-  // Bing 搜索结果链接在 <h2><a href="..."> 中
-  const linkRe = /<h2[^>]*>.*?<a[^>]*href="(https?:\/\/[^"]+)"[^>]*>(.*?)<\/a>/gi;
+  // Bing 搜索结果的多种格式
+  const linkRe = /<h2[^>]*>.*?<a[^>]*href="(https?:\/\/[^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
   let m: RegExpExecArray | null;
   while ((m = linkRe.exec(html)) !== null && results.length < 10) {
     const url = m[1];
