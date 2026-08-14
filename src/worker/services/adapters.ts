@@ -57,19 +57,57 @@ function createGenericImageAdapter(config: ProviderResponseConfig) {
   const sizeField = config.imageSizeField || "size";
   const extraHeaders = typeof config.requestHeaders === "string" ? (() => { try { return JSON.parse(config.requestHeaders); } catch { return {}; } })() : (config.requestHeaders || {});
 
+  // 自动尝试多个常见提取路径
+  function autoExtract(response: any): string | null {
+    // 优先用配置的路径
+    const configured = getByPath(response, imageUrlPath);
+    if (configured) return configured;
+
+    // 自动尝试常见路径
+    const commonPaths = [
+      "data[0].url", "data[0].image_url", "data[0].image",
+      "result.data[0].url", "result.data[0].image_url",
+      "output.url", "output.image_url",
+      "image", "url", "data.url",
+      "images[0].url", "images[0].image",
+      "data[0].b64_json", "data[0].base64",
+    ];
+    for (const path of commonPaths) {
+      if (path === imageUrlPath) continue; // 已试过
+      const val = getByPath(response, path);
+      if (val) return val;
+    }
+    return null;
+  }
+
+  function autoExtractBase64(response: any): string | null {
+    const configured = getByPath(response, imageBase64Path);
+    if (configured) return configured;
+
+    const commonPaths = [
+      "data[0].b64_json", "data[0].base64",
+      "result.data[0].b64_json",
+      "output.base64",
+    ];
+    for (const path of commonPaths) {
+      if (path === imageBase64Path) continue;
+      const val = getByPath(response, path);
+      if (val) return val;
+    }
+    return null;
+  }
+
   return {
     buildBody(prompt: string, model: string, size: string, refImages: string[]): any {
       const body: any = {};
       body[modelField] = model;
       body[promptField] = prompt;
       body[sizeField] = size;
-      // extra_body 配置
       if (!body.extra_body) body.extra_body = {};
       body.extra_body.response_format = "url";
       if (config.imageExtraBody) {
         Object.assign(body.extra_body, config.imageExtraBody);
       }
-      // 参考图
       if (refImages.length > 0) {
         if (refLoc === "extra_body") {
           body.extra_body[refParam] = refImages;
@@ -80,10 +118,10 @@ function createGenericImageAdapter(config: ProviderResponseConfig) {
       return body;
     },
     extractImageUrl(response: any): string | null {
-      return getByPath(response, imageUrlPath) || null;
+      return autoExtract(response);
     },
     extractImageBase64(response: any): string | null {
-      return getByPath(response, imageBase64Path) || null;
+      return autoExtractBase64(response);
     },
     extraHeaders,
   };
