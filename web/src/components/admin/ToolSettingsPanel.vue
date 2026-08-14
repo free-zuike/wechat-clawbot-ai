@@ -17,8 +17,8 @@
       <div class="field">
         <label>🔎 搜索测试</label>
         <div class="search-test-row">
-          <input v-model="searchQuery" class="input" placeholder="输入搜索关键词测试" :disabled="!config.searchBaseUrl" @keyup.enter="testSearch" />
-          <button class="btn tiny" :disabled="!config.searchBaseUrl || searching" @click="testSearch">{{ searching ? '搜索中...' : '搜索测试' }}</button>
+          <input v-model="searchQuery" class="input" placeholder="输入搜索关键词测试" @keyup.enter="testSearch" />
+          <button class="btn tiny" :disabled="searching" @click="testSearch">{{ searching ? '搜索中...' : '搜索测试' }}</button>
         </div>
         <div v-if="searchResult" :class="['search-result-box', searchResult.isError ? 'error' : '']">
           <div v-if="searchResult.isError" class="search-error">{{ searchResult.error }}</div>
@@ -90,13 +90,17 @@ async function handleSave() {
 
 async function testSearch() {
   const q = searchQuery.value.trim();
+  if (!q) return;
   const baseUrl = props.config.searchBaseUrl?.trim();
   const token = props.config.searchToken?.trim();
-  if (!q || !baseUrl) return;
 
   searching.value = true;
   searchResult.value = null;
   try {
+    if (!baseUrl) {
+      searchResult.value = { isError: true, error: "未配置搜索服务地址。cloudflare-search 和浏览器搜索都需要部署后才能测试，请先配置搜索服务地址" };
+      return;
+    }
     const url = token
       ? `${baseUrl.replace(/\/+$/, "")}/search?q=${encodeURIComponent(q)}&token=${encodeURIComponent(token)}`
       : `${baseUrl.replace(/\/+$/, "")}/search?q=${encodeURIComponent(q)}`;
