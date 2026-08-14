@@ -101,10 +101,13 @@ async function testSearch() {
     const items = data?.results || data?.items || [];
     const numResults = data?.number_of_results ?? items.length;
     if (!Array.isArray(items) || items.length === 0) {
-      const diag = data?.unresponsive_engines?.length
-        ? `（以下引擎无响应: ${data.unresponsive_engines.join(", ")}）`
-        : "（搜索引擎可能未返回结果）";
-      searchResult.value = { isError: true, error: `搜索结果为空 ${diag}\n返回字段: ${Object.keys(data).join(", ")}` };
+      const errors = data?.errors || [];
+      const diag = errors.length > 0
+        ? errors.map((e: any) => `${e.engine}: ${e.error}`).join("；")
+        : (data?.unresponsive_engines?.length
+          ? `（以下引擎无响应: ${data.unresponsive_engines.join(", ")}）`
+          : "（引擎无返回结果）");
+      searchResult.value = { isError: true, error: `搜索结果为空\n${diag}` };
       return;
     }
     searchResult.value = { isError: false, items: items.slice(0, 8) };
