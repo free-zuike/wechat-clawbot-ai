@@ -97,33 +97,45 @@ async function testSearch() {
   searching.value = true;
   searchResult.value = null;
   try {
-    if (!baseUrl) {
-      searchResult.value = { isError: true, error: "未配置搜索服务地址。cloudflare-search 和浏览器搜索都需要部署后才能测试，请先配置搜索服务地址" };
+    // 有 cloudflare-search → 直接调用
+    if (baseUrl) {
+      const url = token
+        ? `${baseUrl.replace(/\/+$/, "")}/search?q=${encodeURIComponent(q)}&token=${encodeURIComponent(token)}`
+        : `${baseUrl.replace(/\/+$/, "")}/search?q=${encodeURIComponent(q)}`;
+      const resp = await fetch(url, { signal: AbortSignal.timeout(10000) });
+      if (!resp.ok) {
+        const errText = await resp.text().catch(() => "");
+        searchResult.value = { isError: true, error: `HTTP ${resp.status}: ${errText.slice(0, 200)}` };
+        return;
+      }
+      const data = await resp.json() as any;
+      const items = data?.results || data?.items || [];
+      if (!Array.isArray(items) || items.length === 0) {
+        const errors = data?.errors || [];
+        const diag = errors.length > 0
+          ? errors.map((e: any) => `${e.engine}: ${e.error}`).join("；")
+          : (data?.unresponsive_engines?.length
+            ? `（以下引擎无响应: ${data.unresponsive_engines.join(", ")}）`
+            : "（引擎无返回结果）");
+        searchResult.value = { isError: true, error: `搜索结果为空\n${diag}` };
+        return;
+      }
+      searchResult.value = { isError: false, items: items.slice(0, 8) };
       return;
     }
-    const url = token
-      ? `${baseUrl.replace(/\/+$/, "")}/search?q=${encodeURIComponent(q)}&token=${encodeURIComponent(token)}`
-      : `${baseUrl.replace(/\/+$/, "")}/search?q=${encodeURIComponent(q)}`;
-    const resp = await fetch(url, { signal: AbortSignal.timeout(10000) });
-    if (!resp.ok) {
-      const errText = await resp.text().catch(() => "");
-      searchResult.value = { isError: true, error: `HTTP ${resp.status}: ${errText.slice(0, 200)}` };
-      return;
-    }
+
+    // 无 cloudflare-search → 通过后端 API 调用浏览器搜索
+    const authToken = localStorage.getItem("clawbot_auth") || "";
+    const resp = await fetch(`/api/search-test?q=${encodeURIComponent(q)}`, {
+      headers: { Authorization: `Bearer ${authToken}` },
+      signal: AbortSignal.timeout(30000),
+    });
     const data = await resp.json() as any;
-    const items = data?.results || data?.items || [];
-    const numResults = data?.number_of_results ?? items.length;
-    if (!Array.isArray(items) || items.length === 0) {
-      const errors = data?.errors || [];
-      const diag = errors.length > 0
-        ? errors.map((e: any) => `${e.engine}: ${e.error}`).join("；")
-        : (data?.unresponsive_engines?.length
-          ? `（以下引擎无响应: ${data.unresponsive_engines.join(", ")}）`
-          : "（引擎无返回结果）");
-      searchResult.value = { isError: true, error: `搜索结果为空\n${diag}` };
+    if (!data.ok) {
+      searchResult.value = { isError: true, error: data.error || "搜索失败" };
       return;
     }
-    searchResult.value = { isError: false, items: items.slice(0, 8) };
+    searchResult.value = { isError: false, items: (data.items || []).slice(0, 8) };
   } catch (e: any) {
     searchResult.value = { isError: true, error: `请求失败: ${e?.message || "未知错误"}` };
   } finally {
