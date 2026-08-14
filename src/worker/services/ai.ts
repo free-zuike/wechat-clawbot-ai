@@ -651,8 +651,12 @@ async function callOpenAICompatible(params: {
     body.chat_template_kwargs = { enable_thinking: true };
   }
 
-  // 始终附加内置工具（web_search 需要恒可用，get_current_datetime 辅助日期换算）
-  const allTools = [...BUILTIN_TOOLS, ...(params.tools || [])];
+  // 内置工具：只在对应服务已配置时注册
+  const allTools = [...BUILTIN_TOOLS, ...(params.tools || [])].filter(t => {
+    // web_search 需要 searchBaseUrl 已配置
+    if (t.function?.name === "web_search" && !params.searchBaseUrl) return false;
+    return true;
+  });
   const hasTools = allTools.length > 0;
   if (hasTools) {
     body.tools = allTools;
