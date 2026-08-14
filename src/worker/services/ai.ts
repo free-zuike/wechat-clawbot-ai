@@ -346,7 +346,7 @@ async function executeBuiltinTool(
   if (toolCall.function.name === "get_news") {
     let args: Record<string, any> = {};
     try { args = JSON.parse(toolCall.function.arguments || "{}"); } catch {}
-    const content = await executeNewsNow(args.source || "", newsnowBaseUrl, browserBinding);
+    const content = await executeNewsNow(args.source || "", newsnowBaseUrl);
     return { callId: toolCall.id, name: "get_news", content };
   }
   if (toolCall.function.name === "generate_image") {
@@ -376,7 +376,7 @@ async function executeBuiltinTool(
 // 获取中文新闻：调用 NewsNow 实例（默认公共实例，失败时回退 HN）
 // NewsNow API: GET /api/s?id=<source>，source 如 weibo/zhihu/baidu/toutiao/thepaper/36kr/ithome/bilibili/tencent/ifeng/sspai/juejin/douyin/hupu
 const NEWS_NOW_DEFAULT = "https://newsnow.busiyi.world";
-async function executeNewsNow(source: string, baseUrl?: string, browserBinding?: any): Promise<string> {
+async function executeNewsNow(source: string, baseUrl?: string): Promise<string> {
   const base = (baseUrl || NEWS_NOW_DEFAULT).trim().replace(/\/+$/, "");
   try {
     // 未指定源时，并行拉取几个主流中文源，选最成功的一个
@@ -431,30 +431,11 @@ async function executeNewsNow(source: string, baseUrl?: string, browserBinding?:
     const topNews = await tryTopNews();
     if (topNews) return "NewsNow 暂不可用，以下是今日热门：\n" + topNews;
 
-    // 最后兜底：用浏览器搜索新闻
-    if (browserBinding) {
-      try {
-        const newsQuery = requested ? `${requested} 新闻` : "今日新闻热点";
-        const browserResult = await executeBrowserSearch(browserBinding, newsQuery);
-        if (browserResult) return "NewsNow 暂不可用，以下是通过浏览器搜索的新闻：\n" + browserResult;
-      } catch {}
-    }
-
     return "没有获取到新闻";
   } catch (e: any) {
     // 最终回退 HN 热门
     const topNews = await tryTopNews();
     if (topNews) return "NewsNow 暂不可用，以下是今日热门：\n" + topNews;
-
-    // 浏览器兜底
-    if (browserBinding) {
-      try {
-        const newsQuery = requested ? `${requested} 新闻` : "今日新闻热点";
-        const browserResult = await executeBrowserSearch(browserBinding, newsQuery);
-        if (browserResult) return "NewsNow 暂不可用，以下是通过浏览器搜索的新闻：\n" + browserResult;
-      } catch {}
-    }
-
     return `新闻获取失败: ${e?.message || String(e)}`;
   }
 }
