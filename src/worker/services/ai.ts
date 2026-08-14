@@ -115,13 +115,20 @@ function getCurrentTimeStr(): string {
   return `${get("year")}年${get("month")}月${get("day")}日 ${get("hour")}:${get("minute")}:${get("second")}（星期${weekdayMap[get("weekday")] || get("weekday")}，中国时区）`;
 }
 
-// 内置工具：获取当前日期时间 + 中文新闻 + 网页搜索
+// 内置工具：获取当前日期时间 + 中文新闻 + 网页搜索 + 天气
 const BUILTIN_TOOLS = [{
   type: "function",
   function: {
     name: "get_current_datetime",
     description: "获取当前日期和时间（中国时区 Asia/Shanghai, UTC+8），当用户问到「今天/昨天/明天/上个月/本月/上周/下周」等相对时间时，调用此工具获取准确日期后再回答",
     parameters: { type: "object", properties: {} },
+  },
+}, {
+  type: "function",
+  function: {
+    name: "get_weather",
+    description: "获取指定城市的实时天气和未来预报，通过 wttr.in 获取。当用户问到「天气、气温、下雨、刮风、今天冷不冷、明天适合出门吗」等天气相关问题时调用此工具，不要再调用 web_search",
+    parameters: { type: "object", properties: { city: { type: "string", description: "城市名（必填），如 北京/上海/广州/大同，支持中文城市名" } }, required: ["city"] },
   },
 }, {
   type: "function",
@@ -214,6 +221,49 @@ async function executeWebSearch(query: string, searchBaseUrl?: string, searchTok
   }
 
   return result ? `【来源: ${source}】\n${result}` : "没有找到相关结果";
+}
+
+// 天气查询：调用 wttr.in 免费 API（无需 API Key）
+async function executeWeatherQuery(city: string): Promise<string> {
+  try {
+    const resp = await fetch(`https://wttr.in/${encodeURIComponent(city)}?format=j1`, {
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!resp.ok) return `天气查询失败（${resp.status}），请稍后重试`;
+
+    const data = await resp.json() as any;
+    const current = data?.current_condition?.[0];
+    if (!current) return `未找到 ${city} 的天气数据`;
+
+    const cityName = data?.nearest_area?.[0]?.areaName?.[0]?.value || city;
+    const weatherDesc = current.weatherDesc?.[0]?.value || "";
+    const temp = current.temp_C || "";
+    const feelsLike = current.FeelsLikeC || "";
+    const humidity = current.humidity || "";
+    const windSpeed = current.windspeedKmph || "";
+    const windDir = current.winddir16Point || "";
+    const visibility = current.visibility || "";
+    const pressure = current.pressure || "";
+    const uvIndex = current.uvIndex || "";
+
+    // 未来预报（取今明两天）
+    const forecasts = data?.weather || [];
+    const forecastLines = forecasts.slice(0, 2).map((day: any) => {
+      const date = day.date || "";
+      const hi = day.tempMaxC || "";
+      const lo = day.tempMinC || "";
+      const desc = day.hourly?.[0]?.weatherDesc?.[0]?.value || "";
+      return `${date} ${desc} ${lo}~${hi}°C`;
+    }).join("\n");
+
+    return `【${cityName} 实时天气】${weatherDesc}
+气温: ${temp}°C（体感 ${feelsLike}°C）
+湿度: ${humidity}% | 风: ${windDir} ${windSpeed}km/h
+能见度: ${visibility}km | 气压: ${pressure}hPa | 紫外线: ${uvIndex}
+${forecastLines.length > 0 ? `\n【预报】\n${forecastLines}` : ""}`;
+  } catch (e: any) {
+    return `天气查询失败: ${e?.message || "请求超时"}`;
+  }
 }
 
 // 用 Cloudflare Browser Run 搜索 Bing（免费版每天 10 分钟，不会被限流）
@@ -392,6 +442,14 @@ async function executeBuiltinTool(
     const weekdayStr = weekdayMap[get("weekday")] || get("weekday");
     const timeStr = `${get("hour")}:${get("minute")}:${get("second")}`;
     return { callId: toolCall.id, name: "get_current_datetime", content: `当前日期: ${dateStr}（星期${weekdayStr}），当前时间: ${timeStr}（中国时区）` };
+  }
+  if (toolCall.function.name === "get_weather") {
+    let args: Record<string, any> = {};
+    try { args = JSON.parse(toolCall.function.arguments || "{}"); } catch {}
+    const city = (args.city || "").trim();
+    if (!city) return { callId: toolCall.id, name: "get_weather", content: "请指定城市名", isError: true };
+    const content = await executeWeatherQuery(city);
+    return { callId: toolCall.id, name: "get_weather", content };
   }
   if (toolCall.function.name === "web_search") {
     let args: Record<string, any> = {};
@@ -826,7 +884,7 @@ export async function callAIWithContext(
 
   // 注入当前日期（通用，不针对特定 MCP），让 AI 正确换算"今天/上个月/本月"等相对时间
   const messages = buildMessagesWithContext(
-    `当前时间: ${getCurrentTimeStr()}。当用户提到"今天/昨天/明天/上个月/本月/下周/几点"等相对时间时，基于以上时间准确换算。当用户问到新闻、时事、热点时，调用 get_news 工具获取中文新闻。\n` +
+    `当前时间: ${getCurrentTimeStr()}。当用户提到"今天/昨天/明天/上个月/本月/下周/几点"等相对时间时，基于以上时间准确换算。当用户问到新闻、时事、热点时，调用 get_news 工具获取中文新闻。当用户问到天气时，调用 get_weather 工具获取实时天气，不要用 web_search 搜天气。\n` +
     `注意对话连续性：用户可能会用简短回复（如"列出来"、"展开说说"、"是哪一条"、"具体点"等）来指代上一条回复中提到的内容，你需要根据对话历史理解上下文，不要当成一个独立的新问题。如果用户说"列出来"而上一轮你提到了某类数据，就直接列出那些数据。\n\n` +
     system,
     augmentedMsg,
@@ -986,7 +1044,7 @@ export async function callAI(
         apiKey: useCloudflareApi ? config.cfApiToken : config.apiKey,
         model: config.model,
         messages: [
-          { role: "system", content: `当前时间: ${getCurrentTimeStr()}。当用户提到"今天/昨天/明天/上个月/本月/下周/几点"等相对时间时，基于以上时间准确换算。当用户问到新闻、时事、热点时，调用 get_news 工具获取中文新闻。\n注意对话连续性：用户可能会用简短回复（如"列出来"、"展开说说"、"是哪一条"、"具体点"等）来指代上一条回复中提到的内容，你需要根据对话历史理解上下文，不要当成一个独立的新问题。如果用户说"列出来"而上一轮你提到了某类数据，就直接列出那些数据。\n\n${system}` },
+          { role: "system", content: `当前时间: ${getCurrentTimeStr()}。当用户提到"今天/昨天/明天/上个月/本月/下周/几点"等相对时间时，基于以上时间准确换算。当用户问到新闻、时事、热点时，调用 get_news 工具获取中文新闻。当用户问到天气时，调用 get_weather 工具获取实时天气，不要用 web_search 搜天气。\n注意对话连续性：用户可能会用简短回复（如"列出来"、"展开说说"、"是哪一条"、"具体点"等）来指代上一条回复中提到的内容，你需要根据对话历史理解上下文，不要当成一个独立的新问题。如果用户说"列出来"而上一轮你提到了某类数据，就直接列出那些数据。\n\n${system}` },
           { role: "user", content: cleanMsg },
         ],
         maxTokens: config.maxTokens,
@@ -1012,7 +1070,7 @@ export async function callAI(
       text = result.reply;
     } else {
       text = await callCloudflareAI(aiBinding, config.model, [
-        { role: "system", content: `当前时间: ${getCurrentTimeStr()}。当用户提到"今天/昨天/明天/上个月/本月/下周/几点"等相对时间时，基于以上时间准确换算。当用户问到新闻、时事、热点时，调用 get_news 工具获取中文新闻。\n注意对话连续性：用户可能会用简短回复（如"列出来"、"展开说说"、"是哪一条"、"具体点"等）来指代上一条回复中提到的内容，你需要根据对话历史理解上下文，不要当成一个独立的新问题。如果用户说"列出来"而上一轮你提到了某类数据，就直接列出那些数据。\n\n${system}` },
+        { role: "system", content: `当前时间: ${getCurrentTimeStr()}。当用户提到"今天/昨天/明天/上个月/本月/下周/几点"等相对时间时，基于以上时间准确换算。当用户问到新闻、时事、热点时，调用 get_news 工具获取中文新闻。当用户问到天气时，调用 get_weather 工具获取实时天气，不要用 web_search 搜天气。\n注意对话连续性：用户可能会用简短回复（如"列出来"、"展开说说"、"是哪一条"、"具体点"等）来指代上一条回复中提到的内容，你需要根据对话历史理解上下文，不要当成一个独立的新问题。如果用户说"列出来"而上一轮你提到了某类数据，就直接列出那些数据。\n\n${system}` },
         { role: "user", content: cleanMsg },
       ], config.maxTokens);
     }
