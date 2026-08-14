@@ -22,12 +22,20 @@ export interface ProviderResponseConfig {
   imageRefParam?: string;     // 参考图参数名，如 "image"
   imageRefLocation?: string;  // 参考图参数位置："top_level" 或 "extra_body"
   imageExtraBody?: Record<string, any>;  // 额外的 extra_body 字段
+  imagePromptField?: string;  // 请求体中提示词字段名（默认 "prompt"）
+  imageModelField?: string;   // 请求体中模型字段名（默认 "model"）
+  imageSizeField?: string;    // 请求体中尺寸字段名（默认 "size"）
 
   // 视频提交
   videoSubmitIdPath?: string;    // 任务 ID 的 JSON 路径，如 "task_id"
   videoSubmitUrlPath?: string;   // 同步视频 URL 的 JSON 路径
   videoSubmitPath?: string;      // 视频提交 API 路径后缀（如 "/videos/generations"，空则用默认）
   videoSubmitBody?: Record<string, any>;  // 额外的提交 body 字段
+  videoPromptField?: string;     // 视频请求体中提示词字段名（默认 "prompt"）
+  videoModelField?: string;      // 视频请求体中模型字段名（默认 "model"）
+
+  // 通用
+  requestHeaders?: Record<string, string>;  // 额外的请求头
 
   // 视频状态查询
   videoCheckPath?: string;       // 状态查询路径模板，含 {taskId} 占位符，如 "/agnesapi?video_id={taskId}"
@@ -44,10 +52,17 @@ function createGenericImageAdapter(config: ProviderResponseConfig) {
   const imageBase64Path = config.imageBase64Path || "data[0].b64_json";
   const refParam = config.imageRefParam || "image";
   const refLoc = config.imageRefLocation || "extra_body";
+  const promptField = config.imagePromptField || "prompt";
+  const modelField = config.imageModelField || "model";
+  const sizeField = config.imageSizeField || "size";
+  const extraHeaders = typeof config.requestHeaders === "string" ? (() => { try { return JSON.parse(config.requestHeaders); } catch { return {}; } })() : (config.requestHeaders || {});
 
   return {
     buildBody(prompt: string, model: string, size: string, refImages: string[]): any {
-      const body: any = { model, prompt, size };
+      const body: any = {};
+      body[modelField] = model;
+      body[promptField] = prompt;
+      body[sizeField] = size;
       // extra_body 配置
       if (!body.extra_body) body.extra_body = {};
       body.extra_body.response_format = "url";
@@ -70,6 +85,7 @@ function createGenericImageAdapter(config: ProviderResponseConfig) {
     extractImageBase64(response: any): string | null {
       return getByPath(response, imageBase64Path) || null;
     },
+    extraHeaders,
   };
 }
 
@@ -198,6 +214,7 @@ function detectProvider(baseUrl: string): string {
 // ========== 适配器获取 ==========
 export type ProviderAdapter = {
   id: string;
+  extraHeaders?: Record<string, string>;
   image?: {
     buildBody(prompt: string, model: string, size: string, refImages: string[]): any;
     extractImageUrl(response: any): string | null;

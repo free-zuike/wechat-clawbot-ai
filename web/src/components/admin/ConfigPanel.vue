@@ -52,23 +52,37 @@
           <details class="config-details">
             <summary style="cursor:pointer;color:#888;font-size:13px">⚙️ 响应格式配置（高级，默认自动适配）</summary>
             <div style="margin-top:8px">
-              <div class="field-hint" style="margin-bottom:8px">配置 API 响应中的 JSON 路径，让系统自动提取图片/视频。标准 OpenAI 格式无需配置。</div>
-              <div class="field"><label>图片 URL 路径</label><input v-model="responseConfig.imageUrlPath" class="input" placeholder="data[0].url" /><div class="field-hint">从响应 JSON 提取图片 URL 的路径</div></div>
-              <div class="field"><label>图片 Base64 路径</label><input v-model="responseConfig.imageBase64Path" class="input" placeholder="data[0].b64_json" /></div>
-              <div class="field"><label>参考图参数名</label><input v-model="responseConfig.imageRefParam" class="input" placeholder="image" /></div>
-              <div class="field"><label>参考图参数位置</label>
-                <select v-model="responseConfig.imageRefLocation" class="input">
-                  <option value="extra_body">extra_body（默认）</option>
-                  <option value="top_level">顶层</option>
-                </select>
-              </div>
-              <div class="field"><label>视频任务 ID 路径</label><input v-model="responseConfig.videoSubmitIdPath" class="input" placeholder="task_id" /></div>
-              <div class="field"><label>视频提交路径</label><input v-model="responseConfig.videoSubmitPath" class="input" placeholder="/videos/generations" /></div>
-              <div class="field"><label>视频状态查询路径</label><input v-model="responseConfig.videoCheckPath" class="input" placeholder="/agnesapi?video_id={taskId}" /><div class="field-hint">用 {taskId} 占位符</div></div>
-              <div class="field"><label>视频 URL 路径</label><input v-model="responseConfig.videoCheckUrlPath" class="input" placeholder="data[0].url" /></div>
-              <div class="field"><label>视频状态路径</label><input v-model="responseConfig.videoCheckStatusPath" class="input" placeholder="status" /></div>
-              <div class="field"><label>完成状态值</label><input v-model="responseConfig.videoCheckCompleted" class="input" placeholder="SUCCESS" /></div>
-              <div class="field"><label>失败状态值</label><input v-model="responseConfig.videoCheckFailed" class="input" placeholder="FAIL" /></div>
+              <div class="field-hint" style="margin-bottom:8px">配置 API 请求体字段名和响应中的 JSON 路径，让系统适配非标准 API。标准 OpenAI 格式无需配置。</div>
+              <details class="sub-details" style="margin-top:8px">
+                <summary style="cursor:pointer;font-size:12px;color:#666">📤 请求体配置</summary>
+                <div style="margin-top:6px">
+                  <div class="field"><label>提示词字段名</label><input v-model="responseConfig.imagePromptField" class="input" placeholder="prompt" /><div class="field-hint">请求体中提示词的字段名（默认 prompt）</div></div>
+                  <div class="field"><label>模型字段名</label><input v-model="responseConfig.imageModelField" class="input" placeholder="model" /></div>
+                  <div class="field"><label>尺寸字段名</label><input v-model="responseConfig.imageSizeField" class="input" placeholder="size" /></div>
+                  <div class="field"><label>参考图参数名</label><input v-model="responseConfig.imageRefParam" class="input" placeholder="image" /></div>
+                  <div class="field"><label>参考图参数位置</label>
+                    <select v-model="responseConfig.imageRefLocation" class="input">
+                      <option value="extra_body">extra_body（默认）</option>
+                      <option value="top_level">顶层</option>
+                    </select>
+                  </div>
+                  <div class="field"><label>额外请求头</label><input v-model="responseConfig.requestHeadersStr" class="input" placeholder='{"X-Api-Key":"xxx"}' /><div class="field-hint">JSON 格式，如 {"X-Api-Key":"xxx"}</div></div>
+                </div>
+              </details>
+              <details class="sub-details" style="margin-top:8px">
+                <summary style="cursor:pointer;font-size:12px;color:#666">📥 响应提取配置</summary>
+                <div style="margin-top:6px">
+                  <div class="field"><label>图片 URL 路径</label><input v-model="responseConfig.imageUrlPath" class="input" placeholder="data[0].url" /><div class="field-hint">从响应 JSON 提取图片 URL 的路径</div></div>
+                  <div class="field"><label>图片 Base64 路径</label><input v-model="responseConfig.imageBase64Path" class="input" placeholder="data[0].b64_json" /></div>
+                  <div class="field"><label>视频任务 ID 路径</label><input v-model="responseConfig.videoSubmitIdPath" class="input" placeholder="task_id" /></div>
+                  <div class="field"><label>视频提交路径</label><input v-model="responseConfig.videoSubmitPath" class="input" placeholder="/videos/generations" /></div>
+                  <div class="field"><label>视频状态查询路径</label><input v-model="responseConfig.videoCheckPath" class="input" placeholder="/agnesapi?video_id={taskId}" /><div class="field-hint">用 {taskId} 占位符</div></div>
+                  <div class="field"><label>视频 URL 路径</label><input v-model="responseConfig.videoCheckUrlPath" class="input" placeholder="data[0].url" /></div>
+                  <div class="field"><label>视频状态路径</label><input v-model="responseConfig.videoCheckStatusPath" class="input" placeholder="status" /></div>
+                  <div class="field"><label>完成状态值</label><input v-model="responseConfig.videoCheckCompleted" class="input" placeholder="SUCCESS" /></div>
+                  <div class="field"><label>失败状态值</label><input v-model="responseConfig.videoCheckFailed" class="input" placeholder="FAIL" /></div>
+                </div>
+              </details>
             </div>
           </details>
           <div class="field"><label>API 地址</label><input v-model="config.aiBaseUrl" class="input" placeholder="https://api.example.com" /><div class="field-hint">不要加 /v1/chat/completions 后缀</div></div>
@@ -252,6 +266,13 @@ function selectProvider(id: string) {
     props.config.aiMaxTokens = preset?.maxTokens || 1024;
     props.config.aiMaxContextChars = preset?.maxContextChars || 12000;
     responseConfig.value = { ...(preset?.responseConfig || {}) };
+    // 从后端加载的 requestHeaders（JSON 字符串）转成前端可编辑的格式
+    if (responseConfig.value.requestHeaders) {
+      try {
+        const parsed = JSON.parse(responseConfig.value.requestHeaders);
+        responseConfig.value.requestHeadersStr = JSON.stringify(parsed, null, 2);
+      } catch {}
+    }
   }
 }
 
@@ -374,7 +395,21 @@ function syncCurrentToPreset() {
   // 过滤空值
   const rc: Record<string, string> = {};
   for (const [k, v] of Object.entries(responseConfig.value)) {
-    if (v && v.trim()) rc[k] = v.trim();
+    if (k === "requestHeadersStr" && v && v.trim()) {
+      // 把 JSON 字符串解析为对象存入 requestHeaders
+      try {
+        rc.requestHeaders = JSON.stringify(JSON.parse(v.trim()));
+      } catch { rc.requestHeaders = v.trim(); }
+    } else if (v && v.trim()) {
+      rc[k] = v.trim();
+    }
+  }
+  // 从 responseConfig 加载时反解析 requestHeaders 为字符串
+  if (responseConfig.value.requestHeaders && !responseConfig.value.requestHeadersStr) {
+    try {
+      const parsed = JSON.parse(responseConfig.value.requestHeaders);
+      responseConfig.value.requestHeadersStr = JSON.stringify(parsed, null, 2);
+    } catch {}
   }
   upsertPreset(id, {
     model: props.config.aiModel,

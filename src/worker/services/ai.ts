@@ -1282,9 +1282,10 @@ export async function generateImage(
         const { base, version } = parseApiUrl(baseUrl);
         const url = `${base}/${version}/images/generations`;
         const body = adapter.image.buildBody(prompt, imageModel, imageSize, refImages);
+        const extraHeaders = (adapter as any).extraHeaders || {};
         const resp = await fetch(url, {
           method: "POST",
-          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${currentKey}` },
+          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${currentKey}`, ...extraHeaders },
           body: JSON.stringify(body),
         });
         if (!resp.ok) {
