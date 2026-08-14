@@ -27,10 +27,13 @@
         <div v-if="searchResult" :class="['search-result-box', searchResult.isError ? 'error' : '']">
           <div v-if="searchResult.isError" class="search-error">{{ searchResult.error }}</div>
           <div v-else-if="searchResult.type === 'image'" class="image-grid">
-            <a v-for="(item, i) in searchResult.items" :key="i" :href="item.url" target="_blank" rel="noopener" class="image-item" :title="item.title">
-              <img :src="item.thumb || item.url" :alt="item.title || '图片'" loading="lazy" @error="(e: any) => handleImgError(e, item)" />
-            </a>
-            <div class="search-result-header">共 {{ searchResult.items.length }} 张图片（点击查看原图）</div>
+            <template v-if="(searchResult.items || []).length > 0">
+              <a v-for="(item, i) in searchResult.items" :key="item.url" :href="item.url" target="_blank" rel="noopener" class="image-item" :title="item.title">
+                <img :src="item.thumb || item.url" :alt="item.title || '图片'" loading="lazy" @error="removeImage(searchResult, item)" />
+              </a>
+              <div class="search-result-header">共 {{ searchResult.items.length }} 张图片（点击查看原图，已自动过滤无法加载的）</div>
+            </template>
+            <div v-else class="search-empty">所有图片都无法加载</div>
           </div>
           <div v-else class="search-items">
             <div class="search-result-header">共 {{ searchResult.items.length }} 条结果</div>
@@ -79,10 +82,11 @@ const searchType = ref("web");
 const searching = ref(false);
 const searchResult = ref<{ isError: boolean; type?: string; items?: any[]; error?: string } | null>(null);
 
-// 图片加载失败时回退到原图地址
-function handleImgError(e: any, item: any) {
-  if (e.target.src !== item.url) e.target.src = item.url;
-  else e.target.style.display = "none";
+// 图片加载失败时从结果中移除（自动过滤无法访问的图片）
+function removeImage(result: any, item: any) {
+  if (!result || !Array.isArray(result.items)) return;
+  const idx = result.items.findIndex((x: any) => x.url === item.url || x.thumb === item.thumb);
+  if (idx !== -1) result.items.splice(idx, 1);
 }
 
 async function handleSave() {
