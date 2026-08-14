@@ -211,20 +211,36 @@ async function executeWebSearch(query: string, searchBaseUrl?: string, searchTok
 
 // 用 Cloudflare Browser Run 搜索 Bing（免费版每天 10 分钟，不会被限流）
 async function executeBrowserSearch(browserBinding: any, query: string): Promise<string | null> {
-  const searchUrl = `https://www.bing.com/search?q=${encodeURIComponent(query)}&count=10`;
-  const resp = await browserBinding.quickAction("links", {
+  const searchUrl = `https://www.bing.com/search?q=${encodeURIComponent(query)}`;
+  const resp = await browserBinding.quickAction("content", {
     url: searchUrl,
   });
   if (!resp.ok) return null;
   const data = await resp.json() as any;
-  if (!data?.success || !Array.isArray(data?.result)) return null;
+  if (!data?.success || !data?.result) return null;
 
-  // 过滤 Bing 搜索结果的真实链接（排除 Bing 自身链接）
-  const allLinks = data.result as string[];
+  const html = data.result as string;
   const results: string[] = [];
-  for (const link of allLinks) {
-    if (link.startsWith("http") && !link.includes("bing.com") && !link.includes("microsoft.com")) {
-      results.push(`${results.length + 1}. ${link}\n   ${link}`);
+  // 复用 cloudflare-search 的 Bing 解析正则
+  const resultRegex =
+    /<li class="b_algo"[^>]*>[\s\S]*?<h2[^>]*><a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a><\/h2>[\s\S]*?<div class="b_caption"[^>]*>[\s\S]*?<p[^>]*>([\s\S]*?)<\/p>/g;
+  let match: RegExpExecArray | null;
+  while ((match = resultRegex.exec(html)) !== null) {
+    let url = match[1];
+    // 解码 Bing 重定向链接
+    if (url.includes("bing.com/ck/a?")) {
+      try {
+        const decodedUrl = url.replace(/&amp;/g, "&");
+        const uParam = new URL(decodedUrl).searchParams.get("u");
+        if (uParam?.startsWith("a1")) {
+          url = atob(uParam.slice(2));
+        }
+      } catch {}
+    }
+    const title = match[2].replace(/<[^>]+>/g, "").trim();
+    const description = match[3].replace(/<[^>]+>/g, "").trim();
+    if (title && url) {
+      results.push(`${results.length + 1}. ${title}\n   ${url}\n   ${description}`);
       if (results.length >= 8) break;
     }
   }
