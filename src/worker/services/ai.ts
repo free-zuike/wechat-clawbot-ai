@@ -94,6 +94,20 @@ export function isVagueFollowUp(text: string): boolean {
   return /第[一二三四五六七八九十百\d]+[条个]/.test(clean);
 }
 
+// 过滤内置工具列表：只在对应外部服务已配置时保留工具
+// 当前规则：web_search 需要 searchBaseUrl 已配置
+export function filterBuiltinTools(
+  builtinTools: Array<{ type: string; function: { name: string; [key: string]: any } }>,
+  searchBaseUrl?: string,
+  extraTools?: any[],
+): any[] {
+  const filtered = builtinTools.filter(t => {
+    if (t.function?.name === "web_search" && !searchBaseUrl) return false;
+    return true;
+  });
+  return [...filtered, ...(extraTools || [])];
+}
+
 // ========== OpenAI 兼容 API 调用 ==========
 
 // 获取当前日期时间字符串（中国时区 Asia/Shanghai），通用辅助函数
@@ -652,11 +666,7 @@ async function callOpenAICompatible(params: {
   }
 
   // 内置工具：只在对应服务已配置时注册
-  const allTools = [...BUILTIN_TOOLS, ...(params.tools || [])].filter(t => {
-    // web_search 需要 searchBaseUrl 已配置
-    if (t.function?.name === "web_search" && !params.searchBaseUrl) return false;
-    return true;
-  });
+  const allTools = filterBuiltinTools(BUILTIN_TOOLS, params.searchBaseUrl, params.tools);
   const hasTools = allTools.length > 0;
   if (hasTools) {
     body.tools = allTools;

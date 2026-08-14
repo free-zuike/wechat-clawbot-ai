@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseApiUrl, formatToolContent, extractImageSize, isVagueFollowUp } from "./ai";
+import { parseApiUrl, formatToolContent, extractImageSize, isVagueFollowUp, filterBuiltinTools } from "./ai";
 
 describe("parseApiUrl", () => {
   it("should parse standard OpenAI URL", () => {
@@ -112,6 +112,51 @@ describe("isVagueFollowUp", () => {
   it("should handle empty and whitespace input", () => {
     expect(isVagueFollowUp("")).toBe(false);
     expect(isVagueFollowUp("   ")).toBe(false);
+  });
+});
+
+describe("filterBuiltinTools", () => {
+  const mockTools = [
+    { type: "function", function: { name: "get_current_datetime", description: "获取时间" } },
+    { type: "function", function: { name: "get_news", description: "获取新闻" } },
+    { type: "function", function: { name: "web_search", description: "搜索互联网" } },
+    { type: "function", function: { name: "generate_image", description: "生成图片" } },
+  ];
+
+  it("should exclude web_search when searchBaseUrl is not configured", () => {
+    const result = filterBuiltinTools(mockTools as any, undefined);
+    const names = result.map((t: any) => t.function.name);
+    expect(names).not.toContain("web_search");
+    expect(names).toContain("get_current_datetime");
+    expect(names).toContain("get_news");
+    expect(names).toContain("generate_image");
+  });
+
+  it("should exclude web_search when searchBaseUrl is empty string", () => {
+    const result = filterBuiltinTools(mockTools as any, "");
+    const names = result.map((t: any) => t.function.name);
+    expect(names).not.toContain("web_search");
+  });
+
+  it("should include web_search when searchBaseUrl is configured", () => {
+    const result = filterBuiltinTools(mockTools as any, "https://search.example.com");
+    const names = result.map((t: any) => t.function.name);
+    expect(names).toContain("web_search");
+    expect(names).toContain("get_current_datetime");
+  });
+
+  it("should append extra tools after builtin tools", () => {
+    const extra = [{ type: "function", function: { name: "mcp_tool", description: "MCP 工具" } }];
+    const result = filterBuiltinTools(mockTools as any, "https://search.example.com", extra);
+    expect(result).toHaveLength(5);
+    expect(result[4].function.name).toBe("mcp_tool");
+  });
+
+  it("should return only extra tools when builtin list is empty", () => {
+    const extra = [{ type: "function", function: { name: "only_tool" } }];
+    const result = filterBuiltinTools([], "https://x.com", extra);
+    expect(result).toHaveLength(1);
+    expect(result[0].function.name).toBe("only_tool");
   });
 });
 
