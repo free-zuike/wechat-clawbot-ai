@@ -222,7 +222,9 @@ async function executeBrowserSearch(browserBinding: any, query: string): Promise
   // 从 HTML 中提取搜索结果链接
   const html = data.result as string;
   const results: string[] = [];
-  // Bing 搜索结果的多种格式
+  // 找到搜索结果区域：<li class="b_algo"> 中的 <h2><a href="...">
+  const algoStart = html.indexOf('<li class="b_algo"');
+  const searchArea = algoStart !== -1 ? html.slice(algoStart) : html;
   const linkRe = /<h2[^>]*>.*?<a[^>]*href="(https?:\/\/[^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
   let m: RegExpExecArray | null;
   while ((m = linkRe.exec(html)) !== null && results.length < 10) {

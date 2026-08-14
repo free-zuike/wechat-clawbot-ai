@@ -32,9 +32,9 @@ export async function handleSearchTest(request: Request, env: Env): Promise<Resp
     }
 
     const html = data.result as string;
-    // 查找搜索结果区域
-    const resultsStart = html.indexOf('class="b_algo"');
-    const resultsSample = resultsStart !== -1 ? html.slice(resultsStart, resultsStart + 800) : html.slice(0, 800);
+    // 查找搜索结果区域（第一个 <li class="b_algo">）
+    const resultsStart = html.indexOf('<li class="b_algo"');
+    const resultsSample = resultsStart !== -1 ? html.slice(resultsStart, resultsStart + 800) : "未找到 b_algo";
     console.log(`[search-test] HTML length: ${html.length}, results sample: ${resultsSample}`);
     const items: Array<{ title: string; url: string; description: string }> = [];
     // Bing 搜索结果的多种格式
