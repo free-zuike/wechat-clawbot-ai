@@ -31,7 +31,8 @@ const DEFAULT_SYSTEM_PROMPT =
   "如果用户问的问题你不知道，就直接说不知道。不要编造信息。" +
   "回复长度控制在 200 字以内，除非用户明确要求更长。\n\n" +
   "【重要规则】当你有工具返回的数据时，必须严格按工具返回的实际数值来回答。不要编造、夸大或缩小任何数字。" +
-  "如果工具返回的数据中包含总金额、交易笔数、分类等统计信息，直接引用原文，不要自己计算或推断。";
+  "如果工具返回的数据中包含总金额、交易笔数、分类等统计信息，直接引用原文，不要自己计算或推断。" +
+  "【重要规则】天气查询时，只回答工具返回的城市，不要擅自添加其他城市的数据。如果用户问的是「大同」，不要编造北京、上海等任何其他城市的信息。";
 
 // 从 API baseUrl 中提取 base 和 version，用于构建其他端点
 // 例: "https://open.bigmodel.cn/api/paas/v4/chat/completions"
@@ -90,9 +91,6 @@ export function isVagueFollowUp(text: string): boolean {
     "给我看", "看看", "看看详情", "具体内容",
   ];
   if (vaguePatterns.some(p => clean.includes(p))) return true;
-  // 天气回指：用户只说"明天的天气/后天呢/这周天气"等短句，但没提城市名
-  // 限制：只匹配 10 字以内的纯天气查询，超过说明是完整句子
-  if (clean.length <= 10 && /^(今天|明天|后天|昨天|本周|下周|这周|下[周个]?星期|这[周个]?星期|未来|后面|接下来)\s*的?\s*天气/.test(clean)) return true;
   // 通用序数回指：第X条/第X个（X 为数字或中文数字）
   return /第[一二三四五六七八九十百\d]+[条个]/.test(clean);
 }
@@ -901,7 +899,7 @@ export async function callAIWithContext(
 
   // 注入当前日期（通用，不针对特定 MCP），让 AI 正确换算"今天/上个月/本月"等相对时间
   const messages = buildMessagesWithContext(
-    `当前时间: ${getCurrentTimeStr()}。当用户提到"今天/昨天/明天/上个月/本月/下周/几点"等相对时间时，基于以上时间准确换算。当用户问到新闻、时事、热点时，调用 get_news 工具获取中文新闻。当用户问到天气时，调用 get_weather 工具获取实时天气，不要用 web_search 搜天气。\n` +
+    `当前时间: ${getCurrentTimeStr()}。当用户提到"今天/昨天/明天/上个月/本月/下周/几点"等相对时间时，基于以上时间准确换算。当用户问到新闻、时事、热点时，调用 get_news 工具获取中文新闻。当用户问到天气时，调用 get_weather 工具获取实时天气，不要用 web_search 搜天气。**严格按照工具返回的数据回答，只汇报查询的城市，不要编造其他城市的数据。**\n` +
     `注意对话连续性：用户可能会用简短回复（如"列出来"、"展开说说"、"是哪一条"、"具体点"等）来指代上一条回复中提到的内容，你需要根据对话历史理解上下文，不要当成一个独立的新问题。如果用户说"列出来"而上一轮你提到了某类数据，就直接列出那些数据。\n\n` +
     system,
     augmentedMsg,
@@ -1061,7 +1059,7 @@ export async function callAI(
         apiKey: useCloudflareApi ? config.cfApiToken : config.apiKey,
         model: config.model,
         messages: [
-          { role: "system", content: `当前时间: ${getCurrentTimeStr()}。当用户提到"今天/昨天/明天/上个月/本月/下周/几点"等相对时间时，基于以上时间准确换算。当用户问到新闻、时事、热点时，调用 get_news 工具获取中文新闻。当用户问到天气时，调用 get_weather 工具获取实时天气，不要用 web_search 搜天气。\n注意对话连续性：用户可能会用简短回复（如"列出来"、"展开说说"、"是哪一条"、"具体点"等）来指代上一条回复中提到的内容，你需要根据对话历史理解上下文，不要当成一个独立的新问题。如果用户说"列出来"而上一轮你提到了某类数据，就直接列出那些数据。\n\n${system}` },
+          { role: "system", content: `当前时间: ${getCurrentTimeStr()}。当用户提到"今天/昨天/明天/上个月/本月/下周/几点"等相对时间时，基于以上时间准确换算。当用户问到新闻、时事、热点时，调用 get_news 工具获取中文新闻。当用户问到天气时，调用 get_weather 工具获取实时天气，不要用 web_search 搜天气。**严格按照工具返回的数据回答，只汇报查询的城市，不要编造其他城市的数据。**\n注意对话连续性：用户可能会用简短回复（如"列出来"、"展开说说"、"是哪一条"、"具体点"等）来指代上一条回复中提到的内容，你需要根据对话历史理解上下文，不要当成一个独立的新问题。如果用户说"列出来"而上一轮你提到了某类数据，就直接列出那些数据。\n\n${system}` },
           { role: "user", content: cleanMsg },
         ],
         maxTokens: config.maxTokens,
@@ -1087,7 +1085,7 @@ export async function callAI(
       text = result.reply;
     } else {
       text = await callCloudflareAI(aiBinding, config.model, [
-        { role: "system", content: `当前时间: ${getCurrentTimeStr()}。当用户提到"今天/昨天/明天/上个月/本月/下周/几点"等相对时间时，基于以上时间准确换算。当用户问到新闻、时事、热点时，调用 get_news 工具获取中文新闻。当用户问到天气时，调用 get_weather 工具获取实时天气，不要用 web_search 搜天气。\n注意对话连续性：用户可能会用简短回复（如"列出来"、"展开说说"、"是哪一条"、"具体点"等）来指代上一条回复中提到的内容，你需要根据对话历史理解上下文，不要当成一个独立的新问题。如果用户说"列出来"而上一轮你提到了某类数据，就直接列出那些数据。\n\n${system}` },
+        { role: "system", content: `当前时间: ${getCurrentTimeStr()}。当用户提到"今天/昨天/明天/上个月/本月/下周/几点"等相对时间时，基于以上时间准确换算。当用户问到新闻、时事、热点时，调用 get_news 工具获取中文新闻。当用户问到天气时，调用 get_weather 工具获取实时天气，不要用 web_search 搜天气。**严格按照工具返回的数据回答，只汇报查询的城市，不要编造其他城市的数据。**\n注意对话连续性：用户可能会用简短回复（如"列出来"、"展开说说"、"是哪一条"、"具体点"等）来指代上一条回复中提到的内容，你需要根据对话历史理解上下文，不要当成一个独立的新问题。如果用户说"列出来"而上一轮你提到了某类数据，就直接列出那些数据。\n\n${system}` },
         { role: "user", content: cleanMsg },
       ], config.maxTokens);
     }
