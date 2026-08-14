@@ -64,6 +64,11 @@ export async function handleSearchTest(request: Request, env: Env): Promise<Resp
         }
       }
 
+      // 如果验证后结果太少，直接返回未验证的候选（避免过滤掉所有可用图片）
+      if (items.length < 3 && candidates.length > 0) {
+        return json({ ok: true, type: "image", items: candidates.slice(0, 10), count: candidates.length, note: "图片未经验证，部分可能无法加载" });
+      }
+
       return json({ ok: true, type: "image", items, count: items.length });
     }
 
@@ -118,22 +123,25 @@ export async function handleSearchTest(request: Request, env: Env): Promise<Resp
   }
 }
 
-// 验证图片 URL 是否真的可访问（HEAD 请求，超时 5 秒）
+// 验证图片 URL 是否真的可访问（GET 前 100 字节，超时 5 秒）
 async function verifyImageUrl(url: string): Promise<boolean> {
   try {
     const resp = await fetch(url, {
-      method: "HEAD",
+      method: "GET",
       redirect: "follow",
       headers: {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+        "Referer": "https://www.bing.com/",
+        "Range": "bytes=0-99",
       },
       signal: AbortSignal.timeout(5000),
     });
-    if (!resp.ok) return false;
+    // 206 Partial Content 或 200 OK 都算可访问
+    if (resp.status !== 200 && resp.status !== 206) return false;
     const contentType = resp.headers.get("content-type") || "";
-    // 必须是图片类型
-    return contentType.startsWith("image/");
+    // 接受 image/* 或 octet-stream（很多 CDN 把图片标为 octet-stream）
+    return contentType.startsWith("image/") || contentType === "application/octet-stream";
   } catch {
     return false;
   }
