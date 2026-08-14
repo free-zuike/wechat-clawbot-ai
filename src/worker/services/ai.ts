@@ -95,17 +95,13 @@ export function isVagueFollowUp(text: string): boolean {
 }
 
 // 过滤内置工具列表：只在对应外部服务已配置时保留工具
-// 当前规则：web_search 需要 searchBaseUrl 已配置
+// 当前规则：web_search 已有内置兜底搜索源，始终可用
 export function filterBuiltinTools(
   builtinTools: Array<{ type: string; function: { name: string; [key: string]: any } }>,
   searchBaseUrl?: string,
   extraTools?: any[],
 ): any[] {
-  const filtered = builtinTools.filter(t => {
-    if (t.function?.name === "web_search" && !searchBaseUrl) return false;
-    return true;
-  });
-  return [...filtered, ...(extraTools || [])];
+  return [...builtinTools, ...(extraTools || [])];
 }
 
 // ========== OpenAI 兼容 API 调用 ==========
@@ -162,27 +158,40 @@ async function executeWebSearch(query: string, searchBaseUrl?: string, searchTok
   const q = (query || "").trim();
   if (!q) return "搜索关键词为空";
   const base = (searchBaseUrl || "").trim().replace(/\/+$/, "");
-  if (!base) return "搜索服务未配置（searchBaseUrl 未设置）";
-  try {
-    const url = searchToken
-      ? `${base}/search?q=${encodeURIComponent(q)}&token=${encodeURIComponent(searchToken)}`
-      : `${base}/search?q=${encodeURIComponent(q)}`;
-    const resp = await fetch(url, {
-      headers: { "Accept": "application/json" },
-      signal: AbortSignal.timeout(15000),
-    });
-    if (!resp.ok) return `搜索失败 (HTTP ${resp.status})`;
-    const data = await resp.json() as any;
-    const items = data?.results;
-    if (Array.isArray(items) && items.length > 0) {
-      return items.slice(0, 10).map((it: any, i: number) =>
-        `${i + 1}. ${it.title || "无标题"}\n   ${it.url || ""}\n   ${it.description || ""}`
-      ).join("\n\n");
-    }
-    return "没有找到相关结果";
-  } catch (e: any) {
-    return `搜索失败: ${e?.message || String(e)}`;
+
+  // 配置了 cloudflare-search → 优先使用
+  if (base) {
+    try {
+      const url = searchToken
+        ? `${base}/search?q=${encodeURIComponent(q)}&token=${encodeURIComponent(searchToken)}`
+        : `${base}/search?q=${encodeURIComponent(q)}`;
+      const resp = await fetch(url, {
+        headers: { "Accept": "application/json" },
+        signal: AbortSignal.timeout(15000),
+      });
+      if (resp.ok) {
+        const data = await resp.json() as any;
+        const items = data?.results;
+        if (Array.isArray(items) && items.length > 0) {
+          return items.slice(0, 10).map((it: any, i: number) =>
+            `${i + 1}. ${it.title || "无标题"}\n   ${it.url || ""}\n   ${it.description || ""}`
+          ).join("\n\n");
+        }
+      }
+    } catch { /* 忽略 */ }
   }
+
+  // 无 cloudflare-search 或搜索失败 → 用内置免费搜索源兜底
+  const results = await Promise.all([
+    tryWikipedia(q),
+    tryDuckDuckGoQ(q),
+    tryHackerNews(q),
+  ]);
+  const parts = results.filter(Boolean) as string[];
+  if (parts.length > 0) {
+    return parts.map((p, i) => `【来源${i + 1}】\n${p}`).join("\n\n---\n\n");
+  }
+  return "没有找到相关结果";
 }
 
 // 获取今日热门新闻（HN 前端 RSS + Wikipedia 每日大事）

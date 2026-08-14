@@ -123,19 +123,14 @@ describe("filterBuiltinTools", () => {
     { type: "function", function: { name: "generate_image", description: "生成图片" } },
   ];
 
-  it("should exclude web_search when searchBaseUrl is not configured", () => {
+  it("should include all builtin tools regardless of searchBaseUrl", () => {
+    // web_search 已有内置兜底搜索源，不再依赖 cloudflare-search
     const result = filterBuiltinTools(mockTools as any, undefined);
     const names = result.map((t: any) => t.function.name);
-    expect(names).not.toContain("web_search");
+    expect(names).toContain("web_search");
     expect(names).toContain("get_current_datetime");
     expect(names).toContain("get_news");
     expect(names).toContain("generate_image");
-  });
-
-  it("should exclude web_search when searchBaseUrl is empty string", () => {
-    const result = filterBuiltinTools(mockTools as any, "");
-    const names = result.map((t: any) => t.function.name);
-    expect(names).not.toContain("web_search");
   });
 
   it("should include web_search when searchBaseUrl is configured", () => {
