@@ -29,30 +29,41 @@ export async function handleSearchTest(request: Request, env: Env): Promise<Resp
         return json({ ok: false, error: "图片搜索返回空结果" });
       }
       const html = data.result as string;
-      const items: Array<{ url: string; thumb?: string; title: string }> = [];
+      const candidates: Array<{ url: string; thumb?: string; title: string }> = [];
       // Bing 图片搜索：murl 是原图 URL，m 是缩略图
       const imgRe = /class="iusc"[^>]*m="([^"]+)"/g;
       let match: RegExpExecArray | null;
-      while ((match = imgRe.exec(html)) !== null && items.length < 12) {
+      while ((match = imgRe.exec(html)) !== null && candidates.length < 20) {
         try {
           const meta = JSON.parse(match[1].replace(/&quot;/g, '"').replace(/\\"/g, '"'));
           if (meta.murl) {
-            items.push({
+            candidates.push({
               url: meta.murl,
               thumb: meta.m || undefined,
               title: meta.t || "",
             });
-            if (items.length >= 12) break;
+            if (candidates.length >= 20) break;
           }
         } catch {}
       }
       // 兜底：data-src 缩略图
-      if (items.length === 0) {
+      if (candidates.length === 0) {
         const thumbRe = /data-src="(https?:\/\/[^"]+\.(?:jpg|jpeg|png|gif|webp)[^"]*)"/gi;
-        while ((match = thumbRe.exec(html)) !== null && items.length < 12) {
-          items.push({ url: match[1], title: "" });
+        while ((match = thumbRe.exec(html)) !== null && candidates.length < 20) {
+          candidates.push({ url: match[1], title: "" });
         }
       }
+
+      // 验证原图 URL 是否可访问，只返回真正能打开的图片
+      const items: Array<{ url: string; thumb?: string; title: string }> = [];
+      for (const c of candidates) {
+        const ok = await verifyImageUrl(c.url);
+        if (ok) {
+          items.push(c);
+          if (items.length >= 10) break;
+        }
+      }
+
       return json({ ok: true, type: "image", items, count: items.length });
     }
 
@@ -104,5 +115,26 @@ export async function handleSearchTest(request: Request, env: Env): Promise<Resp
     return json({ ok: true, type: "web", items, count: items.length });
   } catch (e: any) {
     return json({ ok: false, error: `搜索失败: ${e?.message || "未知错误"}` });
+  }
+}
+
+// 验证图片 URL 是否真的可访问（HEAD 请求，超时 5 秒）
+async function verifyImageUrl(url: string): Promise<boolean> {
+  try {
+    const resp = await fetch(url, {
+      method: "HEAD",
+      redirect: "follow",
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+      },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!resp.ok) return false;
+    const contentType = resp.headers.get("content-type") || "";
+    // 必须是图片类型
+    return contentType.startsWith("image/");
+  } catch {
+    return false;
   }
 }
