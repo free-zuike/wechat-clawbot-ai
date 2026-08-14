@@ -225,7 +225,7 @@ async function executeBrowserSearch(browserBinding: any, query: string): Promise
   // 找到搜索结果区域：<li class="b_algo"> 中的 <h2><a href="...">
   const algoStart = html.indexOf('<li class="b_algo"');
   const searchArea = algoStart !== -1 ? html.slice(algoStart) : html;
-  const linkRe = /<h2[^>]*>.*?<a[^>]*href="(https?:\/\/[^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
+  const linkRe = /<h2[^>]*>[\s\S]*?<a[^>]*href="(https?:\/\/[^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
   let m: RegExpExecArray | null;
   while ((m = linkRe.exec(html)) !== null && results.length < 10) {
     const url = m[1];

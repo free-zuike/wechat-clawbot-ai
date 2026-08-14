@@ -38,7 +38,7 @@ export async function handleSearchTest(request: Request, env: Env): Promise<Resp
     console.log(`[search-test] HTML length: ${html.length}, results sample: ${resultsSample}`);
     const items: Array<{ title: string; url: string; description: string }> = [];
     // Bing 搜索结果的多种格式
-    const linkRe = /<h2[^>]*>.*?<a[^>]*href="(https?:\/\/[^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
+    const linkRe = /<h2[^>]*>[\s\S]*?<a[^>]*href="(https?:\/\/[^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
     let m: RegExpExecArray | null;
     while ((m = linkRe.exec(html)) !== null && items.length < 10) {
       const itemUrl = m[1];
