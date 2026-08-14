@@ -32,6 +32,8 @@ export async function handleSearchTest(request: Request, env: Env): Promise<Resp
     }
 
     const html = data.result as string;
+    // 调试：输出 HTML 前 500 字符看结构
+    console.log(`[search-test] HTML length: ${html.length}, sample: ${html.slice(0, 500)}`);
     const items: Array<{ title: string; url: string; description: string }> = [];
     const linkRe = /<h2[^>]*>.*?<a[^>]*href="(https?:\/\/[^"]+)"[^>]*>(.*?)<\/a>/gi;
     let m: RegExpExecArray | null;
