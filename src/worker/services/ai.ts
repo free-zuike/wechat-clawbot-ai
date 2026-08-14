@@ -140,6 +140,13 @@ const BUILTIN_TOOLS = [{
 }, {
   type: "function",
   function: {
+    name: "search_image",
+    description: "搜索图片。当用户想「找/查询/搜索某张图片、某某的照片、某某的图片」时调用，通过浏览器搜索 Bing 图片，返回图片链接",
+    parameters: { type: "object", properties: { q: { type: "string", description: "图片搜索关键词（必填）" } }, required: ["q"] },
+  },
+}, {
+  type: "function",
+  function: {
     name: "generate_image",
     description: "AI 生成图片。当用户说「画/生成/制作一张图片」时调用此工具，根据描述生成图片",
     parameters: { type: "object", properties: { prompt: { type: "string", description: "图片描述（必填）" }, size: { type: "string", description: "可选：图片尺寸，如 1024x1024" } }, required: ["prompt"] },
@@ -245,6 +252,44 @@ async function executeBrowserSearch(browserBinding: any, query: string): Promise
     }
   }
   return results.length > 0 ? results.join("\n\n") : null;
+}
+
+// 用 Cloudflare Browser Run 搜索 Bing 图片（免费版每天 10 分钟）
+async function executeImageSearch(browserBinding: any, query: string): Promise<string> {
+  const q = (query || "").trim();
+  if (!q) return "图片搜索关键词为空";
+  if (!browserBinding) return "图片搜索需要浏览器搜索支持（BROWSER binding）";
+  try {
+    const searchUrl = `https://www.bing.com/images/search?q=${encodeURIComponent(q)}`;
+    const resp = await browserBinding.quickAction("content", {
+      url: searchUrl,
+    });
+    if (!resp.ok) return `图片搜索失败 (HTTP ${resp.status})`;
+    const data = await resp.json() as any;
+    if (!data?.success || !data?.result) return "图片搜索返回空结果";
+
+    const html = data.result as string;
+    const results: string[] = [];
+    // Bing 图片搜索：m 属性中的原始图片 URL（data-src 或 murl）
+    const imgRe = /data-src="(https?:\/\/[^"]+\.(?:jpg|jpeg|png|gif|webp)[^"]*)"/gi;
+    let m: RegExpExecArray | null;
+    while ((m = imgRe.exec(html)) !== null && results.length < 6) {
+      results.push(`${results.length + 1}. ${m[1]}`);
+    }
+
+    // 兜底：匹配 murl 参数中的图片 URL
+    if (results.length === 0) {
+      const murlRe = /murl\\?"?:\s*\\?"(https?:\/\/[^"\\]+\.(?:jpg|jpeg|png|gif|webp)[^"\\]*)"/gi;
+      while ((m = murlRe.exec(html)) !== null && results.length < 6) {
+        results.push(`${results.length + 1}. ${m[1]}`);
+      }
+    }
+
+    if (results.length === 0) return "没有找到相关图片";
+    return `搜索结果如下（浏览器搜索 Bing 图片）：\n${results.join("\n\n")}`;
+  } catch (e: any) {
+    return `图片搜索失败: ${e?.message || String(e)}`;
+  }
 }
 
 // 获取今日热门新闻（HN 前端 RSS + Wikipedia 每日大事）
@@ -353,6 +398,12 @@ async function executeBuiltinTool(
     try { args = JSON.parse(toolCall.function.arguments || "{}"); } catch {}
     const content = await executeWebSearch(args.q || "", searchBaseUrl, searchToken, browserBinding, searchEngine);
     return { callId: toolCall.id, name: "web_search", content };
+  }
+  if (toolCall.function.name === "search_image") {
+    let args: Record<string, any> = {};
+    try { args = JSON.parse(toolCall.function.arguments || "{}"); } catch {}
+    const content = await executeImageSearch(browserBinding, args.q || "");
+    return { callId: toolCall.id, name: "search_image", content };
   }
   if (toolCall.function.name === "get_news") {
     let args: Record<string, any> = {};
