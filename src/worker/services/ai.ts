@@ -214,7 +214,6 @@ async function executeBrowserSearch(browserBinding: any, query: string): Promise
   const searchUrl = `https://www.bing.com/search?q=${encodeURIComponent(query)}&count=10`;
   const resp = await browserBinding.quickAction("content", {
     url: searchUrl,
-    waitUntil: "networkidle0",
   });
   if (!resp.ok) return null;
   const data = await resp.json() as any;

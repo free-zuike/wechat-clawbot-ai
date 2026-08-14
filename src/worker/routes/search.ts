@@ -19,7 +19,6 @@ export async function handleSearchTest(request: Request, env: Env): Promise<Resp
     const searchUrl = `https://www.bing.com/search?q=${encodeURIComponent(q)}&count=10`;
     const resp = await env.BROWSER.quickAction("content", {
       url: searchUrl,
-      waitUntil: "networkidle0",
     });
 
     if (!resp.ok) {
