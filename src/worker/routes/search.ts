@@ -54,22 +54,8 @@ export async function handleSearchTest(request: Request, env: Env): Promise<Resp
         }
       }
 
-      // 验证原图 URL 是否可访问，只返回真正能打开的图片
-      const items: Array<{ url: string; thumb?: string; title: string }> = [];
-      for (const c of candidates) {
-        const ok = await verifyImageUrl(c.url);
-        if (ok) {
-          items.push(c);
-          if (items.length >= 10) break;
-        }
-      }
-
-      // 如果验证后结果太少，直接返回未验证的候选（避免过滤掉所有可用图片）
-      if (items.length < 3 && candidates.length > 0) {
-        return json({ ok: true, type: "image", items: candidates.slice(0, 10), count: candidates.length, note: "图片未经验证，部分可能无法加载" });
-      }
-
-      return json({ ok: true, type: "image", items, count: items.length });
+      // 返回所有候选图片，前端用 img 加载原图来验证可访问性
+      return json({ ok: true, type: "image", items: candidates.slice(0, 12), count: Math.min(candidates.length, 12) });
     }
 
     // 网页搜索
@@ -120,29 +106,5 @@ export async function handleSearchTest(request: Request, env: Env): Promise<Resp
     return json({ ok: true, type: "web", items, count: items.length });
   } catch (e: any) {
     return json({ ok: false, error: `搜索失败: ${e?.message || "未知错误"}` });
-  }
-}
-
-// 验证图片 URL 是否真的可访问（GET 前 100 字节，超时 5 秒）
-async function verifyImageUrl(url: string): Promise<boolean> {
-  try {
-    const resp = await fetch(url, {
-      method: "GET",
-      redirect: "follow",
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
-        "Referer": "https://www.bing.com/",
-        "Range": "bytes=0-99",
-      },
-      signal: AbortSignal.timeout(5000),
-    });
-    // 206 Partial Content 或 200 OK 都算可访问
-    if (resp.status !== 200 && resp.status !== 206) return false;
-    const contentType = resp.headers.get("content-type") || "";
-    // 接受 image/* 或 octet-stream（很多 CDN 把图片标为 octet-stream）
-    return contentType.startsWith("image/") || contentType === "application/octet-stream";
-  } catch {
-    return false;
   }
 }
