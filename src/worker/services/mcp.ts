@@ -539,17 +539,21 @@ export async function saveMCPServers(db: D1Database | null, servers: MCPServerCo
            ON CONFLICT(id) DO UPDATE SET
              name = excluded.name, url = excluded.url, api_key = excluded.api_key,
              enabled = excluded.enabled, tool_prefix = excluded.tool_prefix,
-             tools = excluded.tools, tools_fetched_at = excluded.tools_fetched_at,
-             resources = excluded.resources, resources_fetched_at = excluded.resources_fetched_at,
-             prompts = excluded.prompts, prompts_fetched_at = excluded.prompts_fetched_at,
+             tools = COALESCE(NULLIF(excluded.tools, ''), tools),
+             tools_fetched_at = COALESCE(excluded.tools_fetched_at, tools_fetched_at),
+             resources = COALESCE(NULLIF(excluded.resources, ''), resources),
+             resources_fetched_at = COALESCE(excluded.resources_fetched_at, resources_fetched_at),
+             prompts = COALESCE(NULLIF(excluded.prompts, ''), prompts),
+             prompts_fetched_at = COALESCE(excluded.prompts_fetched_at, prompts_fetched_at),
              updated_at = excluded.updated_at`
         ).bind(
           s.id, s.name, s.url, s.apiKey || "", s.enabled ? 1 : 0,
-          s.toolPrefix || "", s.tools ? JSON.stringify(s.tools) : "[]",
+          s.toolPrefix || "",
+          s.tools !== undefined ? JSON.stringify(s.tools) : null,
           s.toolsFetchedAt || null,
-          s.resources ? JSON.stringify(s.resources) : "[]",
+          s.resources !== undefined ? JSON.stringify(s.resources) : null,
           s.resourcesFetchedAt || null,
-          s.prompts ? JSON.stringify(s.prompts) : "[]",
+          s.prompts !== undefined ? JSON.stringify(s.prompts) : null,
           s.promptsFetchedAt || null,
           new Date().toISOString(), new Date().toISOString()
         )
@@ -566,17 +570,21 @@ export async function saveMCPServers(db: D1Database | null, servers: MCPServerCo
            ON CONFLICT(id) DO UPDATE SET
              name = excluded.name, url = excluded.url, api_key = excluded.api_key,
              enabled = excluded.enabled, tool_prefix = excluded.tool_prefix,
-             tools = excluded.tools, tools_fetched_at = excluded.tools_fetched_at,
-             resources = excluded.resources, resources_fetched_at = excluded.resources_fetched_at,
-             prompts = excluded.prompts, prompts_fetched_at = excluded.prompts_fetched_at,
+             tools = COALESCE(NULLIF(excluded.tools, ''), tools),
+             tools_fetched_at = COALESCE(excluded.tools_fetched_at, tools_fetched_at),
+             resources = COALESCE(NULLIF(excluded.resources, ''), resources),
+             resources_fetched_at = COALESCE(excluded.resources_fetched_at, resources_fetched_at),
+             prompts = COALESCE(NULLIF(excluded.prompts, ''), prompts),
+             prompts_fetched_at = COALESCE(excluded.prompts_fetched_at, prompts_fetched_at),
              updated_at = excluded.updated_at`
         ).bind(
           s.id, s.name, s.url, s.apiKey || "", s.enabled ? 1 : 0,
-          s.toolPrefix || "", s.tools ? JSON.stringify(s.tools) : "[]",
+          s.toolPrefix || "",
+          s.tools !== undefined ? JSON.stringify(s.tools) : null,
           s.toolsFetchedAt || null,
-          s.resources ? JSON.stringify(s.resources) : "[]",
+          s.resources !== undefined ? JSON.stringify(s.resources) : null,
           s.resourcesFetchedAt || null,
-          s.prompts ? JSON.stringify(s.prompts) : "[]",
+          s.prompts !== undefined ? JSON.stringify(s.prompts) : null,
           s.promptsFetchedAt || null,
           new Date().toISOString(), new Date().toISOString()
         ).run();
@@ -1360,6 +1368,40 @@ async function handleOAuthIfNeeded(db: D1Database, server: MCPServerConfig, erro
   // 只在 401 时尝试 OAuth
   if (error?.code !== 401) return null;
   return ensureOAuthToken(db, server);
+}
+
+// ========== 定时刷新：定期检查 MCP 工具变更 ==========
+
+// 检查所有 MCP 服务器的工具是否过期（超过 5 分钟未刷新），若是则重新拉取
+export async function refreshAllMCPToolsIfStale(db: D1Database | null): Promise<void> {
+  if (!db) return;
+  try {
+    const servers = await loadAllMCPServers(db);
+    const now = Date.now();
+    const STALE_MS = 5 * 60 * 1000; // 5 分钟
+
+    for (const server of servers) {
+      if (!server.enabled) continue;
+      const lastFetch = server.toolsFetchedAt || 0;
+      if (now - lastFetch < STALE_MS) continue; // 未过期，跳过
+
+      Logger.info(`[mcp] Refreshing stale tools for ${server.name}`);
+      try {
+        const tools = await fetchToolsFromServer(db, {
+          ...server,
+          tools: undefined, // 强制重新拉取
+        });
+        if (tools.length > 0) {
+          await updateServerTools(db, server.id, tools);
+          Logger.info(`[mcp] Refreshed ${tools.length} tools for ${server.name}`);
+        }
+      } catch (e: any) {
+        Logger.warn(`[mcp] Failed to refresh tools for ${server.name}`, { error: e?.message });
+      }
+    }
+  } catch (e: any) {
+    Logger.warn("[mcp] Failed to refresh stale MCP tools", { error: e?.message });
+  }
 }
 
 // ========== subscriptions/listen（2026-07-28 变更通知流） ==========

@@ -150,8 +150,12 @@ export async function handleMCP(request: Request, env: Env): Promise<Response> {
 
     try {
       const tools = await fetchToolsFromServer(env.DB, server);
-      await updateServerTools(env.DB, id, tools);
-      return json({ ok: true, tools });
+      if (tools.length > 0) {
+        await updateServerTools(env.DB, id, tools);
+      } else {
+        Logger.warn(`[mcp] Refresh returned empty tools for ${server.name}, keeping existing cache`);
+      }
+      return json({ ok: true, tools, cached: tools.length === 0 });
     } catch (e: any) {
       return json({ error: "FETCH_FAILED", message: `获取工具失败: ${e?.message}` }, 500);
     }

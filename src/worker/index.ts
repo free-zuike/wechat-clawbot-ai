@@ -11,6 +11,7 @@ import { errorTracker } from "./utils/metrics";
 import { parseApiUrl } from "./services/ai";
 import { Logger } from "./utils/error";
 import { ILinkConnectionDO } from "./services/ilink-do";
+import { refreshAllMCPToolsIfStale } from "./services/mcp";
 
 // 导出 Durable Objects 类
 export { ILinkConnectionDO };
@@ -50,6 +51,9 @@ export default {
 
   async scheduled(_event: ScheduledEvent, env: Env): Promise<void> {
     try {
+      // 刷新过期的 MCP 工具缓存
+      await refreshAllMCPToolsIfStale(env.DB);
+
       const doId = env.ILINK_CONNECTION.idFromName("main");
       const doStub = env.ILINK_CONNECTION.get(doId);
 
