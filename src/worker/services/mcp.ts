@@ -849,6 +849,10 @@ function formatContentResult(contents: any[]): string {
 
 // 获取所有已缓存的 MCP 工具定义（含前缀），可选自动拉取
 // 也包括资源读取和提示词获取工具
+// autoFetch 仅在工具缓存为空且距上次拉取超过 30 秒时才会触发，避免 subrequest 耗尽
+const lastAutoFetchAttempt = new Map<string, number>();
+const AUTO_FETCH_COOLDOWN_MS = 30_000;
+
 export async function getAllMCPTools(db: D1Database | null, autoFetch = false): Promise<MCPToolDefinition[]> {
   const servers = await loadMCPServers(db);
   const allTools: MCPToolDefinition[] = [];
@@ -857,9 +861,14 @@ export async function getAllMCPTools(db: D1Database | null, autoFetch = false): 
     let tools = server.tools;
 
     if ((!tools || tools.length === 0) && autoFetch && db) {
-      tools = await fetchToolsFromServer(db, server);
-      if (tools.length > 0) {
-        updateServerTools(db, server.id, tools).catch((e: any) => Logger.warn("[mcp] Failed to cache tools", { server: server.name, error: e?.message }));
+      const lastAttempt = lastAutoFetchAttempt.get(server.id) || 0;
+      const now = Date.now();
+      if (now - lastAttempt > AUTO_FETCH_COOLDOWN_MS) {
+        lastAutoFetchAttempt.set(server.id, now);
+        tools = await fetchToolsFromServer(db, server);
+        if (tools.length > 0) {
+          updateServerTools(db, server.id, tools).catch((e: any) => Logger.warn("[mcp] Failed to cache tools", { server: server.name, error: e?.message }));
+        }
       }
     }
 

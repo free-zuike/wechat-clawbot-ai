@@ -848,7 +848,7 @@ export async function callAIWithContext(
       let mcpTools: MCPToolDefinition[] = [];
       let openAITools: any[] = [];
       if (config.mcpServers && config.mcpServers.length > 0 && config.db) {
-        mcpTools = await getAllMCPTools(config.db, true);
+        mcpTools = await getAllMCPTools(config.db, false);
         openAITools = mcpToolsToOpenAI(mcpTools);
         Logger.info(`[ai] Loaded ${mcpTools.length} MCP tools for ${userId}`);
       }
@@ -974,7 +974,7 @@ export async function callAI(
       let mcpTools: MCPToolDefinition[] = [];
       let openAITools: any[] = [];
       if (config.mcpServers && config.mcpServers.length > 0 && config.db) {
-        mcpTools = await getAllMCPTools(config.db, true);
+        mcpTools = await getAllMCPTools(config.db, false);
         openAITools = mcpToolsToOpenAI(mcpTools);
         Logger.info(`[ai] Loaded ${mcpTools.length} MCP tools (no context)`);
       }
