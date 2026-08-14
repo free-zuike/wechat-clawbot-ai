@@ -127,8 +127,8 @@ const BUILTIN_TOOLS = [{
   type: "function",
   function: {
     name: "get_weather",
-    description: "获取指定城市的实时天气和未来预报，通过 wttr.in 获取。当用户问到「天气、气温、下雨、刮风、今天冷不冷、明天适合出门吗」等天气相关问题时调用此工具，不要再调用 web_search",
-    parameters: { type: "object", properties: { city: { type: "string", description: "城市名（必填），如 北京/上海/广州/大同，支持中文城市名" } }, required: ["city"] },
+    description: "获取指定城市的实时天气和未来预报（最多 3 天），通过 wttr.in 获取。当用户问到「天气、气温、下雨、刮风、今天冷不冷、明天适合出门吗、本周天气、未来几天天气」等天气相关问题时调用此工具，不要再调用 web_search",
+    parameters: { type: "object", properties: { city: { type: "string", description: "城市名（必填），如 北京/上海/广州/大同，支持中文城市名" }, days: { type: "number", description: "可选：预报天数，1=今天，2=今明两天，3=未来三天，默认 1" } }, required: ["city"] },
   },
 }, {
   type: "function",
@@ -223,8 +223,8 @@ async function executeWebSearch(query: string, searchBaseUrl?: string, searchTok
   return result ? `【来源: ${source}】\n${result}` : "没有找到相关结果";
 }
 
-// 天气查询：调用 wttr.in 免费 API（无需 API Key）
-async function executeWeatherQuery(city: string): Promise<string> {
+// 天气查询：调用 wttr.in 免费 API（无需 API Key），days 表示预报天数（1-3）
+async function executeWeatherQuery(city: string, days = 1): Promise<string> {
   try {
     const resp = await fetch(`https://wttr.in/${encodeURIComponent(city)}?format=j1`, {
       signal: AbortSignal.timeout(10000),
@@ -246,21 +246,34 @@ async function executeWeatherQuery(city: string): Promise<string> {
     const pressure = current.pressure || "";
     const uvIndex = current.uvIndex || "";
 
-    // 未来预报（取今明两天）
+    // 未来预报
     const forecasts = data?.weather || [];
-    const forecastLines = forecasts.slice(0, 2).map((day: any) => {
+    const forecastLines = forecasts.slice(0, days).map((day: any) => {
       const date = day.date || "";
       const hi = day.tempMaxC || "";
       const lo = day.tempMinC || "";
       const desc = day.hourly?.[0]?.weatherDesc?.[0]?.value || "";
-      return `${date} ${desc} ${lo}~${hi}°C`;
+      // 取全天最高/最低
+      const allHi = Math.max(...(day.hourly || []).map((h: any) => parseInt(h.tempC) || 0));
+      const allLo = Math.min(...(day.hourly || []).filter((h: any) => h.tempC).map((h: any) => parseInt(h.tempC)));
+      const maxHi = allHi > 0 ? allHi : hi;
+      const minLo = allLo < 99 ? allLo : lo;
+      // 取主要天气描述（取白天的，忽略夜间）
+      const dayDesc = day.hourly?.filter((_: any, i: number) => i >= 2 && i <= 5).map((h: any) => h.weatherDesc?.[0]?.value).filter(Boolean).join("→") || desc;
+      const windInfo = day.hourly?.[3]?.windspeedKmph ? ` ${day.hourly[3].winddir16Point || ""}${day.hourly[3].windspeedKmph}km/h` : "";
+      return `${date} ${dayDesc} ${minLo}~${maxHi}°C${windInfo}`;
     }).join("\n");
 
-    return `【${cityName} 实时天气】${weatherDesc}
+    const result = `【${cityName} 实时天气】${weatherDesc}
 气温: ${temp}°C（体感 ${feelsLike}°C）
 湿度: ${humidity}% | 风: ${windDir} ${windSpeed}km/h
-能见度: ${visibility}km | 气压: ${pressure}hPa | 紫外线: ${uvIndex}
-${forecastLines.length > 0 ? `\n【预报】\n${forecastLines}` : ""}`;
+能见度: ${visibility}km | 气压: ${pressure}hPa | 紫外线: ${uvIndex}`;
+
+    if (forecastLines.length > 0) {
+      const label = days === 1 ? "今日" : `未来 ${days} 天`;
+      return `${result}\n\n【${label}预报】\n${forecastLines}`;
+    }
+    return result;
   } catch (e: any) {
     return `天气查询失败: ${e?.message || "请求超时"}`;
   }
@@ -448,7 +461,8 @@ async function executeBuiltinTool(
     try { args = JSON.parse(toolCall.function.arguments || "{}"); } catch {}
     const city = (args.city || "").trim();
     if (!city) return { callId: toolCall.id, name: "get_weather", content: "请指定城市名", isError: true };
-    const content = await executeWeatherQuery(city);
+    const days = Math.min(Math.max(parseInt(args.days) || 1, 1), 3);
+    const content = await executeWeatherQuery(city, days);
     return { callId: toolCall.id, name: "get_weather", content };
   }
   if (toolCall.function.name === "web_search") {
