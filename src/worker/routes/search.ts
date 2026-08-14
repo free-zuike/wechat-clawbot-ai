@@ -55,7 +55,7 @@ export async function handleSearchTest(request: Request, env: Env): Promise<Resp
       }
 
       // 返回所有候选图片，前端用 img 加载原图来验证可访问性
-      return json({ ok: true, type: "image", items: candidates.slice(0, 12), count: Math.min(candidates.length, 12) });
+      return json({ ok: true, type: "image", items: candidates.slice(0, 30), count: Math.min(candidates.length, 30) });
     }
 
     // 网页搜索

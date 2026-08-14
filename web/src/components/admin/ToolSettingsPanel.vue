@@ -153,7 +153,7 @@ async function testSearch() {
 
     if (isImage) {
       // 图片搜索：用 Image() 预加载验证，只保留能加载的原图
-      const candidates = (data.items || []).slice(0, 20);
+      const candidates = (data.items || []).slice(0, 30);
       const validItems: any[] = [];
       await Promise.all(candidates.map((item: any) => new Promise<void>((resolve) => {
         const img = new Image();
@@ -167,7 +167,7 @@ async function testSearch() {
       })));
       searchResult.value = {
         isError: false, type: "image",
-        items: validItems.slice(0, 12),
+        items: validItems.slice(0, 20),
       };
     } else {
       searchResult.value = {
