@@ -148,8 +148,8 @@ const BUILTIN_TOOLS = [{
   type: "function",
   function: {
     name: "generate_image",
-    description: "AI 生成图片。当用户说「画/生成/制作一张图片」时调用此工具，根据描述生成图片",
-    parameters: { type: "object", properties: { prompt: { type: "string", description: "图片描述（必填）" }, size: { type: "string", description: "可选：图片尺寸，如 1024x1024" } }, required: ["prompt"] },
+    description: "AI 生成图片。当用户说「画/生成/制作一张图片」时调用此工具，根据描述生成图片。如果用户提供了参考图 URL（如从 search_image 搜到的），传入 refImage 参数做以图生图",
+    parameters: { type: "object", properties: { prompt: { type: "string", description: "图片描述（必填）" }, size: { type: "string", description: "可选：图片尺寸，如 1024x1024" }, refImage: { type: "string", description: "可选：参考图片 URL，用于以图生图（如从 search_image 搜到的图片链接）" } }, required: ["prompt"] },
   },
 }, {
   type: "function",
@@ -415,7 +415,7 @@ async function executeBuiltinTool(
     let args: Record<string, any> = {};
     try { args = JSON.parse(toolCall.function.arguments || "{}"); } catch {}
     if (!mediaConfig?.aiBinding) return { callId: toolCall.id, name: "generate_image", content: "图片生成服务未配置", isError: true };
-    const result = await generateImage(mediaConfig.aiBinding, args.prompt || "", mediaConfig.model, mediaConfig.provider, mediaConfig.baseUrl, mediaConfig.apiKey, undefined, args.size, mediaConfig.allKeys, mediaConfig.maxRetries, undefined, mediaConfig.responseConfig);
+    const result = await generateImage(mediaConfig.aiBinding, args.prompt || "", mediaConfig.model, mediaConfig.provider, mediaConfig.baseUrl, mediaConfig.apiKey, args.refImage || undefined, args.size, mediaConfig.allKeys, mediaConfig.maxRetries, undefined, mediaConfig.responseConfig);
     if (result.data) {
       const dataStr = typeof result.data === "string" ? result.data : `[图片数据 ${result.data.length} 字节]`;
       return { callId: toolCall.id, name: "generate_image", content: `✅ 图片已生成\n${dataStr.slice(0, 500)}` };
