@@ -546,7 +546,7 @@ export async function callAI(
       ], config.maxTokens);
     }
 
-    return (text || "").slice(0, 700) || "（AI 没有返回内容）";
+    return text || "（AI 没有返回内容）";
   } catch (e: any) {
     Logger.error(`[ai] AI call failed`, { error: e?.message || String(e) });
     return `AI调用失败: ${e?.message || String(e)}`;

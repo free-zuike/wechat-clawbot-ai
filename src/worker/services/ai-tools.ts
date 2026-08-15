@@ -285,86 +285,6 @@ async function executeImageSearch(browserBinding: any, query: string): Promise<s
 }
 
 // 获取今日热门新闻（HN 前端 RSS + Wikipedia 每日大事）
-async function tryTopNews(): Promise<string | null> {
-  const parts: string[] = [];
-
-  // a. Hacker News 前端热门（RSS）
-  try {
-    const resp = await fetch("https://hnrss.org/frontpage", {
-      headers: { "User-Agent": "ClawBot/1.0" }, signal: AbortSignal.timeout(8000),
-    });
-    if (resp.ok) {
-      const xml = await resp.text();
-      const items = parseHNXML(xml);
-      if (items.length > 0) parts.push(items.join("\n"));
-    }
-  } catch { /* 忽略 */ }
-
-  // b. Wikipedia 每日大事（on this day）
-  try {
-    const now = new Date();
-    const tz = "Asia/Shanghai";
-    const dp = new Intl.DateTimeFormat("en-CA", { timeZone: tz, month: "2-digit", day: "2-digit" }).formatToParts(now);
-    const get = (t: string) => dp.find(p => p.type === t)?.value || "";
-    const month = get("month"), day = get("day");
-    const resp = await fetch(
-      `https://en.wikipedia.org/api/rest_v1/feed/onthisday/events/${month}/${day}`,
-      { headers: { "User-Agent": "ClawBot/1.0" }, signal: AbortSignal.timeout(8000) }
-    );
-    if (resp.ok) {
-      const data = await resp.json() as any;
-      const events = data?.events;
-      if (Array.isArray(events) && events.length > 0) {
-        const lines = events.slice(0, 6).map((e: any, i: number) =>
-          `${i + 1}. ${stripTags(e.text || "").slice(0, 150)}${e.pages?.[0]?.content_urls?.desktop?.page ? `\n   ${e.pages[0].content_urls.desktop.page}` : ""}`
-        );
-        parts.push("📅 历史上的今天:\n" + lines.join("\n"));
-      }
-    }
-  } catch { /* 忽略 */ }
-
-  return parts.length > 0 ? parts.join("\n\n---\n\n") : null;
-}
-
-// 解析 HN RSS（frontpage）的 <item> 列表
-function parseHNXML(xml: string): string[] {
-  const results: string[] = [];
-  const itemRe = /<item>(.*?)<\/item>/gs;
-  let m: RegExpExecArray | null;
-  let count = 0;
-  while ((m = itemRe.exec(xml)) !== null && count < 8) {
-    const item = m[1];
-    const titleMatch = item.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>/s);
-    const linkMatch = item.match(/<link>(.*?)<\/link>/s);
-    const pointsMatch = item.match(/Points: (\d+)/);
-    if (!titleMatch) continue;
-    results.push(`${count + 1}. ${titleMatch[1]}\n   ${linkMatch?.[1] || ""}${pointsMatch ? `\n   ${pointsMatch[1]} 分` : ""}`);
-    count++;
-  }
-  return results;
-}
-
-// Hacker News 搜索（Algolia 提供，免费，对 Workers 友好）
-async function tryHackerNews(q: string): Promise<string | null> {
-  try {
-    const resp = await fetch(
-      `https://hn.algolia.com/api/v1/search?query=${encodeURIComponent(q)}&hitsPerPage=5&tags=story`,
-      { headers: { "User-Agent": "ClawBot/1.0" }, signal: AbortSignal.timeout(8000) }
-    );
-    if (!resp.ok) return null;
-    const data = await resp.json() as any;
-    const hits = data?.hits;
-    if (!Array.isArray(hits) || hits.length === 0) return null;
-    return hits.map((h: any, idx: number) =>
-      `${idx + 1}. ${h.title || "无标题"}\n   ${h.url || `https://news.ycombinator.com/item?id=${h.objectID}`}\n   ${h.points || 0} 分, ${h.author || ""}`
-    ).join("\n\n");
-  } catch { return null; }
-}
-
-function stripTags(str: string): string {
-  return str.replace(/<[^>]*>/g, "").replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#x27;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").trim();
-}
-
 export async function executeBuiltinTool(
   toolCall: { id: string; function: { name: string; arguments: string } },
   newsnowBaseUrl?: string,
@@ -498,17 +418,10 @@ async function executeNewsNow(source: string, baseUrl?: string): Promise<string>
     }
     // NewsNow 失败（如 D1 过载），回退到 HN 热门（用通用搜索词）
     if (requested) {
-      const hn = await tryHackerNews(requested);
-      if (hn) return "NewsNow 暂不可用，以下是技术社区热门：\n" + hn;
+      return `NewsNow 暂不可用，请稍后重试`;
     }
-    const topNews = await tryTopNews();
-    if (topNews) return "NewsNow 暂不可用，以下是今日热门：\n" + topNews;
-
     return "没有获取到新闻";
   } catch (e: any) {
-    // 最终回退 HN 热门
-    const topNews = await tryTopNews();
-    if (topNews) return "NewsNow 暂不可用，以下是今日热门：\n" + topNews;
     return `新闻获取失败: ${e?.message || String(e)}`;
   }
 }
