@@ -416,12 +416,26 @@ async function executeNewsNow(source: string, baseUrl?: string): Promise<string>
       }
       if (lines.length > 0) return lines.join("\n\n");
     }
-    // NewsNow 失败（如 D1 过载），回退到 HN 热门（用通用搜索词）
+    // NewsNow 失败时回退到网页搜索
     if (requested) {
+      const searchResult = await executeWebSearch(requested, undefined, undefined, undefined, undefined);
+      if (searchResult && !searchResult.includes("没有找到相关结果")) {
+        return `NewsNow 暂不可用，以下是搜索结果：\n${searchResult}`;
+      }
       return `NewsNow 暂不可用，请稍后重试`;
+    }
+    // 无指定源时，搜索"今日热点"
+    const searchResult = await executeWebSearch("今日热点新闻", undefined, undefined, undefined, undefined);
+    if (searchResult && !searchResult.includes("没有找到相关结果")) {
+      return `NewsNow 暂不可用，以下是今日热点：\n${searchResult}`;
     }
     return "没有获取到新闻";
   } catch (e: any) {
+    // 最终回退：网页搜索兜底
+    const searchResult = await executeWebSearch("今日热点新闻", undefined, undefined, undefined, undefined);
+    if (searchResult && !searchResult.includes("没有找到相关结果")) {
+      return `NewsNow 暂不可用，以下是今日热点：\n${searchResult}`;
+    }
     return `新闻获取失败: ${e?.message || String(e)}`;
   }
 }
