@@ -55,6 +55,13 @@ export const BUILTIN_TOOLS = [{
     description: "AI 生成视频。当用户说「生成视频/制作视频」时调用此工具，根据描述生成视频",
     parameters: { type: "object", properties: { prompt: { type: "string", description: "视频描述（必填）" } }, required: ["prompt"] },
   },
+}, {
+  type: "function",
+  function: {
+    name: "fetch_url",
+    description: "获取指定 URL 的网页内容（纯文本）。当用户说「帮我看看这个链接/访问这个页面/打开这个网址」时调用此工具，返回网页的文本内容",
+    parameters: { type: "object", properties: { url: { type: "string", description: "网页 URL（必填），如 https://example.com/page" } }, required: ["url"] },
+  },
 }];
 
 // 网页搜索：调用 cloudflare-search 聚合搜索引擎
@@ -166,6 +173,29 @@ async function executeWeatherQuery(city: string, days = 1): Promise<string> {
     return result;
   } catch (e: any) {
     return `天气查询失败: ${e?.message || "请求超时"}`;
+  }
+}
+
+// 获取指定 URL 的网页内容
+async function executeFetchUrl(url: string): Promise<string> {
+  if (!url) return "URL 不能为空";
+  try {
+    const resp = await fetch(url, {
+      headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" },
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!resp.ok) return `访问失败 (HTTP ${resp.status})`;
+    const text = await resp.text();
+    // 提取纯文本：去掉 HTML 标签，限制长度
+    const cleaned = text
+      .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
+      .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+      .replace(/<[^>]+>/g, "")
+      .replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#\d+;/g, "")
+      .replace(/\s+/g, " ").trim();
+    return cleaned.slice(0, 5000) || "页面没有文本内容";
+  } catch (e: any) {
+    return `访问失败: ${e?.message || "请求超时"}`;
   }
 }
 
@@ -393,6 +423,14 @@ export async function executeBuiltinTool(
       return { callId: toolCall.id, name: "generate_video", content: result.url ? `✅ 视频已生成: ${result.url}` : `✅ 视频任务已提交: ${result.taskId}` };
     }
     return { callId: toolCall.id, name: "generate_video", content: "视频生成失败", isError: true };
+  }
+  if (toolCall.function.name === "fetch_url") {
+    let args: Record<string, any> = {};
+    try { args = JSON.parse(toolCall.function.arguments || "{}"); } catch {}
+    const url = (args.url || "").trim();
+    if (!url) return { callId: toolCall.id, name: "fetch_url", content: "URL 不能为空", isError: true };
+    const content = await executeFetchUrl(url);
+    return { callId: toolCall.id, name: "fetch_url", content };
   }
   return null;
 }
