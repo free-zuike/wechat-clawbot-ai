@@ -368,43 +368,46 @@ export class ILinkConnectionDO implements DurableObject {
         }
       }
 
-      for (const task of pending) {
-        const taskId = task.task_id as string;
-        const taskSource = (task.source as string) || "";
-
-        // 跳过缺少用户信息且非 chat 来源的任务（旧的孤儿任务会在上面被清理）
-        const toUserId = task.to_user_id as string | undefined;
-        const contextToken = task.context_token as string | undefined;
-        if (!toUserId && !contextToken && taskSource !== "chat") {
-          // 已经在 cleanup 中删除；如果还在这里说明 cleanup 失败，安全跳过
-          continue;
+      // 并行处理视频任务（每批 3 个，避免串行 1-2s 延迟累积）
+      // 原串行循环：N 个任务总耗时 N×(1-2s+网络)
+      // 并行批处理：总耗时 ≈ 批次×(1-2s+max(网络))
+      const BATCH_SIZE = 3;
+      for (let batchStart = 0; batchStart < pending.length; batchStart += BATCH_SIZE) {
+        const batch = pending.slice(batchStart, batchStart + BATCH_SIZE);
+        // 批次间延迟 1-2s（Agnes API 限流保护）
+        if (batchStart > 0) {
+          await new Promise(r => setTimeout(r, 1000 + Math.random() * 1000));
         }
+        await Promise.allSettled(batch.map(async (task) => {
+          const taskId = task.task_id as string;
+          const taskSource = (task.source as string) || "";
 
-        // 超时保护：任务超过 24 小时且仍未下载成功，标记失败，避免永远重试
-        const createdAt = Number(task.created_at) || now;
-        const ageMs = now - createdAt;
-        if (ageMs > MAX_AGE_MS) {
-          Logger.warn("[DO] Video task timed out (> 24h) — marking as failed", { taskId, ageHours: Math.round(ageMs / 3600000) });
-          await this.env.DB.prepare(`UPDATE pending_videos SET status = 'failed' WHERE task_id = ?`).bind(taskId).run();
-          const modelInfo = `🤖 ${getProviderName(task.provider as string)} · ${task.model}`;
-          // 凭证解析：先按 accountId 找，找不到时用第一个账号或 ilinkCreds
-          const accountId = task.account_id as string | undefined;
-          let sendCreds: ILinkCredentials | null = null;
-          if (accountId && this.accounts.has(accountId)) {
-            sendCreds = this.accounts.get(accountId)!.creds;
-          } else {
-            const allAccounts = Array.from(this.accounts.values());
-            sendCreds = allAccounts[0]?.creds || this.ilinkCreds;
-          }
-          if (sendCreds) {
-            sendTextMessage(sendCreds, toUserId, contextToken, `❌ 视频下载超时 (${modelInfo})\n生成成功但下载失败，可重新生成`)
-              .catch(() => {});
-          }
-          continue;
-        }
+          // 跳过缺少用户信息且非 chat 来源的任务
+          const toUserId = task.to_user_id as string | undefined;
+          const contextToken = task.context_token as string | undefined;
+          if (!toUserId && !contextToken && taskSource !== "chat") return;
 
-        // Agnes API 限流保护：每个任务查询之间延迟 1-2 秒
-        await new Promise(r => setTimeout(r, 1000 + Math.random() * 1000));
+          // 超时保护：任务超过 24 小时标记失败
+          const createdAt = Number(task.created_at) || now;
+          const ageMs = now - createdAt;
+          if (ageMs > MAX_AGE_MS) {
+            Logger.warn("[DO] Video task timed out (> 24h) — marking as failed", { taskId, ageHours: Math.round(ageMs / 3600000) });
+            await this.env.DB.prepare(`UPDATE pending_videos SET status = 'failed' WHERE task_id = ?`).bind(taskId).run();
+            const modelInfo = `🤖 ${getProviderName(task.provider as string)} · ${task.model}`;
+            const accountId = task.account_id as string | undefined;
+            let sendCreds: ILinkCredentials | null = null;
+            if (accountId && this.accounts.has(accountId)) {
+              sendCreds = this.accounts.get(accountId)!.creds;
+            } else {
+              const allAccounts = Array.from(this.accounts.values());
+              sendCreds = allAccounts[0]?.creds || this.ilinkCreds;
+            }
+            if (sendCreds) {
+              sendTextMessage(sendCreds, toUserId, contextToken, `❌ 视频下载超时 (${modelInfo})\n生成成功但下载失败，可重新生成`)
+                .catch(() => {});
+            }
+            return;
+          }
 
         // baseUrl 规范化：去掉末尾斜杠，去掉任何版本号和端点路径（/v1/...、/v4/...）
         let base = (task.base_url as string).replace(/\/+$/, "");
@@ -440,7 +443,7 @@ export class ILinkConnectionDO implements DurableObject {
             const cfModel = (task.base_url as string).replace(/^cf:\/\//, "");
             if (!this.env.AI) {
               Logger.warn("[DO] Cloudflare AI binding not available", { taskId });
-              continue;
+              return;
             }
             const status = await this.env.AI.run(cfModel, { jobId: taskId });
             Logger.info("[DO] Cloudflare video status", { taskId, state: status?.state, keys: status ? Object.keys(status).slice(0, 10) : [] });
@@ -453,7 +456,7 @@ export class ILinkConnectionDO implements DurableObject {
             } else {
               stillProcessing = true;
               Logger.info("[DO] Cloudflare video task still processing", { taskId, state: status?.state });
-              continue;
+              return;
             }
           } else {
             const videoId = task.video_id as string | undefined;
@@ -482,7 +485,7 @@ export class ILinkConnectionDO implements DurableObject {
                 taskFailed = true;
                 Logger.warn("[DO] Video task 404 — marking as failed (task not found on provider)", { taskId });
               }
-              continue;
+              return;
             }
             const statusData = await statusResp.json() as any;
 
@@ -630,7 +633,8 @@ export class ILinkConnectionDO implements DurableObject {
         } catch (e: any) {
           Logger.warn("[DO] Video status check error", { taskId, error: e?.message });
         }
-      }
+      })); // batch.map + Promise.allSettled
+    } // batch for loop
     } catch (e: any) {
       Logger.error("[DO] Check pending videos error", { error: e.message });
     }
