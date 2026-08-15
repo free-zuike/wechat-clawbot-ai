@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { parseApiUrl, formatToolContent, extractImageSize, isVagueFollowUp, filterBuiltinTools } from "./ai";
+import {
+  parseApiUrl, formatToolContent, extractImageSize, isVagueFollowUp, filterBuiltinTools,
+  tryQuickReply, isImageGenerationRequest, isVideoGenerationRequest, extractMediaPrompt,
+  extractVideoDuration, extractUrl,
+} from "./ai";
 
 describe("parseApiUrl", () => {
   it("should parse standard OpenAI URL", () => {
@@ -186,5 +190,103 @@ describe("extractImageSize", () => {
 
   it("should clamp to closest valid size", () => {
     expect(extractImageSize("1920x1920")).toBe("1024x1024");
+  });
+});
+
+describe("tryQuickReply", () => {
+  it("should return quick reply for 你好", () => {
+    expect(tryQuickReply("你好")).toContain("爪爪");
+  });
+
+  it("should return quick reply for 你是谁", () => {
+    expect(tryQuickReply("你是谁")).toContain("ClawBot");
+  });
+
+  it("should return help for 帮助", () => {
+    expect(tryQuickReply("帮助")).toContain("我可以帮你");
+  });
+
+  it("should return null for unknown messages", () => {
+    expect(tryQuickReply("今天天气怎么样")).toBeNull();
+  });
+
+  it("should handle whitespace and case", () => {
+    expect(tryQuickReply("  你好  ")).toBeTruthy();
+    expect(tryQuickReply("Reset")).toBeNull(); // 大小写敏感
+  });
+});
+
+describe("isImageGenerationRequest / isVideoGenerationRequest", () => {
+  it("should detect 图片 command", () => {
+    expect(isImageGenerationRequest("/图片 一只猫")).toBe(true);
+    expect(isImageGenerationRequest("/image 一只猫")).toBe(true);
+  });
+
+  it("should detect 视频 command", () => {
+    expect(isVideoGenerationRequest("/视频 一只猫跑")).toBe(true);
+    expect(isVideoGenerationRequest("/video 一只猫跑")).toBe(true);
+  });
+
+  it("should NOT detect plain text as command", () => {
+    expect(isImageGenerationRequest("帮我画一张图")).toBe(false);
+    expect(isVideoGenerationRequest("帮我生成视频")).toBe(false);
+    expect(isImageGenerationRequest("")).toBe(false);
+  });
+});
+
+describe("extractMediaPrompt", () => {
+  it("should strip image command prefix", () => {
+    expect(extractMediaPrompt("/图片 一只猫", "image")).toBe("一只猫");
+  });
+
+  it("should strip video command prefix", () => {
+    expect(extractMediaPrompt("/视频 一只猫跑", "video")).toBe("一只猫跑");
+  });
+
+  it("should return trimmed text when no command present", () => {
+    expect(extractMediaPrompt("  图片 一只猫", "image")).toBe("图片 一只猫"); // 无 / 前缀不匹配
+    expect(extractMediaPrompt("raw text", "image")).toBe("raw text");
+  });
+
+  it("should return original when prompt empty after strip", () => {
+    expect(extractMediaPrompt("/图片", "image")).toBe("/图片");
+  });
+});
+
+describe("extractVideoDuration", () => {
+  it("should parse explicit seconds", () => {
+    expect(extractVideoDuration("/视频 10秒 x")).toEqual({ numFrames: 240, frameRate: 24 });
+    expect(extractVideoDuration("5s内容")).toEqual({ numFrames: 120, frameRate: 24 });
+  });
+
+  it("should clamp duration to 1-30 seconds", () => {
+    expect(extractVideoDuration("100秒")).toEqual({ numFrames: 30 * 24, frameRate: 24 });
+    expect(extractVideoDuration("0.5秒")).toEqual({ numFrames: 1 * 24, frameRate: 24 });
+  });
+
+  it("should parse Chinese keywords", () => {
+    expect(extractVideoDuration("长一点")).toEqual({ numFrames: 24 * 8, frameRate: 24 });
+    expect(extractVideoDuration("短视频")).toEqual({ numFrames: 24 * 3, frameRate: 24 });
+    expect(extractVideoDuration("要超长的")).toEqual({ numFrames: 24 * 15, frameRate: 24 });
+  });
+
+  it("should return undefined without duration hints", () => {
+    expect(extractVideoDuration("普通文本")).toBeUndefined();
+    expect(extractVideoDuration("")).toBeUndefined();
+  });
+});
+
+describe("extractUrl", () => {
+  it("should extract http URL from text", () => {
+    expect(extractUrl("看这个 https://example.com/page 的内容")).toBe("https://example.com/page");
+  });
+
+  it("should extract https URL", () => {
+    expect(extractUrl("https://foo.com/a?b=1&c=2 其他")).toBe("https://foo.com/a?b=1&c=2");
+  });
+
+  it("should return undefined without URL", () => {
+    expect(extractUrl("没有链接")).toBeUndefined();
+    expect(extractUrl("")).toBeUndefined();
   });
 });
