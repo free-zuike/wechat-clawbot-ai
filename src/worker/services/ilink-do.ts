@@ -10,6 +10,8 @@ import { sendWebhook } from "./webhook";
 import { clearContextSQLite, clearContextD1 } from "./context";
 import type { ILinkCredentials, WeixinMessage } from "../types";
 import { initSQLite, initD1Tables, ensurePendingVideosColumns, ensureGenerationLogsColumns, loadCredentials, saveCredentials, clearCredentials, loadAllCredentials } from "./ilink-db";
+import { loadAIConfigFromKV } from "./ilink-config";
+import { hashText, generateMessageId } from "./ilink-utils";
 import {
   handleLongPoll, handleWebSocket, handleSaveSession, handleCheckSession,
   handleSaveCreds, handleClearCreds, handleQRPoll, handleSend, handleSendVideo,
@@ -716,95 +718,7 @@ export class ILinkConnectionDO implements DurableObject {
       return this.cache.config;
     }
 
-    let aiSystemPrompt = this.env.AI_SYSTEM_PROMPT || "";
-    let webhookUrl = "";
-
-    // 确保 MCP 表存在
-    try {
-      const { ensureMCPServersTable, ensureMCPSessionsTable } = await import("../services/mcp");
-      await ensureMCPServersTable(this.env.DB);
-      await ensureMCPSessionsTable(this.env.DB);
-    } catch (_e) {}
-    let webhookEnabled = false;
-    let webhookTitle = "";
-    let webhookApiKey = "";
-    let webhookChannels: string[] = [];
-
-    // 从 KV 读配置
-    const configRaw = await this.kv?.get("clawbot:config");
-    let kvConfig: Record<string, unknown> = {};
-    try {
-      if (configRaw) {
-        kvConfig = JSON.parse(configRaw);
-        // 自动修复旧数据中的掩码密钥
-        if (typeof kvConfig.aiApiKey === "string" && kvConfig.aiApiKey.includes("***")) {
-          kvConfig.aiApiKey = "";
-        }
-        const presets = kvConfig.aiPresets as any[] | undefined;
-        if (Array.isArray(presets)) {
-          for (const p of presets) {
-            if (typeof p.apiKey === "string" && p.apiKey.includes("***")) {
-              p.apiKey = "";
-            }
-          }
-        }
-        aiSystemPrompt = aiSystemPrompt || (kvConfig.aiSystemPrompt as string) || "";
-        webhookUrl = (kvConfig.webhookUrl as string) || "";
-        webhookEnabled = (kvConfig.webhookEnabled as boolean) || false;
-        webhookTitle = (kvConfig.webhookTitle as string) || "";
-        webhookApiKey = (kvConfig.webhookApiKey as string) || "";
-        webhookChannels = (kvConfig.webhookChannels as string[]) || [];
-      }
-    } catch (_e) {}
-
-    const newsnowBaseUrl = (kvConfig.newsnowBaseUrl as string) || "";
-    const searchBaseUrl = (kvConfig.searchBaseUrl as string) || "";
-    const searchToken = (kvConfig.searchToken as string) || "";
-
-    // 使用 resolveAIConfig 统一解析 AI 提供商配置（支持 aiPresets）
-    const presets = (kvConfig.aiPresets as any[]) || [];
-    const activeProvider = (kvConfig.aiProvider as string) || "cloudflare";
-    const activePreset = presets.find((p: any) => p.id === activeProvider);
-
-    let aiModel = this.env.AI_MODEL || "";
-    let aiProvider = "cloudflare";
-    let aiBaseUrl = "";
-    let aiApiKey = "";
-    let aiMaxTokens = 1024;
-    let aiMaxContextChars = 12000;
-
-    if (activePreset && activeProvider !== "cloudflare") {
-      aiProvider = activeProvider;
-      aiModel = activePreset.model || aiModel;
-      aiBaseUrl = activePreset.baseUrl || "";
-      // 自动修复：如果预设 apiKey 是掩码值（含 ***），用顶层字段替代
-      aiApiKey = (activePreset.apiKey || "").includes("***") ? ((kvConfig.aiApiKey as string) || "") : (activePreset.apiKey || "");
-      aiMaxTokens = activePreset.maxTokens || 1024;
-      aiMaxContextChars = activePreset.maxContextChars || 12000;
-    } else {
-      // cloudflare 或无预设：回退到顶层字段
-      aiProvider = activeProvider;
-      aiModel = aiModel || (kvConfig.aiModel as string) || "";
-      aiBaseUrl = (kvConfig.aiBaseUrl as string) || "";
-      aiApiKey = (kvConfig.aiApiKey as string) || "";
-      aiMaxTokens = (kvConfig.aiMaxTokens as number) || 1024;
-    }
-
-    const aiImageModel = (activePreset?.imageModel as string) || "@cf/black-forest-labs/flux-1-schnell";
-    const aiVideoModel = (activePreset?.videoModel as string) || "bytedance/seedance-2.0-fast";
-
-    const backupKeys = ((activePreset?.apiKeys as string[]) || []).filter((k: string) => k && !k.includes("***"));
-    const allKeys = [aiApiKey, ...backupKeys].filter(Boolean);
-    const aiMaxRetries = (kvConfig.aiMaxRetries as number) || 2;
-
-    const responseConfig = (activePreset?.responseConfig as any) || {};
-    // 加载 MCP 服务器配置
-    let mcpServers: any[] = [];
-    try {
-      const { loadAllMCPServers } = await import("../services/mcp");
-      mcpServers = (await loadAllMCPServers(this.env.DB)).filter((s: any) => s.enabled);
-    } catch (_e) {}
-    const cfg = { aiSystemPrompt, aiModel, aiProvider, aiBaseUrl, aiApiKey, aiMaxTokens, aiMaxContextChars, aiImageModel, aiVideoModel, allKeys, aiMaxRetries, responseConfig, aiCustomProviders: (kvConfig.aiCustomProviders as any[]) || [], mcpServers, newsnowBaseUrl, searchBaseUrl, searchToken, allowlist: (kvConfig.allowlist as string) || "", webhook: { enabled: webhookEnabled, url: webhookUrl, title: webhookTitle, apiKey: webhookApiKey, channels: webhookChannels } };
+    const cfg = await loadAIConfigFromKV(this.env, this.kv);
     this.cache.config = cfg;
     this.cache.configLoadedAt = now;
     return cfg;
@@ -839,7 +753,7 @@ export class ILinkConnectionDO implements DurableObject {
         const allowed = allowlist.split(/[\n,，]+/).map((s: string) => s.trim()).filter(Boolean);
         if (allowed.length > 0 && !(from && allowed.includes(from))) {
           Logger.info(`[DO] Blocked message from non-allowlisted user: ${from || "(empty)"}`);
-          await this.markMessageProcessed(`${useCreds?.accountId || "default"}:${this.generateMessageId(msg, text || "")}`);
+          await this.markMessageProcessed(`${useCreds?.accountId || "default"}:${generateMessageId(msg, text || "")}`);
           return;
         }
       }
@@ -911,7 +825,7 @@ export class ILinkConnectionDO implements DurableObject {
         for (const [key, val] of this.recentImageUrls) {
           if (now - val.timestamp > 60_000) this.recentImageUrls.delete(key);
         }
-        await this.markMessageProcessed(`${useCreds?.accountId || "default"}:${this.generateMessageId(msg, imageUrl || "cdn-image")}`);
+        await this.markMessageProcessed(`${useCreds?.accountId || "default"}:${generateMessageId(msg, imageUrl || "cdn-image")}`);
         return;
       }
 
@@ -937,7 +851,7 @@ export class ILinkConnectionDO implements DurableObject {
         : new Date().toISOString();
 
       // 按账号生成 messageId（避免跨账号去重冲突）
-      const messageId = `${useCreds?.accountId || "default"}:${this.generateMessageId(msg, text)}`;
+      const messageId = `${useCreds?.accountId || "default"}:${generateMessageId(msg, text)}`;
 
       // DO 本地 SQLite 去重
       if (await this.hasProcessedMessage(messageId)) {
@@ -1457,36 +1371,5 @@ export class ILinkConnectionDO implements DurableObject {
     } catch (e) {
       Logger.warn("[DO] Failed to mark message processed", { error: (e as Error).message, messageId });
     }
-  }
-
-  private hashText(input: string): string {
-    let hash = 2166136261;
-    for (let i = 0; i < input.length; i++) {
-      hash ^= input.charCodeAt(i);
-      hash = Math.imul(hash, 16777619);
-    }
-    return (hash >>> 0).toString(16);
-  }
-
-  private generateMessageId(msg: WeixinMessage, text: string = ""): string {
-    const parts = [
-      msg.from_user_id || "",
-      msg.context_token || "",
-      msg.message_id ?? "",
-      msg.create_time_ms ?? "",
-      msg.seq ?? ""
-    ];
-    const primary = parts.filter(Boolean).join(":");
-
-    if (primary) {
-      return primary.slice(0, 128);
-    }
-
-    // 兜底：某些历史消息字段不完整时，使用发送者 + 上下文 + 文本哈希生成稳定 ID
-    return [
-      msg.from_user_id || "unknown",
-      msg.context_token || "",
-      this.hashText(text || JSON.stringify(msg.item_list || [])),
-    ].join(":").slice(0, 128);
   }
 }
