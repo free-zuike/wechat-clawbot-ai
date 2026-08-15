@@ -59,8 +59,8 @@ export const BUILTIN_TOOLS = [{
   type: "function",
   function: {
     name: "fetch_url",
-    description: "获取指定 URL 的网页内容（纯文本）。当用户说「帮我看看这个链接/访问这个页面/打开这个网址」时调用此工具，返回网页的文本内容",
-    parameters: { type: "object", properties: { url: { type: "string", description: "网页 URL（必填），如 https://example.com/page" } }, required: ["url"] },
+    description: "获取指定 URL 的网页内容（纯文本）。支持多种 HTTP 方法。当用户说「帮我看看这个链接/访问这个页面/打开这个网址」时调用此工具，返回网页的文本内容",
+    parameters: { type: "object", properties: { url: { type: "string", description: "目标 URL（必填），如 https://example.com/page" }, method: { type: "string", description: "HTTP 方法，可选 GET/POST/PUT/DELETE/PATCH，默认 GET" }, body: { type: "string", description: "请求体（仅 POST/PUT/PATCH 时需要），JSON 格式字符串" } }, required: ["url"] },
   },
 }];
 
@@ -176,15 +176,24 @@ async function executeWeatherQuery(city: string, days = 1): Promise<string> {
   }
 }
 
-// 获取指定 URL 的网页内容
-async function executeFetchUrl(url: string): Promise<string> {
+// 获取指定 URL 的网页内容（支持多种 HTTP 方法）
+async function executeFetchUrl(url: string, method = "GET", body?: string): Promise<string> {
   if (!url) return "URL 不能为空";
+  const httpMethod = method.toUpperCase();
+  const validMethods = ["GET", "POST", "PUT", "DELETE", "PATCH"];
+  if (!validMethods.includes(httpMethod)) return `不支持的 HTTP 方法: ${method}`;
   try {
-    const resp = await fetch(url, {
+    const init: RequestInit = {
+      method: httpMethod,
       headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" },
       signal: AbortSignal.timeout(15000),
-    });
-    if (!resp.ok) return `访问失败 (HTTP ${resp.status})`;
+    };
+    if (body && ["POST", "PUT", "PATCH"].includes(httpMethod)) {
+      (init.headers as Record<string, string>)["Content-Type"] = "application/json";
+      init.body = body;
+    }
+    const resp = await fetch(url, init);
+    if (!resp.ok) return `访问失败 (HTTP ${resp.status})\n${(await resp.text().catch(() => "")).slice(0, 500)}`;
     const text = await resp.text();
     // 提取纯文本：去掉 HTML 标签，限制长度
     const cleaned = text
@@ -193,7 +202,7 @@ async function executeFetchUrl(url: string): Promise<string> {
       .replace(/<[^>]+>/g, "")
       .replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#\d+;/g, "")
       .replace(/\s+/g, " ").trim();
-    return cleaned.slice(0, 5000) || "页面没有文本内容";
+    return `HTTP ${httpMethod} ${url} → ${resp.status}\n\n${cleaned.slice(0, 5000) || "（页面没有文本内容）"}`;
   } catch (e: any) {
     return `访问失败: ${e?.message || "请求超时"}`;
   }
@@ -429,7 +438,9 @@ export async function executeBuiltinTool(
     try { args = JSON.parse(toolCall.function.arguments || "{}"); } catch {}
     const url = (args.url || "").trim();
     if (!url) return { callId: toolCall.id, name: "fetch_url", content: "URL 不能为空", isError: true };
-    const content = await executeFetchUrl(url);
+    const method = (args.method || "GET").trim();
+    const body = typeof args.body === "string" ? args.body.trim() : undefined;
+    const content = await executeFetchUrl(url, method, body);
     return { callId: toolCall.id, name: "fetch_url", content };
   }
   return null;
