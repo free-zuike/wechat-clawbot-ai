@@ -143,30 +143,56 @@ export async function clearContextD1(db: D1Database, userId: string): Promise<vo
 // ========== 通用工具函数 ==========
 
 // 构建带上下文的 AI 消息数组（带字符数截断）
+// 策略：工具结果（[查询结果] 前缀）与对话消息用独立预算，
+// 避免工具结果挤占真实对话上下文，同时保留最近几次工具结果供后续引用
 export function buildMessagesWithContext(
   systemPrompt: string,
   userMessage: string,
   context: UserContext,
-  maxContextChars = 12000
+  maxContextChars = 12000,
+  maxToolResultChars = 2000,
 ): Array<{ role: string; content: string }> {
   const messages: Array<{ role: string; content: string }> = [
     { role: "system", content: systemPrompt }
   ];
 
-  const MAX_CHARS = maxContextChars;
-  let totalChars = 0;
-
-  // 从最新消息往前加，超过上限截断
-  const recentMessages = [...context.messages].reverse();
-  const kept: Array<{ role: string; content: string }> = [];
-  for (const msg of recentMessages) {
-    const msgLen = msg.content.length;
-    if (totalChars + msgLen > MAX_CHARS) break;
-    totalChars += msgLen;
-    kept.push({ role: msg.role, content: msg.content });
+  // 分离工具结果和对话消息
+  const toolResults: Array<{ role: string; content: string }> = [];
+  const conversation: Array<{ role: string; content: string }> = [];
+  for (const msg of context.messages) {
+    const entry = { role: msg.role, content: msg.content };
+    if (msg.content.startsWith("[查询结果]")) {
+      toolResults.push(entry);
+    } else {
+      conversation.push(entry);
+    }
   }
-  kept.reverse();
-  messages.push(...kept);
+
+  const MAX_CONV_CHARS = maxContextChars - maxToolResultChars;
+
+  // 从最新消息往前加，超过上限截断（对话消息）
+  const convKept: Array<{ role: string; content: string }> = [];
+  let convTotal = 0;
+  for (const msg of [...conversation].reverse()) {
+    const msgLen = msg.content.length;
+    if (convTotal + msgLen > MAX_CONV_CHARS) break;
+    convTotal += msgLen;
+    convKept.push(msg);
+  }
+  convKept.reverse();
+  messages.push(...convKept);
+
+  // 从最新工具结果往前加，独立预算
+  const toolKept: Array<{ role: string; content: string }> = [];
+  let toolTotal = 0;
+  for (const msg of [...toolResults].reverse()) {
+    const msgLen = msg.content.length;
+    if (toolTotal + msgLen > maxToolResultChars) break;
+    toolTotal += msgLen;
+    toolKept.push(msg);
+  }
+  toolKept.reverse();
+  messages.push(...toolKept);
 
   messages.push({ role: "user", content: userMessage });
 

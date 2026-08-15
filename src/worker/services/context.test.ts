@@ -115,8 +115,8 @@ describe("buildMessagesWithContext", () => {
       ],
       lastUpdated: 4,
     };
-    // maxContextChars=10000, so only the newest 2 messages fit
-    const result = buildMessagesWithContext(system, "明天呢", context, 10000);
+    // maxContextChars=12000 → conversation budget = 10000, so 2 newest fit
+    const result = buildMessagesWithContext(system, "明天呢", context, 12000);
     // system + newest 2 messages + user = 4
     expect(result).toHaveLength(4);
     expect(result[1].content).toBe("c".repeat(5000));
@@ -151,6 +151,44 @@ describe("buildMessagesWithContext", () => {
     // Should not throw and produce correct structure
     expect(result).toHaveLength(3);
     expect(result[1].content).toBe("你好");
+  });
+
+  it("should separate tool results from conversation with independent budget", () => {
+    const context = {
+      userId: "u1",
+      messages: [
+        { role: "user" as const, content: "今天天气怎么样", timestamp: 1 },
+        { role: "assistant" as const, content: "晴天", timestamp: 2 },
+        { role: "user" as const, content: "[查询结果] 大同天气：晴 22°C", timestamp: 3 },
+        { role: "user" as const, content: "[查询结果] 北京天气：多云 24°C", timestamp: 4 },
+        { role: "user" as const, content: "明天呢", timestamp: 5 },
+        { role: "assistant" as const, content: "明天也是晴天", timestamp: 6 },
+      ],
+      lastUpdated: 6,
+    };
+    // 对话预算很小 → 只能保留 1 条对话；工具结果有独立预算 → 2 条工具结果都保留
+    const result = buildMessagesWithContext(system, "具体温度", context, 500, 9999);
+    // system + 1 条对话(明天呢/明天也是晴天) + 2 条工具结果 + user
+    expect(result.length).toBeGreaterThanOrEqual(4);
+    expect(result.some(m => m.content.includes("[查询结果]"))).toBe(true);
+    expect(result[result.length - 1]).toEqual({ role: "user", content: "具体温度" });
+  });
+
+  it("should keep tool results withing their own budget", () => {
+    const context = {
+      userId: "u1",
+      messages: [
+        { role: "user" as const, content: "你好", timestamp: 1 },
+        { role: "user" as const, content: "[查询结果] 结果A: " + "x".repeat(3000), timestamp: 2 },
+        { role: "user" as const, content: "[查询结果] 结果B: " + "y".repeat(3000), timestamp: 3 },
+      ],
+      lastUpdated: 3,
+    };
+    // 工具结果预算 4000 → 只能保留 1 条（最新）
+    const result = buildMessagesWithContext(system, "继续", context, 10000, 4000);
+    const toolMsgs = result.filter(m => m.content.startsWith("[查询结果]"));
+    expect(toolMsgs).toHaveLength(1);
+    expect(toolMsgs[0].content).toContain("结果B");
   });
 });
 
