@@ -1,6 +1,6 @@
 // AI 服务 - 支持 Cloudflare Workers AI + OpenAI 兼容 API
 
-import { Logger } from "../utils/error";
+import { Logger, withRetry } from "../utils/error";
 import { getAdapter, type ProviderResponseConfig } from "./adapters";
 import {
   getContextFromSQLite,
@@ -679,14 +679,40 @@ async function callOpenAICompatible(params: {
   const allToolTexts: string[] = [];
 
   for (let round = 0; round < maxRounds; round++) {
-    const resp = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${params.apiKey}`,
+    // 单次请求：网络错误 / 429 / 5xx 重试 2 次（指数退避），4xx 参数错误不重试
+    const resp = await withRetry(
+      async () => {
+        let r: Response;
+        try {
+          r = await fetch(url, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${params.apiKey}`,
+            },
+            body: JSON.stringify(body),
+          });
+        } catch (e: any) {
+          throw Object.assign(new Error(`网络错误: ${e?.message || "fetch failed"}`), { retryable: true });
+        }
+        if (r.status === 429 || r.status >= 500) {
+          const errBody = await r.text().catch(() => "");
+          throw Object.assign(new Error(`API ${r.status}: ${errBody.slice(0, 200)}`), { retryable: true });
+        }
+        if (!r.ok) {
+          const errBody = await r.text().catch(() => "");
+          throw Object.assign(new Error(`API ${r.status}: ${errBody.slice(0, 200)}`), { retryable: false });
+        }
+        return r;
       },
-      body: JSON.stringify(body),
-    });
+      {
+        retries: 2,
+        baseDelayMs: 500,
+        maxDelayMs: 2000,
+        onRetry: (attempt, error) => Logger.warn(`[ai] Retrying API call (attempt ${attempt})`, { error: error.message }),
+        shouldRetry: (e) => (e as any).retryable === true,
+      }
+    );
 
     if (!resp.ok) {
       const errBody = await resp.text().catch(() => "");

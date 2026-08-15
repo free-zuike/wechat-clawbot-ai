@@ -50,24 +50,33 @@ export default {
   },
 
   async scheduled(_event: ScheduledEvent, env: Env): Promise<void> {
-    try {
-      // 刷新过期的 MCP 工具缓存
-      await refreshAllMCPToolsIfStale(env.DB);
+    const doId = env.ILINK_CONNECTION.idFromName("main");
+    const doStub = env.ILINK_CONNECTION.get(doId);
 
-      const doId = env.ILINK_CONNECTION.idFromName("main");
-      const doStub = env.ILINK_CONNECTION.get(doId);
+    // 三个独立任务并行执行：MCP 工具刷新（worker 本地）+ 消息轮询（DO）+ 视频检查（DO）
+    // 注意 /poll 与 /check-pending-videos 打同一 DO（单实例串行处理），真正并行收益来自
+    // MCP 刷新与 DO 请求并行；用 allSettled 保证单项失败不影响其他任务
+    const [mcp, poll, videoCheck] = await Promise.allSettled([
+      refreshAllMCPToolsIfStale(env.DB),
+      doStub.fetch(new Request("http://localhost/poll")).then((r) => r.json()),
+      doStub.fetch(new Request("http://localhost/check-pending-videos")).then((r) => r.json()),
+    ]);
 
-      const response = await doStub.fetch(new Request("http://localhost/poll"));
-      const data = await response.json();
-      console.log("[cron] /poll:", JSON.stringify(data));
-
-      const videoCheckResponse = await doStub.fetch(new Request("http://localhost/check-pending-videos"));
-      const videoCheckData = await videoCheckResponse.json();
-      console.log("[cron] /check-pending-videos:", JSON.stringify(videoCheckData));
-
-    } catch (e: any) {
-      console.error("[cron] error:", e);
-      errorTracker.trackError('CRON_ERROR', e.message, 'scheduled');
+    if (mcp.status === "rejected") {
+      console.error("[cron] MCP refresh error:", mcp.reason);
+      errorTracker.trackError("CRON_MCP_REFRESH_ERROR", mcp.reason?.message || String(mcp.reason), "scheduled");
+    }
+    if (poll.status === "rejected") {
+      console.error("[cron] /poll error:", poll.reason);
+      errorTracker.trackError("CRON_POLL_ERROR", poll.reason?.message || String(poll.reason), "scheduled");
+    } else {
+      console.log("[cron] /poll:", JSON.stringify(poll.value));
+    }
+    if (videoCheck.status === "rejected") {
+      console.error("[cron] /check-pending-videos error:", videoCheck.reason);
+      errorTracker.trackError("CRON_VIDEO_CHECK_ERROR", videoCheck.reason?.message || String(videoCheck.reason), "scheduled");
+    } else {
+      console.log("[cron] /check-pending-videos:", JSON.stringify(videoCheck.value));
     }
   },
 
