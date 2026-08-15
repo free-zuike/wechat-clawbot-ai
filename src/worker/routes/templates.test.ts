@@ -37,7 +37,7 @@ describe("handleTemplates", () => {
     const resp = await handleTemplates(
       new Request("http://localhost/api/templates", { headers: AUTH }), env
     );
-    const body = await resp.json();
+    const body = await resp.json() as any;
     expect(body.templates).toEqual([]);
   });
 
@@ -51,7 +51,7 @@ describe("handleTemplates", () => {
       }), env
     );
     expect(resp.status).toBe(200);
-    const body = await resp.json();
+    const body = await resp.json() as any;
     expect(body.ok).toBe(true);
     expect(body.template.name).toBe("模板1");
     expect(body.template.id).toMatch(/^tpl_/);
@@ -82,7 +82,7 @@ describe("handleTemplates", () => {
       }), env
     );
     expect(resp.status).toBe(200);
-    const body = await resp.json();
+    const body = await resp.json() as any;
     expect(body.template.content).toBe("新内容");
     expect(body.template.name).toBe("旧"); // name 未变
   });
@@ -109,7 +109,7 @@ describe("handleTemplates", () => {
       }), env
     );
     expect(resp.status).toBe(200);
-    const body = await resp.json();
+    const body = await resp.json() as any;
     expect(body.ok).toBe(true);
     expect(await env.kv.get("clawbot:templates", "json")).toHaveLength(0);
   });

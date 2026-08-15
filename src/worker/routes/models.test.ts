@@ -24,7 +24,7 @@ describe("handleAIModels", () => {
       env
     );
     expect(resp.status).toBe(200);
-    const body = await resp.json();
+    const body = await resp.json() as any;
     expect(body.source).toBe("static");
     expect(Array.isArray(body.models)).toBe(true);
     expect(body.models.length).toBeGreaterThan(10);
@@ -38,7 +38,7 @@ describe("handleAIModels", () => {
       { id: "@cf/model-a", name: "Model A", task: { name: "text-generation" }, pricing: { paid: false } },
       { id: "@cf/model-b", name: "Model B", task: { name: "image-generation" }, pricing: { paid: true } },
     ];
-    const fetchMock = vi.fn(async () =>
+    const fetchMock = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) =>
       new Response(JSON.stringify({ result: apiModels }), { status: 200 })
     );
     vi.stubGlobal("fetch", fetchMock);
@@ -54,7 +54,7 @@ describe("handleAIModels", () => {
       env
     );
     expect(resp.status).toBe(200);
-    const body = await resp.json();
+    const body = await resp.json() as any;
     expect(body.source).toBe("api");
     expect(body.models).toHaveLength(2);
     expect(body.models[0].id).toBe("@cf/model-a");
@@ -77,7 +77,7 @@ describe("handleAIModels", () => {
       new Request("http://localhost/api/ai-models", { headers: { Authorization: basic } }),
       env
     );
-    const body = await resp.json();
+    const body = await resp.json() as any;
     expect(body.source).toBe("static");
   });
 });

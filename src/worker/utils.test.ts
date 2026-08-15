@@ -11,7 +11,7 @@ describe("json", () => {
     expect(resp.status).toBe(200);
     expect(resp.headers.get("Content-Type")).toContain("application/json");
     expect(resp.headers.get("Cache-Control")).toBe("no-store");
-    const body = await resp.json();
+    const body = await resp.json() as any;
     expect(body).toEqual({ ok: true });
   });
 

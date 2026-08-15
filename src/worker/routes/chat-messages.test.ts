@@ -37,7 +37,7 @@ function makeEnv(rows: any[] = []) {
     env: {
       ADMIN_PASSWORD: "secret123",
       DB: db,
-    },
+    } as any,
     db,
     store,
   };
@@ -58,7 +58,7 @@ describe("handleChatMessages", () => {
       new Request("http://localhost/api/chat-messages", { headers: AUTH }), env
     );
     expect(resp.status).toBe(200);
-    const body = await resp.json();
+    const body = await resp.json() as any;
     expect(body.messages).toEqual([]);
   });
 
@@ -72,7 +72,7 @@ describe("handleChatMessages", () => {
       }), env
     );
     expect(resp.status).toBe(200);
-    const body = await resp.json();
+    const body = await resp.json() as any;
     expect(body.ok).toBe(true);
     expect(body.count).toBe(2);
     // 应执行 DELETE（exec）+ 2 次 INSERT（prepare）
@@ -104,7 +104,7 @@ describe("handleChatMessages", () => {
         body: JSON.stringify({ messages: many }),
       }), env
     );
-    const body = await resp.json();
+    const body = await resp.json() as any;
     expect(body.count).toBe(100);
     const inserts = db.prepare.mock.calls.filter(([s]: any) => String(s).startsWith("INSERT"));
     expect(inserts.length).toBe(100);

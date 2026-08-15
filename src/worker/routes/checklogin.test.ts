@@ -28,7 +28,7 @@ describe("handleCheckLogin", () => {
   it("should return loggedIn false without credentials", async () => {
     const env = makeEnv();
     const resp = await handleCheckLogin(new Request("http://localhost/api/check-login"), env);
-    const body = await resp.json();
+    const body = await resp.json() as any;
     expect(body.loggedIn).toBe(false);
     expect(body.tokenHealth).toBe("unknown");
     expect(body.hasCredentials).toBe(false);
@@ -41,7 +41,7 @@ describe("handleCheckLogin", () => {
       env
     );
     expect(resp.status).toBe(200);
-    const body = await resp.json();
+    const body = await resp.json() as any;
     expect(body.loggedIn).toBe(true);
     expect(body.tokenHealth).toBe("valid");
     // 应写入 session KV 并设置 cookie
@@ -58,7 +58,7 @@ describe("handleCheckLogin", () => {
       }),
       env
     );
-    const body = await resp.json();
+    const body = await resp.json() as any;
     expect(body.loggedIn).toBe(true);
   });
 
@@ -72,7 +72,7 @@ describe("handleCheckLogin", () => {
       }),
       env
     );
-    const body = await resp.json();
+    const body = await resp.json() as any;
     expect(body.loggedIn).toBe(true);
   });
 
@@ -82,7 +82,7 @@ describe("handleCheckLogin", () => {
       new Request("http://localhost/api/check-login", { headers: { Cookie: "clawbot_session=tok1" } }),
       env
     );
-    const body = await resp.json();
+    const body = await resp.json() as any;
     expect(body.loggedIn).toBe(true);
   });
 
@@ -93,7 +93,7 @@ describe("handleCheckLogin", () => {
       new Request("http://localhost/api/check-login", { headers: { Cookie: "clawbot_session=tok1" } }),
       env
     );
-    const body = await resp.json();
+    const body = await resp.json() as any;
     expect(body.loggedIn).toBe(true);
   });
 
@@ -103,7 +103,7 @@ describe("handleCheckLogin", () => {
       new Request("http://localhost/api/check-login?pwd=wrong"),
       env
     );
-    const body = await resp.json();
+    const body = await resp.json() as any;
     expect(body.loggedIn).toBe(false);
   });
 });

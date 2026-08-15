@@ -38,7 +38,7 @@ describe("handleQRCode", () => {
     const { env } = makeEnv();
     const resp = await handleQRCode(new Request("http://localhost/api/qrcode", { headers: AUTH }), env);
     expect(resp.status).toBe(200);
-    const body = await resp.json();
+    const body = await resp.json() as any;
     expect(body.qrcode).toBe("QR_123");
     expect(body.qrcode_url).toContain("data:image/png");
   });
@@ -55,7 +55,7 @@ describe("handleQRCodeStatus", () => {
   it("should return unknown without qrcode param", async () => {
     const { env } = makeEnv();
     const resp = await handleQRCodeStatus(new Request("http://localhost/api/qrcode-status"), env);
-    const body = await resp.json();
+    const body = await resp.json() as any;
     expect(body.status).toBe("unknown");
   });
 
@@ -67,7 +67,7 @@ describe("handleQRCodeStatus", () => {
     const resp = await handleQRCodeStatus(
       new Request("http://localhost/api/qrcode-status?qrcode=QR_1"), env
     );
-    const body = await resp.json();
+    const body = await resp.json() as any;
     expect(body.status).toBe("wait");
     // 未确认不应保存凭证
     expect(doStub.fetch).not.toHaveBeenCalled();
@@ -88,7 +88,7 @@ describe("handleQRCodeStatus", () => {
       new Request("http://localhost/api/qrcode-status?qrcode=QR_2"), env
     );
     expect(resp.status).toBe(200);
-    const body = await resp.json();
+    const body = await resp.json() as any;
     expect(body.status).toBe("confirmed");
     expect(body.ok).toBe(true);
     expect(body.accountId).toBe("bot_id");
@@ -109,7 +109,7 @@ describe("handleQRCodeStatus", () => {
     );
     // getQRCodeStatus 内部捕获 fetch 错误并返回 wait，不抛给路由
     expect(resp.status).toBe(200);
-    const body = await resp.json();
+    const body = await resp.json() as any;
     expect(body.status).toBe("wait");
   });
 });
@@ -129,7 +129,7 @@ describe("handleUnbindWechat", () => {
       new Request("http://localhost/api/unbind-wechat", { method: "POST", headers: AUTH }), env
     );
     expect(resp.status).toBe(200);
-    const body = await resp.json();
+    const body = await resp.json() as any;
     expect(body.ok).toBe(true);
     const clearCall = doStub.fetch.mock.calls.find(([r]: any) =>
       (r as Request).url.includes("clear-creds"));

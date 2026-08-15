@@ -113,21 +113,21 @@ describe("handleError", () => {
     const err = new ClawBotError("TEST", "测试错误", 418);
     const resp = handleError(err);
     expect(resp.status).toBe(418);
-    const body = await resp.json();
+    const body = await resp.json() as any;
     expect(body).toEqual({ error: "TEST", message: "测试错误" });
   });
 
   it("should return INTERNAL_ERROR for generic Error", async () => {
     const resp = handleError(new Error("generic boom"));
     expect(resp.status).toBe(500);
-    const body = await resp.json();
+    const body = await resp.json() as any;
     expect(body.error).toBe("INTERNAL_ERROR");
   });
 
   it("should return INTERNAL_ERROR for non-Error throw", async () => {
     const resp = handleError("string error");
     expect(resp.status).toBe(500);
-    const body = await resp.json();
+    const body = await resp.json() as any;
     expect(body.error).toBe("INTERNAL_ERROR");
   });
 });

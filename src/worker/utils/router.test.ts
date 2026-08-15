@@ -9,13 +9,13 @@ afterEach(() => {
 describe("Router", () => {
   it("should return 404 for unknown /api path", async () => {
     const r = new Router();
-    const resp = await r.route(new Request("http://localhost/api/unknown"), {});
+    const resp = await r.route(new Request("http://localhost/api/unknown"), {} as any);
     expect(resp.status).toBe(404);
   });
 
   it("should return 404 for non-api unknown path without ASSETS", async () => {
     const r = new Router();
-    const resp = await r.route(new Request("http://localhost/random"), {});
+    const resp = await r.route(new Request("http://localhost/random"), {} as any);
     expect(resp.status).toBe(404);
   });
 
@@ -75,7 +75,7 @@ describe("Router", () => {
   it("should route method-specific endpoints correctly (wrong method → 404)", async () => {
     const r = new Router();
     // /api/qrcode 只允许 GET，POST 应 404
-    const resp = await r.route(new Request("http://localhost/api/qrcode", { method: "POST" }), {});
+    const resp = await r.route(new Request("http://localhost/api/qrcode", { method: "POST" }), {} as any);
     expect(resp.status).toBe(404);
   });
 });

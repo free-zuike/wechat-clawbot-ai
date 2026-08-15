@@ -22,7 +22,7 @@ describe("handleStatus", () => {
     const env = makeEnv({});
     const resp = await handleStatus(new Request("http://localhost/api/status"), env);
     expect(resp.status).toBe(200);
-    const body = await resp.json();
+    const body = await resp.json() as any;
     expect(body.loggedIn).toBe(false);
     expect(body.doRunning).toBe(false);
     expect(body.consecutiveErrors).toBe(0);
@@ -32,7 +32,7 @@ describe("handleStatus", () => {
   it("should report login state from DO hasCredentials", async () => {
     const env = makeEnv({ hasCredentials: true, stats: { polls: 12, handled: 5 } });
     const resp = await handleStatus(new Request("http://localhost/api/status"), env);
-    const body = await resp.json();
+    const body = await resp.json() as any;
     expect(body.loggedIn).toBe(true);
     expect(body.hasBotCredentials).toBe(true);
     expect(body.stats.polls).toBe(12);
@@ -42,7 +42,7 @@ describe("handleStatus", () => {
   it("should include accounts info", async () => {
     const env = makeEnv({ accounts: [{ id: "acc1" }], totalAccounts: 1, consecutiveErrors: 3 });
     const resp = await handleStatus(new Request("http://localhost/api/status"), env);
-    const body = await resp.json();
+    const body = await resp.json() as any;
     expect(body.accounts).toHaveLength(1);
     expect(body.totalAccounts).toBe(1);
     expect(body.consecutiveErrors).toBe(3);
@@ -52,7 +52,7 @@ describe("handleStatus", () => {
     const env = makeEnv(null, true);
     const resp = await handleStatus(new Request("http://localhost/api/status"), env);
     expect(resp.status).toBe(200);
-    const body = await resp.json();
+    const body = await resp.json() as any;
     expect(body.loggedIn).toBe(false);
     expect(body.doRunning).toBe(false);
   });
@@ -60,7 +60,7 @@ describe("handleStatus", () => {
   it("should include timestamp", async () => {
     const env = makeEnv({});
     const resp = await handleStatus(new Request("http://localhost/api/status"), env);
-    const body = await resp.json();
+    const body = await resp.json() as any;
     expect(typeof body.timestamp).toBe("string");
     expect(new Date(body.timestamp).getTime()).not.toBeNaN();
   });

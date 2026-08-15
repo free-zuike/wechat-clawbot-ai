@@ -32,7 +32,7 @@ describe("DO proxy handlers", () => {
     const { env, doStub } = makeEnv({ ok: true, handled: 3 });
     const resp = await handleDOPoll(new Request("http://localhost/api/do/poll", { headers: AUTH }), env);
     expect(resp.status).toBe(200);
-    expect(await resp.json()).toEqual({ ok: true, handled: 3 });
+    expect(await resp.json() as any).toEqual({ ok: true, handled: 3 });
     expect((doStub.fetch.mock.calls[0]![0] as Request).url).toContain("/poll");
   });
 
@@ -64,7 +64,7 @@ describe("DO proxy handlers", () => {
   it("handleDOStatus should return DO status", async () => {
     const { env } = makeEnv({ isRunning: true });
     const resp = await handleDOStatus(new Request("http://localhost/api/do/status", { headers: AUTH }), env);
-    const body = await resp.json();
+    const body = await resp.json() as any;
     expect(body.isRunning).toBe(true);
   });
 

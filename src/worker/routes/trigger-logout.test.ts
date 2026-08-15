@@ -9,12 +9,12 @@ afterEach(() => {
 describe("handleTriggerPoll", () => {
   it("should forward DO poll response", async () => {
     const doStub = {
-      fetch: vi.fn(async () => new Response(JSON.stringify({ ok: true, handled: 2 }))),
+      fetch: vi.fn(async (_req: Request) => new Response(JSON.stringify({ ok: true, handled: 2 }))),
     };
     const env = { ILINK_CONNECTION: { idFromName: () => "main", get: () => doStub } } as any;
     const resp = await handleTriggerPoll(new Request("http://localhost/api/trigger-poll", { method: "POST" }), env);
     expect(resp.status).toBe(200);
-    const body = await resp.json();
+    const body = await resp.json() as any;
     expect(body).toEqual({ ok: true, handled: 2 });
     // 应请求 DO /poll
     expect((doStub.fetch.mock.calls[0]![0] as Request).url).toContain("/poll");
@@ -47,7 +47,7 @@ describe("handleLogout", () => {
       env
     );
     expect(resp.status).toBe(200);
-    const body = await resp.json();
+    const body = await resp.json() as any;
     expect(body.ok).toBe(true);
     expect(kvDelete).toHaveBeenCalledWith("clawbot:session:abcd1234");
     // Set-Cookie 应过期 session
