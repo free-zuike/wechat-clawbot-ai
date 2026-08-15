@@ -343,7 +343,7 @@ export async function callAIWithContext(
   if (isVagueFollowUp(cleanMsg)) {
     const lastAssistant = [...context.messages].reverse().find(m => m.role === "assistant");
     if (lastAssistant) {
-      const topic = lastAssistant.content.replace(/\n+/g, " ").slice(0, 500);
+      const topic = lastAssistant.content.replace(/\n+/g, " ");
       augmentedMsg = `[上一条回复提到: ${topic}]\n用户接着说: ${cleanMsg}`;
       Logger.info(`[ai] Augmented follow-up for ${userId}`, { original: cleanMsg, augmented: augmentedMsg.slice(0, 200) });
     }
