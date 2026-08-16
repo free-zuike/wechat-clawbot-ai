@@ -76,7 +76,7 @@ export async function loadAIConfigFromKV(
   let aiBaseUrl = "";
   let aiApiKey = "";
   let aiMaxTokens = 1024;
-  let aiMaxContextChars = 12000;
+  let aiMaxContextChars = 20000;
 
   if (activePreset && activeProvider !== "cloudflare") {
     aiProvider = activeProvider;
@@ -85,7 +85,7 @@ export async function loadAIConfigFromKV(
     // 自动修复：如果预设 apiKey 是掩码值（含 ***），用顶层字段替代
     aiApiKey = (activePreset.apiKey || "").includes("***") ? ((kvConfig.aiApiKey as string) || "") : (activePreset.apiKey || "");
     aiMaxTokens = activePreset.maxTokens || 1024;
-    aiMaxContextChars = activePreset.maxContextChars || 12000;
+    aiMaxContextChars = activePreset.maxContextChars || 20000;
   } else {
     // cloudflare 或无预设：回退到顶层字段
     aiProvider = activeProvider;

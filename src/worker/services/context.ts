@@ -149,7 +149,7 @@ export function buildMessagesWithContext(
   systemPrompt: string,
   userMessage: string,
   context: UserContext,
-  maxContextChars = 12000,
+  maxContextChars = 20000,
   maxToolResultChars = 2000,
 ): Array<{ role: string; content: string }> {
   const messages: Array<{ role: string; content: string }> = [

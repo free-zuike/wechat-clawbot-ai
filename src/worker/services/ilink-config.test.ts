@@ -31,7 +31,7 @@ describe("loadAIConfigFromKV", () => {
     expect(cfg.aiProvider).toBe("cloudflare");
     expect(cfg.aiApiKey).toBe("");
     expect(cfg.aiMaxTokens).toBe(1024);
-    expect(cfg.aiMaxContextChars).toBe(12000);
+    expect(cfg.aiMaxContextChars).toBe(20000);
     expect(cfg.aiImageModel).toBe("@cf/black-forest-labs/flux-1-schnell");
     expect(cfg.webhook.enabled).toBe(false);
     expect(cfg.allowlist).toBe("");
