@@ -235,6 +235,56 @@ async function callOpenAICompatible(params: {
   return { reply: "", toolResults: allToolTexts };
 }
 
+// ========== 上下文智能压缩 ==========
+
+// 用 AI 总结旧对话，保留关键语义
+async function summarizeMessages(
+  messages: Array<{ role: string; content: string; timestamp: number }>,
+  config: AIConfig,
+): Promise<string | null> {
+  try {
+    // 构造摘要请求（只包含旧消息，不包含当前用户消息）
+    const convText = messages.map(m =>
+      `${m.role === "user" ? "用户" : "AI"}: ${m.content.slice(0, 500)}`
+    ).join("\n");
+
+    const messagesForSummary = [
+      { role: "system" as const, content: "你是对话摘要助手。请用简洁的中文总结以下对话的关键信息：用户问了什么、得到什么关键结论、有哪些重要数据。控制在 200 字以内。直接输出摘要，不要其他内容。" },
+      { role: "user" as const, content: convText },
+    ];
+
+    const useCloudflareApi = config.provider === "cloudflare"
+      && config.mcpServers && config.mcpServers.length > 0
+      && config.accountId && config.cfApiToken;
+    const baseUrl = useCloudflareApi
+      ? `https://api.cloudflare.com/client/v4/accounts/${config.accountId}/ai/v1`
+      : config.baseUrl;
+    const apiKey = useCloudflareApi ? config.cfApiToken : config.apiKey;
+
+    if (!baseUrl || !apiKey) return null;
+
+    const resp = await fetch(baseUrl.trim().replace(/\/+$/, ""), {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
+      body: JSON.stringify({
+        model: config.model,
+        messages: messagesForSummary,
+        max_tokens: 300,
+        temperature: 0.3,
+      }),
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!resp.ok) return null;
+    const data = await resp.json() as any;
+    const summary = data?.choices?.[0]?.message?.content;
+    if (typeof summary === "string" && summary.trim()) return summary.trim();
+    return null;
+  } catch (e: any) {
+    Logger.warn("[ai] Context summarization failed, using original context", { error: e?.message });
+    return null;
+  }
+}
+
 // ========== Cloudflare Workers AI 调用 ==========
 
 async function callCloudflareAI(
@@ -336,6 +386,28 @@ export async function callAIWithContext(
 
   const system = systemPrompt || DEFAULT_SYSTEM_PROMPT;
   const context = db ? await getContextFromD1(db, userId) : await getContextFromSQLite(storage, userId);
+
+  // 智能压缩：当上下文超过 70% 限制时，用 AI 总结旧消息，保留语义
+  const COMPRESS_THRESHOLD = Math.floor(config.maxContextChars * 0.7);
+  const KEEP_RECENT = 4; // 保留最近 4 条消息（2 轮对话）
+  let compressed = false;
+  if (context.messages.length > KEEP_RECENT + 2) {
+    const totalChars = context.messages.reduce((s, m) => s + m.content.length, 0);
+    if (totalChars > COMPRESS_THRESHOLD) {
+      const oldMsgs = context.messages.slice(0, -KEEP_RECENT);
+      const recentMsgs = context.messages.slice(-KEEP_RECENT);
+      const summary = await summarizeMessages(oldMsgs, config);
+      if (summary) {
+        context.messages = [
+          { role: "user", content: `[对话历史摘要]\n${summary}`, timestamp: Date.now() },
+          ...recentMsgs,
+        ];
+        if (db) { await saveContextToD1(db, userId, context); } else { await saveContextToSQLite(storage, userId, context); }
+        compressed = true;
+        Logger.info(`[ai] Context compressed for ${userId}`, { oldCount: oldMsgs.length, summaryLength: summary.length });
+      }
+    }
+  }
 
   // 检测模糊回指：用户说"列出来"/"是哪一条"等短句时，自动注入上一条回复的上下文
   // 避免 AI 模型无法关联前文，比在 system prompt 里列关键词更可靠
