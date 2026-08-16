@@ -142,14 +142,8 @@ export async function clearContextD1(db: D1Database, userId: string): Promise<vo
 
 // ========== 通用工具函数 ==========
 
-// 构建带上下文的 AI 消息数组（带智能压缩）
-// 策略：
-// 1. 最近 3 轮对话完整保留
-// 2. 更早的对话自动压缩为摘要，保留关键信息
-// 3. 工具结果独立预算，不挤占对话空间
-const KEEP_ROUNDS = 3; // 完整保留的最近对话轮数
-const SUMMARY_PREFIX_LEN = 200; // 每条旧消息保留的前缀长度
-
+// 构建带上下文的 AI 消息数组（简单截断，优化由 ai.ts 的 AI 摘要负责）
+// 策略：工具结果（[查询结果] 前缀）与对话消息用独立预算
 export function buildMessagesWithContext(
   systemPrompt: string,
   userMessage: string,
@@ -175,48 +169,17 @@ export function buildMessagesWithContext(
 
   const MAX_CONV_CHARS = maxContextChars - maxToolResultChars;
 
-  // 保留最近 KEEP_ROUNDS 轮对话（2*KEEP_ROUNDS 条消息）完整保留
-  const recentCount = Math.min(KEEP_ROUNDS * 2, conversation.length);
-  const recent = conversation.slice(-recentCount);
-  const old = conversation.slice(0, -recentCount);
-
-  // 先把最近的对话完整加入
-  const recentTotal = recent.reduce((sum, m) => sum + m.content.length, 0);
-  let convTotal = recentTotal;
-  let convKept = [...recent];
-
-  // 如果最近对话已经超过预算，从最近对话中截断（从旧到新）
-  if (convTotal > MAX_CONV_CHARS) {
-    convKept = [];
-    convTotal = 0;
-    for (const msg of [...conversation].reverse()) {
-      const msgLen = msg.content.length;
-      if (convTotal + msgLen > MAX_CONV_CHARS) break;
-      convTotal += msgLen;
-      convKept.push(msg);
-    }
-    convKept.reverse();
-    messages.push(...convKept);
-  } else {
-    // 有剩余空间，加入旧消息的压缩摘要
-    let remaining = MAX_CONV_CHARS - convTotal;
-    const compressed: string[] = [];
-
-    for (const msg of [...old].reverse()) {
-      const summary = msg.content.slice(0, SUMMARY_PREFIX_LEN).replace(/\n+/g, " ");
-      const entry = msg.role === "user" ? `用户问: ${summary}` : `AI答: ${summary}`;
-      if (remaining < entry.length + 20) break; // 留余量
-      compressed.push(entry);
-      remaining -= entry.length;
-    }
-
-    if (compressed.length > 0) {
-      convKept = [{ role: "user" as const, content: `【历史摘要】\n${compressed.reverse().join("\n")}` }, ...convKept];
-      convTotal = convKept.reduce((sum, m) => sum + m.content.length, 0);
-    }
-
-    messages.push(...convKept);
+  // 从最新消息往前加，超过上限截断（对话消息）
+  const convKept: Array<{ role: string; content: string }> = [];
+  let convTotal = 0;
+  for (const msg of [...conversation].reverse()) {
+    const msgLen = msg.content.length;
+    if (convTotal + msgLen > MAX_CONV_CHARS) break;
+    convTotal += msgLen;
+    convKept.push(msg);
   }
+  convKept.reverse();
+  messages.push(...convKept);
 
   // 工具结果独立预算
   const toolKept: Array<{ role: string; content: string }> = [];
