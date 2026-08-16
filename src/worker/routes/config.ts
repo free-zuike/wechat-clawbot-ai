@@ -113,6 +113,7 @@ function getConfigResponse(kvConfig: Record<string, unknown>) {
     aiBaseUrl: currentBaseUrl,
     aiApiKey: maskKey(currentApiKey),
     aiMaxTokens: currentMaxTokens,
+    aiMaxContextChars: (kvConfig.aiMaxContextChars as number) || 20000,
     aiSystemPrompt: (kvConfig.aiSystemPrompt as string) || "",
     webhookUrl: (kvConfig.webhookUrl as string) || "",
     webhookEnabled: (kvConfig.webhookEnabled as boolean) || false,
