@@ -128,6 +128,7 @@ function getConfigResponse(kvConfig: Record<string, unknown>) {
     searchBaseUrl: (kvConfig.searchBaseUrl as string) || "",
     searchToken: (kvConfig.searchToken as string) || "",
     searchEngine: (kvConfig.searchEngine as string) || "",
+    allowlist: (kvConfig.allowlist as string) || "",
   };
 }
 
