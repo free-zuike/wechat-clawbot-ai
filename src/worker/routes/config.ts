@@ -156,7 +156,7 @@ export function resolveAIConfig(kvConfig: Record<string, unknown>) {
       apiKey,
       allKeys: [apiKey, ...backupKeys].filter(Boolean),
       maxTokens: active.maxTokens || 1024,
-      maxContextChars: active.maxContextChars || 12000,
+      maxContextChars: active.maxContextChars || 20000,
       maxRetries,
       thinking: active.thinking || false,
       responseConfig: active.responseConfig || {},

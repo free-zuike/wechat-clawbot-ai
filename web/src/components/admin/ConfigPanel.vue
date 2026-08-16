@@ -102,7 +102,7 @@
         </div>
         <div v-else class="form-empty">← 从左侧选择提供商</div>
         <div v-if="config.aiProvider" class="field" style="margin-top: 12px"><label>最大 Token 数</label><input v-model.number="config.aiMaxTokens" class="input" type="number" min="1" max="32000" placeholder="1024" /></div>
-        <div v-if="config.aiProvider" class="field"><label>上下文窗口（字符数）</label><input v-model.number="config.aiMaxContextChars" class="input" type="number" min="1000" max="4000000" placeholder="12000" /><div class="field-hint">模型支持的最大上下文长度，根据模型自动填充。太小会丢失对话历史，太大会浪费 Token</div></div>
+        <div v-if="config.aiProvider" class="field"><label>上下文窗口（字符数）</label><input v-model.number="config.aiMaxContextChars" class="input" type="number" min="1000" max="4000000" placeholder="20000" /><div class="field-hint">模型支持的最大上下文长度，根据模型自动填充。太小会丢失对话历史，太大会浪费 Token</div></div>
         <div v-if="config.aiProvider" class="field">
           <label class="checkbox-label">
             <input type="checkbox" v-model="config.aiThinking" />
@@ -210,7 +210,7 @@ function upsertPreset(id: string, fields: Partial<Preset>): Preset {
   const presets = ensurePresets();
   let preset = presets.find(p => p.id === id);
   if (!preset) {
-    preset = { id, model: "", imageModel: "", videoModel: "", baseUrl: "", apiKey: "", apiKeys: [], maxTokens: 1024, maxContextChars: 12000 };
+    preset = { id, model: "", imageModel: "", videoModel: "", baseUrl: "", apiKey: "", apiKeys: [], maxTokens: 1024, maxContextChars: 20000 };
     presets.push(preset);
   }
   // 模型名变化时自动填充上下文长度
@@ -255,7 +255,7 @@ function selectProvider(id: string) {
     props.config.aiApiKey = "";
     backupKeys.value = [];
     props.config.aiMaxTokens = preset?.maxTokens || 1024;
-    props.config.aiMaxContextChars = preset?.maxContextChars || 12000;
+    props.config.aiMaxContextChars = preset?.maxContextChars || 20000;
   } else {
     props.config.aiModel = preset?.model || "";
     props.config.aiImageModel = preset?.imageModel || "";
@@ -264,7 +264,7 @@ function selectProvider(id: string) {
     props.config.aiApiKey = preset?.apiKey || "";
     backupKeys.value = [...(preset?.apiKeys || [])];
     props.config.aiMaxTokens = preset?.maxTokens || 1024;
-    props.config.aiMaxContextChars = preset?.maxContextChars || 12000;
+    props.config.aiMaxContextChars = preset?.maxContextChars || 20000;
     responseConfig.value = { ...(preset?.responseConfig || {}) };
     // 从后端加载的 requestHeaders（JSON 字符串）转成前端可编辑的格式
     if (responseConfig.value.requestHeaders) {
@@ -333,12 +333,12 @@ const MODEL_CONTEXT: Record<string, number> = {
 };
 
 function guessModelContextChars(model: string): number {
-  if (!model) return 12000;
+  if (!model) return 20000;
   const lower = model.toLowerCase();
   for (const [key, val] of Object.entries(MODEL_CONTEXT)) {
     if (lower.includes(key)) return val;
   }
-  return 12000;
+  return 20000;
 }
 
 const showAddModal = ref(false);
@@ -419,7 +419,7 @@ function syncCurrentToPreset() {
     apiKey: props.config.aiApiKey,
     apiKeys: [...backupKeys.value],
     maxTokens: props.config.aiMaxTokens,
-    maxContextChars: props.config.aiMaxContextChars || 12000,
+    maxContextChars: props.config.aiMaxContextChars || 20000,
     thinking: props.config.aiThinking || false,
     responseConfig: Object.keys(rc).length > 0 ? rc : undefined,
   });

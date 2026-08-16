@@ -200,7 +200,7 @@ const statusLoading = ref(false);
 const firstLoadDone = ref(false);
 
 // ===== Config =====
-const config = reactive({ version: 0, aiProvider: "cloudflare", aiModel: "", aiImageModel: "@cf/black-forest-labs/flux-1-schnell", aiVideoModel: "bytedance/seedance-2.0-fast", aiBaseUrl: "", aiApiKey: "", aiMaxTokens: 1024, aiMaxContextChars: 12000, aiSystemPrompt: "", aiMaxRetries: 2, aiThinking: false, newsnowBaseUrl: "", searchBaseUrl: "", searchToken: "", searchEngine: "", allowlist: "", webhookEnabled: false, webhookUrl: "", webhookTitle: "", webhookApiKey: "", webhookChannels: [] as string[], aiCustomProviders: [] as Array<{ id: string; name: string; icon: string }>, aiPresets: [] as Array<{ id: string; model: string; imageModel: string; videoModel: string; baseUrl: string; apiKey: string; apiKeys: string[]; maxTokens: number; maxContextChars?: number }> });
+const config = reactive({ version: 0, aiProvider: "cloudflare", aiModel: "", aiImageModel: "@cf/black-forest-labs/flux-1-schnell", aiVideoModel: "bytedance/seedance-2.0-fast", aiBaseUrl: "", aiApiKey: "", aiMaxTokens: 1024, aiMaxContextChars: 20000, aiSystemPrompt: "", aiMaxRetries: 2, aiThinking: false, newsnowBaseUrl: "", searchBaseUrl: "", searchToken: "", searchEngine: "", allowlist: "", webhookEnabled: false, webhookUrl: "", webhookTitle: "", webhookApiKey: "", webhookChannels: [] as string[], aiCustomProviders: [] as Array<{ id: string; name: string; icon: string }>, aiPresets: [] as Array<{ id: string; model: string; imageModel: string; videoModel: string; baseUrl: string; apiKey: string; apiKeys: string[]; maxTokens: number; maxContextChars?: number }> });
 const configResult = ref("");
 const configSaving = ref(false);
 
@@ -379,7 +379,7 @@ async function handleLoadConfig() {
     config.aiImageModel = d.aiImageModel || "@cf/black-forest-labs/flux-1-schnell";
     config.aiVideoModel = d.aiVideoModel || "";
     config.aiBaseUrl = d.aiBaseUrl || ""; config.aiApiKey = d.aiApiKey || "";
-    config.aiMaxTokens = d.aiMaxTokens || 1024;     config.aiMaxContextChars = d.aiMaxContextChars || 12000;     config.aiSystemPrompt = d.aiSystemPrompt || "";
+    config.aiMaxTokens = d.aiMaxTokens || 1024;     config.aiMaxContextChars = d.aiMaxContextChars || 20000;     config.aiSystemPrompt = d.aiSystemPrompt || "";
     config.aiMaxRetries = d.aiMaxRetries ?? 2;
     config.aiThinking = d.aiThinking || false;
     config.newsnowBaseUrl = d.newsnowBaseUrl || "";
