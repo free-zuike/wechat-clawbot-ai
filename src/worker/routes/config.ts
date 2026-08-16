@@ -100,7 +100,7 @@ function getConfigResponse(kvConfig: Record<string, unknown>) {
     apiKey: p.apiKey ? maskKey(p.apiKey) : "",
     apiKeys: (p.apiKeys || []).map(k => maskKey(k)),
     maxTokens: p.maxTokens || 1024,
-    maxContextChars: p.maxContextChars || 12000,
+    maxContextChars: p.maxContextChars || 20000,
     responseConfig: p.responseConfig || undefined,
   }));
 
