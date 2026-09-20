@@ -10,6 +10,10 @@ main = "src/worker/index.ts"
 compatibility_date = "2026-03-24"
 compatibility_flags = ["nodejs_compat"]
 
+# 智能放置：允许 DO 实例迁移到资源附近的机房（换出口 IP，绕开 Agnes 对旧出口段的 1015 封禁）
+[placement]
+mode = "smart"
+
 # 静态资源目录（Vite 构建产物）
 assets = { directory = "./dist", binding = "ASSETS" }
 
@@ -58,12 +62,19 @@ database_id = "8879b820-de3c-4434-aab1-924f042712d1"
 # iLink 长轮询连接管理，实现实时消息接收
 [[durable_objects.bindings]]
 name = "ILINK_CONNECTION"
-class_name = "ILinkConnectionDO"
+class_name = "ILinkConnectionDO2"
 
 # Durable Objects 迁移配置（免费计划必须使用 new_sqlite_classes）
+# v2 已应用（保持原样），v3 负责删除旧类实例 + 注册新类
 [[migrations]]
 tag = "v2"
 new_sqlite_classes = [ "ILinkConnectionDO" ]
+
+# v3: 删除旧实例 + 注册新类，强制重建 DO（换机房出口 IP）
+[[migrations]]
+tag = "v3"
+deleted_classes = [ "ILinkConnectionDO" ]
+new_sqlite_classes = [ "ILinkConnectionDO2" ]
 
 # ===== 关闭自动追踪日志 =====
 [observability.logs]

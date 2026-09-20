@@ -9,12 +9,12 @@ import { router } from "./utils/router";
 import { metrics } from "./utils/metrics";
 import { errorTracker } from "./utils/metrics";
 import { Logger } from "./utils/error";
-import { ILinkConnectionDO } from "./services/ilink-do";
+import { ILinkConnectionDO2 } from "./services/ilink-do";
 import { refreshAllMCPToolsIfStale } from "./services/mcp";
 import { handleQueueMessage } from "./services/queue-handler";
 
 // 导出 Durable Objects 类
-export { ILinkConnectionDO };
+export { ILinkConnectionDO2 };
 
 export interface Env {
   AI: any;
