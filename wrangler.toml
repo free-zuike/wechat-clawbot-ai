@@ -75,10 +75,7 @@ new_sqlite_classes = [ "ILinkConnectionDO" ]
 tag = "v3"
 renamed_classes = [{ from = "ILinkConnectionDO", to = "ILinkConnectionDO2" }]
 
-# ===== 关闭自动追踪日志 =====
-[observability.logs]
-enabled = false
-
-[observability.traces]
-enabled = false
+# ===== Workers 日志（Dashboard → Logs / wrangler tail 可查看）=====
+[observability]
+enabled = true
 

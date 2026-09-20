@@ -493,7 +493,8 @@ export async function callAIWithContext(
     }
   } catch (e: any) {
     Logger.error(`[ai] AI call failed for ${userId}`, { error: e?.message || String(e) });
-    return "AI 暂时无法回答，请稍后重试";
+    // API/网络错误直接透传真实原因（如 "API 429: ..."），不吞成通用提示；只有无信息的代码异常才用兜底
+    return e?.message ? `AI调用失败: ${e.message}` : "AI 暂时无法回答，请稍后重试";
   }
 
   Logger.info(`[ai] AI reply for ${userId}`, { replyLength: reply.length, provider: config.provider });
