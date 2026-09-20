@@ -10,12 +10,13 @@ main = "src/worker/index.ts"
 compatibility_date = "2026-03-24"
 compatibility_flags = ["nodejs_compat"]
 
-# 智能放置：允许 DO 实例迁移到资源附近的机房（换出口 IP，绕开 Agnes 对旧出口段的 1015 封禁）
-[placement]
-mode = "smart"
-
 # 静态资源目录（Vite 构建产物）
 assets = { directory = "./dist", binding = "ASSETS" }
+
+# 智能放置：允许 DO 实例迁移到资源附近的机房（换出口 IP，绕开 Agnes 对旧出口段的 1015 封禁）
+# 注意：必须放在所有顶层键之后，否则 TOML 会把后续键吞进 [placement] 表
+[placement]
+mode = "smart"
 
 # ===== 部署策略 =====
 # Durable Object 迁移必须使用非版本化部署
