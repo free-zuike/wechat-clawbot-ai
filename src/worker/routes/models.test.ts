@@ -80,4 +80,22 @@ describe("handleAIModels", () => {
     const body = await resp.json() as any;
     expect(body.source).toBe("static");
   });
+
+  it("should return Agnes model list when provider is agnes", async () => {
+    const env = makeEnv({ ADMIN_PASSWORD: "secret" }) as any;
+    const basic = "Basic " + btoa("admin:secret");
+    const resp = await handleAIModels(
+      new Request("http://localhost/api/ai-models?provider=agnes-ai&baseUrl=https%3A%2F%2Fapihub.agnes-ai.com%2Fv1", {
+        headers: { Authorization: basic },
+      }),
+      env
+    );
+    expect(resp.status).toBe(200);
+    const body = await resp.json() as any;
+    expect(body.source).toBe("agnes-static");
+    expect(body.models.some((m: any) => m.id === "agnes-3.0-flash")).toBe(true);
+    expect(body.models.some((m: any) => m.id === "agnes-2.5-pro")).toBe(true);
+    expect(body.models.some((m: any) => m.id === "agnes-image-2.5-flash")).toBe(true);
+    expect(body.models.some((m: any) => m.id === "agnes-video-2.5-flash")).toBe(true);
+  });
 });

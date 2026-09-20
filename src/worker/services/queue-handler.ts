@@ -2,7 +2,7 @@
 // 处理图片/视频生成任务（image_generation / video_generation / video_check）
 
 import { Logger } from "../utils/error";
-import { parseApiUrl } from "./ai";
+import { parseApiUrl, buildVideoSubmitBody } from "./ai";
 
 function detectImageMime(data: Uint8Array): string {
   if (data[0] === 0xFF && data[1] === 0xD8) return "image/jpeg";
@@ -139,10 +139,11 @@ export async function handleQueueMessage(batch: MessageBatch<any>, env: any): Pr
         const { base: vBase, version: vVer } = parseApiUrl(baseUrl || "");
         const isZhipu = (baseUrl || "").includes("bigmodel.cn");
         const submitUrl = isZhipu ? `${vBase}/${vVer}/videos/generations` : `${vBase}/${vVer}/videos`;
+        const body = buildVideoSubmitBody(baseUrl || "", model, prompt);
         const resp = await fetch(submitUrl, {
           method: "POST",
           headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
-          body: JSON.stringify({ model, prompt, num_frames: 121, frame_rate: 24 }),
+          body: JSON.stringify(body),
         });
 
         if (!resp.ok) {
@@ -190,10 +191,12 @@ export async function handleQueueMessage(batch: MessageBatch<any>, env: any): Pr
         const { base: cBase, version: cVer } = parseApiUrl(baseUrl || "");
         // 智谱AI用 /async-result/{id}，其他提供商用旧版兼容格式
         const isZhipu = (baseUrl || "").includes("bigmodel.cn");
+        // Agnes Video 2.5 轮询需带 model_name（keyframe/reference 模式必需，text 模式也推荐）
+        const isNewAgnesVideo = !isZhipu && /^agnes-video-2\.5/i.test(model || "");
         const checkUrl = isZhipu
           ? `${cBase}/${cVer}/async-result/${encodeURIComponent(taskId || videoId)}`
           : videoId
-            ? `${cBase}/agnesapi?video_id=${encodeURIComponent(videoId)}`
+            ? `${cBase}/agnesapi?video_id=${encodeURIComponent(videoId)}${isNewAgnesVideo ? `&model_name=${encodeURIComponent(model)}` : ""}`
             : `${cBase}/${cVer}/videos/${taskId}`;
         const checkResp = await fetch(checkUrl, {
           headers: { "Authorization": `Bearer ${apiKey}` },
@@ -230,8 +233,9 @@ export async function handleQueueMessage(batch: MessageBatch<any>, env: any): Pr
         const isFailed = taskStatus === "failed" || taskStatus === "FAIL" || taskStatus === "fail";
 
         if (isCompleted) {
-          // 视频完成 — 智谱AI: video_result[0].url, Agnes: remixed_from_video_id
-          const videoUrl = statusData.video_result?.[0]?.url
+          // 视频完成 — 智谱AI: video_result[0].url, Agnes 2.5: metadata.url, Agnes 旧版: remixed_from_video_id
+          const videoUrl = statusData.metadata?.url
+            || statusData.video_result?.[0]?.url
             || statusData.remixed_from_video_id
             || statusData.url;
           if (!videoUrl) {

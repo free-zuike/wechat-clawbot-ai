@@ -311,6 +311,33 @@ export async function generateImage(
   }
 }
 
+// Agnes Video 2.5+ 使用 OpenAI Videos 兼容 API：拒绝 num_frames/frame_rate（返回 400），
+// 改用 seconds(字符串)/mode/size/aspect_ratio；完成结果在 metadata.url
+export function isNewAgnesVideoModel(model: string): boolean {
+  return /^agnes-video-2\.5/i.test(model || "");
+}
+
+export function buildVideoSubmitBody(
+  baseUrl: string,
+  model: string,
+  prompt: string,
+  numFrames?: number,
+  frameRate?: number
+): Record<string, any> {
+  if (isNewAgnesVideoModel(model)) {
+    const seconds = Math.round((numFrames || DEFAULT_NUM_FRAMES) / (frameRate || DEFAULT_FRAME_RATE));
+    return {
+      model,
+      prompt,
+      seconds: String(Math.max(4, Math.min(12, seconds))),
+      mode: "text",
+      size: "720P",
+      aspect_ratio: "16:9",
+    };
+  }
+  return { model, prompt, num_frames: numFrames || DEFAULT_NUM_FRAMES, frame_rate: frameRate || DEFAULT_FRAME_RATE };
+}
+
 // 只提交视频生成任务，不轮询，返回 { taskId, videoId?, baseUrl, provider, apiKey, model, prompt, url? }
 // 用于微信消息处理中的异步视频生成：先提交任务，后续由 checkPendingVideos 轮询完成
 export async function submitVideoTask(
@@ -338,11 +365,16 @@ export async function submitVideoTask(
       // 智谱AI用 /videos/generations，其他提供商用 /videos
       const isZhipu = baseUrl.includes("bigmodel.cn");
       const submitUrl = isZhipu ? `${base}/${version}/videos/generations` : `${base}/${version}/videos`;
-      const body: Record<string, any> = { model: videoModel, prompt, num_frames: effectiveNumFrames, frame_rate: effectiveFrameRate };
-      // 参考图片（部分提供商支持以图生视频）
+      const body = buildVideoSubmitBody(baseUrl, videoModel, prompt, effectiveNumFrames, effectiveFrameRate);
+      // 参考图片：Agnes Video 2.5 用 mode=reference + images；旧格式用 image/image_url
       if (imageUrl) {
-        body.image = imageUrl;
-        body.image_url = imageUrl;
+        if (isNewAgnesVideoModel(videoModel)) {
+          body.mode = "reference";
+          body.images = [imageUrl];
+        } else {
+          body.image = imageUrl;
+          body.image_url = imageUrl;
+        }
       }
       const resp = await fetch(submitUrl, {
         method: "POST",

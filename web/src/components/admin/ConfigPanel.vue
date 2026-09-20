@@ -437,9 +437,12 @@ async function fetchModels(type: string) {
   else modelListTarget.value = "aiVideoModel";
 
   try {
-    const resp = await fetch("/api/ai-models", {
-      headers: { Authorization: `Bearer ${localStorage.getItem("clawbot_auth") || ""}` },
-    });
+    const resp = await fetch(
+      `/api/ai-models?provider=${encodeURIComponent(props.config.aiProvider || "")}&baseUrl=${encodeURIComponent(props.config.aiBaseUrl || "")}`,
+      {
+        headers: { Authorization: `Bearer ${localStorage.getItem("clawbot_auth") || ""}` },
+      }
+    );
     const data = await resp.json();
     if (data.models) {
       modelList.value = data.models.filter((m: any) => m.type === type);

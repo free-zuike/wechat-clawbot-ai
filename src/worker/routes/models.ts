@@ -35,9 +35,35 @@ const CLOUDFLARE_MODELS = [
   { id: "@cf/baai/bge-large-en-v1.5", name: "BGE Large EN v1.5", type: "embedding", tier: "free", provider: "cloudflare" },
 ];
 
+// 静态资源列表（Vite 构建产物）用 AGNES_MODELS 时前端展示 Agnes 模型
+const AGNES_MODELS = [
+  // 文本生成 - 免费
+  { id: "agnes-2.5-flash", name: "Agnes 2.5 Flash", type: "text", tier: "free", provider: "agnes-ai" },
+  { id: "agnes-2.0-flash", name: "Agnes 2.0 Flash", type: "text", tier: "free", provider: "agnes-ai" },
+  { id: "agnes-2.5-pro-beta", name: "Agnes 2.5 Pro Beta", type: "text", tier: "free", provider: "agnes-ai" },
+  { id: "agnes-2.5-pro", name: "Agnes 2.5 Pro", type: "text", tier: "free", provider: "agnes-ai" },
+  { id: "agnes-3.0-flash", name: "Agnes 3.0 Flash", type: "text", tier: "free", provider: "agnes-ai" },
+  // 图片生成 - 免费
+  { id: "agnes-image-2.0-flash", name: "Agnes Image 2.0 Flash", type: "image", tier: "free", provider: "agnes-ai" },
+  { id: "agnes-image-2.1-flash", name: "Agnes Image 2.1 Flash", type: "image", tier: "free", provider: "agnes-ai" },
+  { id: "agnes-image-2.5-flash", name: "Agnes Image 2.5 Flash", type: "image", tier: "free", provider: "agnes-ai" },
+  // 视频生成 - 免费
+  { id: "agnes-video-v2.0", name: "Agnes Video V2.0", type: "video", tier: "free", provider: "agnes-ai" },
+  { id: "agnes-video-2.5", name: "Agnes Video 2.5", type: "video", tier: "free", provider: "agnes-ai" },
+  { id: "agnes-video-2.5-flash", name: "Agnes Video 2.5 Flash", type: "video", tier: "free", provider: "agnes-ai" },
+];
+
 export async function handleAIModels(request: Request, env: Env): Promise<Response> {
   const v = await verifyAdmin(request, env);
   if (!v.ok) return json({ error: v.error }, 401);
+
+  // 自定义提供商（如 Agnes）：直接返回其模型列表
+  const reqUrl = new URL(request.url);
+  const provider = reqUrl.searchParams.get("provider") || "";
+  const baseUrl = reqUrl.searchParams.get("baseUrl") || "";
+  if (provider.toLowerCase().includes("agnes") || baseUrl.toLowerCase().includes("agnes")) {
+    return json({ models: AGNES_MODELS, source: "agnes-static" });
+  }
 
   try {
     // 尝试从 Cloudflare REST API 获取实际可用模型

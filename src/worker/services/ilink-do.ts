@@ -477,7 +477,9 @@ export class ILinkConnectionDO2 implements DurableObject {
               const version = taskBaseUrl.match(/\/(v\d+)\//)?.[1] || "v4";
               checkUrl = `${base}/${version}/async-result/${taskId}`;
             } else if (videoId) {
-              checkUrl = `${base}/agnesapi?video_id=${encodeURIComponent(videoId)}`;
+              // Agnes Video 2.5 轮询需带 model_name（keyframe/reference 必需，text 模式也推荐）
+              const isNewAgnesVideo = /^agnes-video-2\.5/i.test((task.model as string) || "");
+              checkUrl = `${base}/agnesapi?video_id=${encodeURIComponent(videoId)}${isNewAgnesVideo ? `&model_name=${encodeURIComponent(task.model as string)}` : ""}`;
             } else {
               checkUrl = `${base}/v1/videos/${taskId}`;
             }
@@ -518,11 +520,11 @@ export class ILinkConnectionDO2 implements DurableObject {
                 stillProcessing = true;
                 Logger.info("[DO] Zhipu video still processing", { taskId, status: taskStatus });
               }
-            } else if (statusData.status === "completed" && statusData.remixed_from_video_id) {
-              // Agnes 文档说 remixed_from_video_id 是视频 URL
-              // 注意：这个字段也可能只是视频 ID（而不是完整 URL
+            } else if (statusData.status === "completed" && (statusData.remixed_from_video_id || statusData.metadata?.url)) {
+              // Agnes 文档说 remixed_from_video_id 是视频 URL（旧版）；Video 2.5 的结果在 metadata.url
+              // 注意：这些字段也可能只是视频 ID（而不是完整 URL）
               // 如果是 ID，则需要额外 API 调用获取真实 URL
-              const rawUrl = String(statusData.remixed_from_video_id);
+              const rawUrl = statusData.remixed_from_video_id || statusData.metadata?.url;
               // 确保是完整 URL（有协议前缀）
               if (rawUrl.startsWith("http://") || rawUrl.startsWith("https://")) {
                 videoUrl = rawUrl;
@@ -554,9 +556,14 @@ export class ILinkConnectionDO2 implements DurableObject {
               Logger.info("[DO] Video task completed", { taskId, videoId, url: videoUrl?.substring(0, 120) });
             } else if (statusData.status === "completed") {
               Logger.warn("[DO] Video status completed but no url returned", { taskId, keys: Object.keys(statusData || {}).slice(0, 15), preview: JSON.stringify(statusData).slice(0, 400) });
-              // 尝试遍历所有字段，找 URL
+              // 尝试遍历所有字段（含 metadata 对象），找 URL
               for (const v of Object.values(statusData)) {
                 if (typeof v === "string" && v.startsWith("http")) { videoUrl = v; break; }
+              }
+              if (!videoUrl && statusData.metadata && typeof statusData.metadata === "object") {
+                for (const v of Object.values(statusData.metadata)) {
+                  if (typeof v === "string" && v.startsWith("http")) { videoUrl = v; break; }
+                }
               }
             } else if (statusData.status === "failed") {
               taskFailed = true;

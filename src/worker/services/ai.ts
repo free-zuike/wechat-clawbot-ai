@@ -42,7 +42,7 @@ export { BUILTIN_TOOLS, executeBuiltinTool, formatToolContent } from "./ai-tools
 export {
   isImageGenerationRequest, isVideoGenerationRequest, extractMediaPrompt,
   extractImageSize, extractVideoDuration, extractUrl,
-  generateImage, submitVideoTask,
+  generateImage, submitVideoTask, isNewAgnesVideoModel, buildVideoSubmitBody,
 } from "./ai-media";
 export type { ProviderResponseConfig } from "./adapters";
 
