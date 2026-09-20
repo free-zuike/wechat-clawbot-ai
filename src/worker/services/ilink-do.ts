@@ -331,7 +331,7 @@ export class ILinkConnectionDO implements DurableObject {
 
       // D1: 查询待处理的视频任务
       const { results: pending } = await this.env.DB.prepare(
-        `SELECT task_id, video_id, prompt, model, provider, base_url, api_key, to_user_id, context_token, account_id, source, created_at FROM pending_videos WHERE status = 'queued'`
+        `SELECT task_id, video_id, prompt, model, provider, base_url, api_key, to_user_id, context_token, account_id, source, created_at, retry_count FROM pending_videos WHERE status = 'queued'`
       ).all();
 
       if (pending.length === 0) return;
@@ -381,6 +381,16 @@ export class ILinkConnectionDO implements DurableObject {
         await Promise.allSettled(batch.map(async (task) => {
           const taskId = task.task_id as string;
           const taskSource = (task.source as string) || "";
+
+          // 指数退避：状态查询失败（含限流 429/5xx）次数越多，下次检查间隔越长
+          // 30s→60s→120s→…→600s。避免在 Cloudflare 封禁期间每 2 分钟持续打被封 IP
+          const retryCount = Number(task.retry_count) || 0;
+          const backoffSec = Math.min(30 * Math.pow(2, retryCount), 600);
+          const createdAtNow = Number(task.created_at) || now;
+          if (now - createdAtNow < backoffSec * 1000) {
+            Logger.debug("[DO] Video task in backoff, skipping", { taskId, retryCount, backoffSec });
+            return;
+          }
 
           // 跳过缺少用户信息且非 chat 来源的任务
           const toUserId = task.to_user_id as string | undefined;

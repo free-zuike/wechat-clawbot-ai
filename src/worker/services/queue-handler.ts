@@ -11,6 +11,13 @@ function detectImageMime(data: Uint8Array): string {
   return "image/png";
 }
 
+// 视频状态轮询：指数退避（30s→60s→120s→…→600s），最多 12 次（约 75 分钟）
+// 免费档 RPM 很低（Agnes 20），固定 30s 轮询会持续烧额度并给限流封禁续命
+const MAX_VIDEO_CHECK_ATTEMPTS = 12;
+function videoCheckDelaySec(attempt: number): number {
+  return Math.min(30 * Math.pow(2, attempt - 1), 600);
+}
+
 export async function handleQueueMessage(batch: MessageBatch<any>, env: any): Promise<void> {
   for (const msg of batch.messages) {
     const { type, prompt, model, provider, baseUrl, apiKey, source, allKeys, maxRetries, imageUrl: refImageUrl, imageUrls: refImageUrls, responseConfig: refResponseConfig } = msg.body;
@@ -193,7 +200,23 @@ export async function handleQueueMessage(batch: MessageBatch<any>, env: any): Pr
         });
 
         if (!checkResp.ok) {
-          Logger.error("[queue] video_check status query failed", { status: checkResp.status, taskId, url: checkUrl });
+          const errBody = await checkResp.text().catch(() => "");
+          Logger.error("[queue] video_check status query failed", { status: checkResp.status, taskId, url: checkUrl, body: errBody.slice(0, 200) });
+          if (checkResp.status === 429 || checkResp.status >= 500) {
+            // 限流/服务端错误：不丢弃任务，指数退避后重试（4xx 参数错误直接放弃，等 cron 兜底）
+            const retryCount = (msg.body.retryCount || 0) + 1;
+            if (retryCount >= MAX_VIDEO_CHECK_ATTEMPTS) {
+              const doId = env.ILINK_CONNECTION.idFromName("main");
+              const doStub = env.ILINK_CONNECTION.get(doId);
+              await doStub.fetch(new Request("http://localhost/store-pending-video", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ taskId, status: "failed" }),
+              }));
+            } else {
+              await env.CLAWBOT_QUEUE.send({ ...msg.body, retryCount }, { delaySeconds: videoCheckDelaySec(retryCount) });
+            }
+          }
           continue;
         }
 
@@ -269,11 +292,11 @@ export async function handleQueueMessage(batch: MessageBatch<any>, env: any): Pr
             body: JSON.stringify({ taskId, status: "failed" }),
           }));
         } else {
-          // 仍在处理中，30 秒后再检查
+          // 仍在处理中，指数退避后再检查（30s→60s→120s→…→600s）
           const retryCount = (msg.body.retryCount || 0) + 1;
-          if (retryCount >= 40) {
-            // 最多重试 40 次（约 20 分钟），超过则放弃
-            Logger.error("[queue] Video check timeout (>20min)", { taskId });
+          if (retryCount >= MAX_VIDEO_CHECK_ATTEMPTS) {
+            // 超过最大重试（约 75 分钟），放弃
+            Logger.error("[queue] Video check timeout", { taskId, attempts: retryCount });
             const doId = env.ILINK_CONNECTION.idFromName("main");
             const doStub = env.ILINK_CONNECTION.get(doId);
             await doStub.fetch(new Request("http://localhost/broadcast-image", {
@@ -289,7 +312,7 @@ export async function handleQueueMessage(batch: MessageBatch<any>, env: any): Pr
             await env.CLAWBOT_QUEUE.send({
               ...msg.body,
               retryCount,
-            }, { delaySeconds: 30 });
+            }, { delaySeconds: videoCheckDelaySec(retryCount) });
           }
         }
       }

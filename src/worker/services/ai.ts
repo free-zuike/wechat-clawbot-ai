@@ -98,7 +98,7 @@ async function callOpenAICompatible(params: {
     body.tools = allTools;
   }
 
-  const maxRounds = params.maxToolRounds ?? 5;
+  const maxRounds = params.maxToolRounds ?? 3;
   const mcpTools = params.mcpTools || [];
   const mcpServers = params.mcpServers || [];
   const db = params.db || null;
@@ -106,7 +106,7 @@ async function callOpenAICompatible(params: {
   const allToolTexts: string[] = [];
 
   for (let round = 0; round < maxRounds; round++) {
-    // 单次请求：网络错误 / 429 / 5xx 重试 2 次（指数退避），4xx 参数错误不重试
+    // 单次请求：网络错误 / 5xx 重试 2 次（指数退避）；429 限流不重试（避免给 Cloudflare 封禁续命）；4xx 参数错误不重试
     const resp = await withRetry(
       async () => {
         let r: Response;
@@ -122,7 +122,11 @@ async function callOpenAICompatible(params: {
         } catch (e: any) {
           throw Object.assign(new Error(`网络错误: ${e?.message || "fetch failed"}`), { retryable: true });
         }
-        if (r.status === 429 || r.status >= 500) {
+        if (r.status === 429) {
+          const errBody = await r.text().catch(() => "");
+          throw Object.assign(new Error(`API 429 限流: ${errBody.slice(0, 200)}`), { retryable: false });
+        }
+        if (r.status >= 500) {
           const errBody = await r.text().catch(() => "");
           throw Object.assign(new Error(`API ${r.status}: ${errBody.slice(0, 200)}`), { retryable: true });
         }
