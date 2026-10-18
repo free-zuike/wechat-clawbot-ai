@@ -27,6 +27,27 @@ export interface ReminderCommand {
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const WEEKDAY_MAP: Record<string, number> = { 日: 0, 天: 0, 一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6 };
+const CHINA_OFFSET_MS = 8 * 3600000; // 中国固定 UTC+8（无夏令时），纯算术转换，避免依赖 Intl/进程时区（CI/Worker 均为 UTC）
+
+// 取 ts 在中国时区（UTC+8）的日历字段
+// 注意：不能依赖 Intl.DateTimeFormat 的 timeZone 选项（vitest/CI 环境实测不生效），也不能依赖进程本地时区（Worker 是 UTC）
+function chinaParts(ts: number): { year: number; month: number; day: number; weekday: number; hour: number; minute: number } {
+  const d = new Date(ts + CHINA_OFFSET_MS);
+  return {
+    year: d.getUTCFullYear(),
+    month: d.getUTCMonth(),
+    day: d.getUTCDate(),
+    weekday: d.getUTCDay(),
+    hour: d.getUTCHours(),
+    minute: d.getUTCMinutes(),
+  };
+}
+
+// ts 所在的中国时区"当天 00:00:00"对应的 UTC 时间戳
+function chinaDayStart(ts: number): number {
+  const p = chinaParts(ts);
+  return Date.UTC(p.year, p.month, p.day) - CHINA_OFFSET_MS;
+}
 
 // 把"3点/3:30/凌晨/早上/上午/中午/下午/晚上"等时间描述解析为今天的毫秒偏移
 function parseTimeOfDay(token: string): number | null {
@@ -93,9 +114,8 @@ function parseRelativeTime(input: string, now = Date.now()): { runAt: number; in
   const rest = dayMatch ? input.slice(dayMatch[0].length) : input;
   const timeOfDay = parseTimeOfDay(rest);
   if (timeOfDay !== null) {
-    const dayStart = new Date(now);
-    dayStart.setHours(0, 0, 0, 0);
-    let runAt = dayStart.getTime() + baseDay * DAY_MS + timeOfDay;
+    const dayStart = chinaDayStart(now);
+    let runAt = dayStart + baseDay * DAY_MS + timeOfDay;
     if (runAt <= now) runAt += DAY_MS;
     return { runAt, interval: 0, matched: input.trim() };
   }
@@ -109,9 +129,8 @@ function parseRepeatTime(input: string, now = Date.now()): { runAt: number; inte
   if (dailyMatch) {
     const timeOfDay = parseTimeOfDay(dailyMatch[2]);
     if (timeOfDay !== null) {
-      const dayStart = new Date(now);
-      dayStart.setHours(0, 0, 0, 0);
-      let runAt = dayStart.getTime() + timeOfDay;
+      const dayStart = chinaDayStart(now);
+      let runAt = dayStart + timeOfDay;
       if (runAt <= now) runAt += DAY_MS;
       return { runAt, interval: DAY_MS, matched: dailyMatch[0] };
     }
@@ -123,12 +142,11 @@ function parseRepeatTime(input: string, now = Date.now()): { runAt: number; inte
     const target = WEEKDAY_MAP[weeklyMatch[2]];
     const timeOfDay = parseTimeOfDay(weeklyMatch[3]);
     if (target !== undefined && timeOfDay !== null) {
-      const dayStart = new Date(now);
-      dayStart.setHours(0, 0, 0, 0);
-      const currentDay = dayStart.getDay();
+      const dayStart = chinaDayStart(now);
+      const currentDay = chinaParts(now).weekday;
       let diff = target - currentDay;
       if (diff <= 0) diff += 7;
-      let runAt = dayStart.getTime() + diff * DAY_MS + timeOfDay;
+      let runAt = dayStart + diff * DAY_MS + timeOfDay;
       if (runAt <= now) runAt += 7 * DAY_MS;
       return { runAt, interval: 7 * DAY_MS, matched: weeklyMatch[0] };
     }
@@ -140,20 +158,20 @@ function parseRepeatTime(input: string, now = Date.now()): { runAt: number; inte
     const dayNum = parseInt(monthlyMatch[2], 10);
     const timeOfDay = parseTimeOfDay(monthlyMatch[3]);
     if (dayNum >= 1 && dayNum <= 31 && timeOfDay !== null) {
-      const nowDate = new Date(now);
-      const nowDay = nowDate.getDate();
+      const nowDate = chinaParts(now);
+      const nowDay = nowDate.day;
       const targetMs = timeOfDay;
-      const year = nowDate.getFullYear();
-      const month = nowDate.getMonth();
-      const lastDay = new Date(year, month + 1, 0).getDate();
+      const year = nowDate.year;
+      const month = nowDate.month;
+      const lastDay = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
       const targetDay = Math.min(dayNum, lastDay);
-      let runAt = new Date(year, month, targetDay).getTime() + targetMs;
+      let runAt = Date.UTC(year, month, targetDay) - CHINA_OFFSET_MS + targetMs;
       if (runAt <= now || (nowDay > dayNum && targetDay === dayNum)) {
         const nextMonth = month + 1;
         const nextYear = nextMonth > 11 ? year + 1 : year;
         const m = nextMonth > 11 ? 0 : nextMonth;
-        const nextLastDay = new Date(nextYear, m + 1, 0).getDate();
-        runAt = new Date(nextYear, m, Math.min(dayNum, nextLastDay)).getTime() + targetMs;
+        const nextLastDay = new Date(Date.UTC(nextYear, m + 1, 0)).getUTCDate();
+        runAt = Date.UTC(nextYear, m, Math.min(dayNum, nextLastDay)) - CHINA_OFFSET_MS + targetMs;
       }
       return { runAt, interval: 0, matched: monthlyMatch[0] };
     }
@@ -207,16 +225,16 @@ export function parseReminderCommand(text: string, now = Date.now()): ReminderCo
   return { kind: null };
 }
 
-// 人类可读的下次执行时间
+// 人类可读的下次执行时间（按中国时区显示）
 export function formatRunAt(ts: number, now = Date.now()): string {
-  const d = new Date(ts);
-  const sameDay = d.toDateString() === new Date(now).toDateString();
+  const d = chinaParts(ts);
+  const n = chinaParts(now);
   const tomorrow = new Date(now + DAY_MS);
-  const isTomorrow = d.toDateString() === tomorrow.toDateString();
-  const timeStr = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-  if (sameDay) return `今天 ${timeStr}`;
-  if (isTomorrow) return `明天 ${timeStr}`;
-  return `${d.getMonth() + 1}月${d.getDate()}日 ${timeStr}`;
+  const t = chinaParts(tomorrow.getTime());
+  const timeStr = `${String(d.hour).padStart(2, "0")}:${String(d.minute).padStart(2, "0")}`;
+  if (d.year === n.year && d.month === n.month && d.day === n.day) return `今天 ${timeStr}`;
+  if (d.year === t.year && d.month === t.month && d.day === t.day) return `明天 ${timeStr}`;
+  return `${d.month + 1}月${d.day}日 ${timeStr}`;
 }
 
 export function formatRepeat(interval: number): string {
