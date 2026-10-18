@@ -78,3 +78,27 @@ CREATE TABLE IF NOT EXISTS mcp_sessions (
   expires_at INTEGER,
   updated_at TEXT NOT NULL
 );
+
+-- 定时消息表（DO Alarm 驱动，status: pending/sent/cancelled）
+CREATE TABLE IF NOT EXISTS scheduled_messages (
+  id TEXT PRIMARY KEY,
+  account_id TEXT,
+  to_user_id TEXT,
+  context_token TEXT,
+  content TEXT NOT NULL,
+  run_at INTEGER NOT NULL,
+  repeat_interval INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'pending',
+  created_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_scheduled_status_run ON scheduled_messages(status, run_at);
+
+-- 用户事实表（AI 通过 remember_fact 工具写入，注入 system prompt）
+CREATE TABLE IF NOT EXISTS user_facts (
+  user_id TEXT NOT NULL,
+  fact TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (user_id, fact)
+);

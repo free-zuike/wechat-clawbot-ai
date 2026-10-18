@@ -30,6 +30,7 @@ import {
   isVagueFollowUp,
   parseApiUrl,
 } from "./ai-utils";
+import { loadFactsForUser, factsToPrompt } from "./facts";
 import {
   BUILTIN_TOOLS,
   executeBuiltinTool,
@@ -61,6 +62,7 @@ async function callOpenAICompatible(params: {
   mcpTools?: MCPToolDefinition[];
   db?: D1Database | null;
   maxToolRounds?: number;
+  userId?: string;
   newsnowBaseUrl?: string;
   searchBaseUrl?: string;
   searchToken?: string;
@@ -187,7 +189,7 @@ async function callOpenAICompatible(params: {
       allKeys: params.mediaAllKeys || [],
       maxRetries: params.mediaMaxRetries ?? 2,
       responseConfig: params.mediaResponseConfig,
-    }, params.browserBinding, params.searchEngine);
+    }, params.browserBinding, params.searchEngine, params.db, params.userId);
       if (builtin) {
         builtinResults.push(builtin);
       } else {
@@ -427,11 +429,15 @@ export async function callAIWithContext(
   }
 
   // 注入当前日期（通用，不针对特定 MCP），让 AI 正确换算"今天/上个月/本月"等相对时间
-  const messages = buildMessagesWithContext(
-    `当前时间: ${getCurrentTimeStr()}。当用户提到"今天/昨天/明天/上个月/本月/下周/几点"等相对时间时，基于以上时间准确换算。当用户问到新闻、时事、热点时，调用 get_news 工具获取中文新闻。当用户问到天气时，调用 get_weather 工具获取实时天气，不要用 web_search 搜天气。当用户说「帮我看看这个链接/访问这个页面」时，调用 fetch_url 工具获取网页内容。**严格按照工具返回的数据回答，只汇报查询的城市，不要编造其他城市的数据。**\n` +
+  const userFacts = db ? await loadFactsForUser(db, userId) : [];
+  const factsPrompt = factsToPrompt(userFacts);
+  const baseSystem = `当前时间: ${getCurrentTimeStr()}。当用户提到"今天/昨天/明天/上个月/本月/下周/几点"等相对时间时，基于以上时间准确换算。当用户问到新闻、时事、热点时，调用 get_news 工具获取中文新闻。当用户问到天气时，调用 get_weather 工具获取实时天气，不要用 web_search 搜天气。当用户说「帮我看看这个链接/访问这个页面」时，调用 fetch_url 工具获取网页内容。**严格按照工具返回的数据回答，只汇报查询的城市，不要编造其他城市的数据。**\n` +
     `注意对话连续性：用户可能会用简短回复（如"列出来"、"展开说说"、"是哪一条"、"具体点"等）来指代上一条回复中提到的内容，你需要根据对话历史理解上下文，不要当成一个独立的新问题。如果用户说"列出来"而上一轮你提到了某类数据，就直接列出那些数据。\n` +
+    `当用户告知姓名、偏好、职业等长期事实，或明确说「记住/我叫/我是/我喜欢」时，调用 remember_fact 工具保存；用户纠正旧事实时用 remember_fact 覆盖更新；用户说「不用记了/删掉」时用 forget=true 删除。\n` +
     `${TOOL_HONESTY_RULE}\n\n` +
-    system,
+    system;
+  const messages = buildMessagesWithContext(
+    (factsPrompt ? `${factsPrompt}\n\n` : "") + baseSystem,
     augmentedMsg,
     context,
     config.maxContextChars
@@ -472,6 +478,7 @@ export async function callAIWithContext(
         mcpServers: config.mcpServers,
         mcpTools,
         db: config.db,
+        userId,
         newsnowBaseUrl: config.newsnowBaseUrl,
         searchBaseUrl: config.searchBaseUrl,
         searchToken: config.searchToken,

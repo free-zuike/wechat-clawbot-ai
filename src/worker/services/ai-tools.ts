@@ -4,6 +4,7 @@
 import { Logger } from "../utils/error";
 import type { MCPToolResult } from "./mcp";
 import { generateImage, submitVideoTask } from "./ai-media";
+import { saveFact, deleteFact } from "./facts";
 
 // 内置工具：获取当前日期时间 + 中文新闻 + 网页搜索 + 天气
 export const BUILTIN_TOOLS = [{
@@ -61,6 +62,13 @@ export const BUILTIN_TOOLS = [{
     name: "fetch_url",
     description: "获取指定 URL 的网页内容（纯文本）。支持多种 HTTP 方法。当用户说「帮我看看这个链接/访问这个页面/打开这个网址」时调用此工具，返回网页的文本内容",
     parameters: { type: "object", properties: { url: { type: "string", description: "目标 URL（必填），如 https://example.com/page" }, method: { type: "string", description: "HTTP 方法，可选 GET/POST/PUT/DELETE/PATCH，默认 GET" }, body: { type: "string", description: "请求体（仅 POST/PUT/PATCH 时需要），JSON 格式字符串" } }, required: ["url"] },
+  },
+}, {
+  type: "function",
+  function: {
+    name: "remember_fact",
+    description: "记住用户告知的长期事实（如姓名、偏好、职业、家人的名字、重要约定等，经得起时间检验的信息）。当用户明确说「记住/以后我叫XX/我是XX职业/我喜欢XX」或纠正你之前记得的事情时调用。事实会被持久保存并在后续对话中提供给模型。update=true 且 fact 已存在时会覆盖为最新表述；要忘记某条事实时传 forget=true。不要用它记一次性信息（如临时请求、当前对话内容）",
+    parameters: { type: "object", properties: { fact: { type: "string", description: "要记住的事实，一句话描述，如「用户叫张然，做后端开发」" }, forget: { type: "boolean", description: "可选：为 true 时删除这条事实（用于用户说「不用记了/删掉」时）" } }, required: ["fact"] },
   },
 }];
 
@@ -293,6 +301,8 @@ export async function executeBuiltinTool(
   mediaConfig?: { aiBinding: any; provider: string; model: string; baseUrl: string; apiKey: string; allKeys: string[]; maxRetries: number; responseConfig: any },
   browserBinding?: any,
   searchEngine?: string,
+  db?: D1Database | null,
+  userId?: string,
 ): Promise<MCPToolResult | null> {
   if (toolCall.function.name === "get_current_datetime") {
     const now = new Date();
@@ -362,6 +372,25 @@ export async function executeBuiltinTool(
     const body = typeof args.body === "string" ? args.body.trim() : undefined;
     const content = await executeFetchUrl(url, method, body);
     return { callId: toolCall.id, name: "fetch_url", content };
+  }
+  if (toolCall.function.name === "remember_fact") {
+    let args: Record<string, any> = {};
+    try { args = JSON.parse(toolCall.function.arguments || "{}"); } catch {}
+    const fact = (args.fact || "").trim();
+    if (!fact) return { callId: toolCall.id, name: "remember_fact", content: "事实内容为空", isError: true };
+    if (!db) return { callId: toolCall.id, name: "remember_fact", content: "事实存储不可用（未连接数据库）", isError: true };
+    if (!userId) return { callId: toolCall.id, name: "remember_fact", content: "无法确定记忆归属用户", isError: true };
+    try {
+      if (args.forget === true) {
+        const ok = await deleteFact(db, userId, fact);
+        return { callId: toolCall.id, name: "remember_fact", content: ok ? `已忘记这条事实：${fact}` : `未找到该事实（${fact}），可能是新内容` };
+      }
+      await saveFact(db, userId, fact);
+      return { callId: toolCall.id, name: "remember_fact", content: `✅ 已记住：${fact}` };
+    } catch (e: any) {
+      Logger.warn("[ai] remember_fact failed", { error: e?.message });
+      return { callId: toolCall.id, name: "remember_fact", content: `记忆保存失败: ${e?.message || "未知错误"}`, isError: true };
+    }
   }
   return null;
 }

@@ -2,7 +2,7 @@
   <div class="app-layout">
     <aside class="sidebar">
       <h1>🦞 ClawBot AI</h1>
-      <div class="version">v2.1</div>
+      <div class="version">v2.2</div>
       <nav>
         <div
           v-for="item in navItems"
@@ -141,6 +141,14 @@
         <MCPServerPanel />
       </section>
 
+      <section v-if="activeSection === 'scheduled'">
+        <ScheduledMessagesPanel />
+      </section>
+
+      <section v-if="activeSection === 'facts'">
+        <FactsPanel />
+      </section>
+
       <section v-if="activeSection === 'tools'">
         <ToolSettingsPanel :config="config" />
       </section>
@@ -166,6 +174,8 @@ import PendingVideosPanel from "../components/admin/PendingVideosPanel.vue";
 import GenerationLogsPanel from "../components/admin/GenerationLogsPanel.vue";
 import MCPServerPanel from "../components/admin/MCPServerPanel.vue";
 import ToolSettingsPanel from "../components/admin/ToolSettingsPanel.vue";
+import ScheduledMessagesPanel from "../components/admin/ScheduledMessagesPanel.vue";
+import FactsPanel from "../components/admin/FactsPanel.vue";
 
 const router = useRouter();
 
@@ -185,6 +195,8 @@ const navItems = [
   { key: "videos", label: "视频任务", icon: "🎬" },
   { key: "logs", label: "生成记录", icon: "📝" },
   { key: "mcp", label: "MCP 服务", icon: "🔌" },
+  { key: "scheduled", label: "定时消息", icon: "⏰" },
+  { key: "facts", label: "用户事实", icon: "🧠" },
   { key: "tools", label: "工具设置", icon: "🛠️" },
 ];
 const activeSection = ref("status");

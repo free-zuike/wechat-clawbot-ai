@@ -124,6 +124,29 @@ export async function initD1Tables(db: D1Database): Promise<void> {
       created_at INTEGER NOT NULL
     )
   `);
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS scheduled_messages (
+      id TEXT PRIMARY KEY,
+      account_id TEXT,
+      to_user_id TEXT,
+      context_token TEXT,
+      content TEXT NOT NULL,
+      run_at INTEGER NOT NULL,
+      repeat_interval INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'pending',
+      created_at INTEGER NOT NULL
+    )
+  `);
+  await db.exec(`CREATE INDEX IF NOT EXISTS idx_scheduled_status_run ON scheduled_messages(status, run_at)`);
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS user_facts (
+      user_id TEXT NOT NULL,
+      fact TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (user_id, fact)
+    )
+  `);
   Logger.info("[DO] D1 tables initialized");
 }
 

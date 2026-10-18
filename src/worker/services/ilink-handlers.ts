@@ -107,7 +107,7 @@ export async function handleSaveCreds(ctx: DOContext, request: Request): Promise
     await ctx.saveAccounts();
     const sessionToken = generateSessionToken();
     try {
-      await sendTextMessage(creds, userId, syncBuf || "", `👋 欢迎使用爪爪 AI 助手！\n\n📝 可用命令：\n• /图片 <描述> - 生成图片\n• /image <描述> - 生成图片\n• /视频 <描述> - 生成视频\n• /video <描述> - 生成视频\n• /reset - 重置对话\n\n💡 示例：\n/图片 赛博朋克城市\n/video 10秒 海浪拍岸\n\n🎨 以图生图（仅 Agnes Image 2.1 Flash）：\n先发一张图片，60秒内发送 /图片 <描述> 即可基于图片生成`);
+      await sendTextMessage(creds, userId, syncBuf || "", `👋 欢迎使用爪爪 AI 助手！\n\n📝 可用命令：\n• /图片 <描述> - 生成图片\n• /image <描述> - 生成图片\n• /视频 <描述> - 生成视频\n• /video <描述> - 生成视频\n• /提醒 <时间> <内容> - 定时提醒\n• /reset - 重置对话\n\n💡 示例：\n/图片 赛博朋克城市\n/video 10秒 海浪拍岸\n/提醒 30分钟后 该喝水了\n/提醒 每天早上8点 推送新闻\n\n🎨 以图生图（仅 Agnes Image 2.1 Flash）：\n先发一张图片，60秒内发送 /图片 <描述> 即可基于图片生成`);
     } catch {}
     return jsonResponse({ ok: true, sessionToken, accountId, totalAccounts: ctx.accounts.size });
   } catch (e: any) {
@@ -261,6 +261,51 @@ export async function handleStorePendingVideo(ctx: DOContext, request: Request):
   } catch (e: any) {
     return jsonResponse({ error: e.message }, 500);
   }
+}
+
+// 定时消息管理（后台面板 + 微信指令共用）
+export async function handleScheduledMessages(ctx: DOContext, request: Request): Promise<Response> {
+  await ctx.initSQLite();
+  if (!ctx.env?.DB) return jsonResponse({ ok: false, error: "D1 not configured" }, 500);
+
+  const url = new URL(request.url);
+  const method = request.method;
+
+  if (method === "POST") {
+    // 手动新增（后台面板）
+    const body = await request.json() as any;
+    if (!body.content || !body.runAt) return jsonResponse({ ok: false, error: "content 和 runAt 必填" }, 400);
+    if (!body.toUserId) return jsonResponse({ ok: false, error: "后台新增提醒必须指定接收用户（toUserId），否则到期无法投递" }, 400);
+    const { createScheduledMessage } = await import("./scheduled");
+    const id = await createScheduledMessage(ctx.env.DB, {
+      accountId: body.accountId || undefined,
+      toUserId: body.toUserId,
+      contextToken: body.contextToken || undefined,
+      content: String(body.content),
+      runAt: Number(body.runAt),
+      repeatInterval: body.repeatInterval ? Number(body.repeatInterval) : 0,
+    });
+    // 闹钟重排由 DO fetch 层统一处理（避免单实例单闹钟被覆盖）
+    return jsonResponse({ ok: true, id });
+  }
+
+  if (method === "DELETE") {
+    const { cancelScheduledMessage, clearScheduledMessages } = await import("./scheduled");
+    const id = url.searchParams.get("id");
+    if (id) {
+      const ok = await cancelScheduledMessage(ctx.env.DB, id);
+      return jsonResponse({ ok, id });
+    }
+    if (url.searchParams.get("all") === "true") {
+      const n = await clearScheduledMessages(ctx.env.DB);
+      return jsonResponse({ ok: true, cleared: n });
+    }
+    return jsonResponse({ ok: false, error: "缺少 id" }, 400);
+  }
+
+  const { listScheduledMessages } = await import("./scheduled");
+  const rows = await listScheduledMessages(ctx.env.DB, 200);
+  return jsonResponse({ ok: true, tasks: rows, total: rows.length });
 }
 
 export async function handlePendingVideos(ctx: DOContext, request: Request): Promise<Response> {

@@ -17,6 +17,7 @@ import { handleAIModels } from "../routes/models";
 import { handleChatMessages } from "../routes/chat-messages";
 import { handleMCP } from "../routes/mcp";
 import { handleSearchTest } from "../routes/search";
+import { handleScheduledMessagesRoute, handleFacts } from "../routes/scheduled-facts";
 import { json } from "../utils";
 import { metrics, runHealthChecks, errorTracker } from "../utils/metrics";
 import { applyRateLimit } from "../utils/security";
@@ -54,6 +55,8 @@ export class Router {
     { path: "/api/chat-messages", handler: handleChatMessages, rateLimit: true, rateLimitMax: 30 },
     { path: "/api/mcp", handler: handleMCP, rateLimit: true, rateLimitMax: 30 },
     { path: "/api/search-test", method: "GET", handler: handleSearchTest, rateLimit: true, rateLimitMax: 10 },
+    { path: "/api/scheduled-messages", handler: handleScheduledMessagesRoute, rateLimit: true, rateLimitMax: 30 },
+    { path: "/api/facts", handler: handleFacts, rateLimit: true, rateLimitMax: 30 },
   ];
 
   async route(request: Request, env: Env): Promise<Response> {

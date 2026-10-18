@@ -469,3 +469,60 @@ export async function refreshMCPTools(id: string): Promise<{ ok: boolean; tools:
   return apiFetch(`/api/mcp?id=${encodeURIComponent(id)}`, { method: "PUT", timeout: 30000 });
 }
 
+// ===== 定时消息 =====
+export interface ScheduledMessage {
+  id: string;
+  account_id: string | null;
+  to_user_id: string | null;
+  context_token: string | null;
+  content: string;
+  run_at: number;
+  repeat_interval: number;
+  status: string;
+  created_at: number;
+}
+
+export async function fetchScheduledMessages(): Promise<{ ok: boolean; tasks: ScheduledMessage[]; total: number }> {
+  return apiFetch("/api/scheduled-messages", { cancelable: "scheduled-messages" });
+}
+
+export async function createScheduledMessage(data: { content: string; runAt: number; repeatInterval?: number; toUserId?: string }): Promise<{ ok: boolean; id: string }> {
+  return apiFetch("/api/scheduled-messages", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteScheduledMessage(id: string): Promise<{ ok: boolean }> {
+  return apiFetch(`/api/scheduled-messages?id=${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+export async function clearAllScheduledMessages(): Promise<{ ok: boolean; cleared: number }> {
+  return apiFetch("/api/scheduled-messages?all=true", { method: "DELETE" });
+}
+
+// ===== 用户事实 =====
+export interface UserFact {
+  userId: string;
+  fact: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export async function fetchFacts(): Promise<{ ok: boolean; facts: UserFact[] }> {
+  return apiFetch("/api/facts", { cancelable: "facts" });
+}
+
+export async function addFact(userId: string, fact: string): Promise<{ ok: boolean }> {
+  return apiFetch("/api/facts", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ userId, fact }),
+  });
+}
+
+export async function removeFact(userId: string, fact: string): Promise<{ ok: boolean }> {
+  return apiFetch(`/api/facts?userId=${encodeURIComponent(userId)}&fact=${encodeURIComponent(fact)}`, { method: "DELETE" });
+}
+

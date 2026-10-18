@@ -8,6 +8,7 @@ import { getUpdates, sendTextMessage, sendTextChunked, sendTypingStatus, extract
 import { callAIWithContext, isImageGenerationRequest, isVideoGenerationRequest, extractMediaPrompt, extractImageSize, extractVideoDuration, extractUrl, generateImage, submitVideoTask } from "./ai";
 import { sendWebhook } from "./webhook";
 import { clearContextSQLite, clearContextD1 } from "./context";
+import { createScheduledMessage, listScheduledMessages, cancelScheduledMessage, clearScheduledMessages, nextPendingRunAt, claimDueMessages, requeueRecurring, parseReminderCommand, formatRunAt, formatRepeat } from "./scheduled";
 import type { ILinkCredentials, WeixinMessage } from "../types";
 import { initSQLite, initD1Tables, ensurePendingVideosColumns, ensureGenerationLogsColumns, loadCredentials, saveCredentials, clearCredentials, loadAllCredentials } from "./ilink-db";
 import { loadAIConfigFromKV } from "./ilink-config";
@@ -18,6 +19,7 @@ import {
   handleBroadcastImage, handleStoreImage, handleGetImage, handleStorePendingVideo,
   handlePendingVideos, handleLogGeneration, handleGenerationLogs,
   handleGetCreds, handleStatus, handleSQLiteContexts, handleFlush,
+  handleScheduledMessages,
   type DOContext,
 } from "./ilink-handlers";
 
@@ -236,6 +238,14 @@ export class ILinkConnectionDO2 implements DurableObject {
     if (url.pathname === "/log-generation") return handleLogGeneration(ctx, request);
     if (url.pathname === "/get-creds") return handleGetCreds(ctx);
     if (url.pathname === "/clear-creds") return handleClearCreds(ctx, request);
+    if (url.pathname === "/scheduled-messages") {
+      const resp = await handleScheduledMessages(ctx, request);
+      // 增删改后统一重排闹钟（DO 单实例单闹钟，必须指向最近一条待执行任务）
+      if (request.method === "POST" || request.method === "DELETE") {
+        await this.scheduleNextAlarm();
+      }
+      return resp;
+    }
 
     // 其它路径：必须已登录
     if (!this.ilinkCreds) {
@@ -267,6 +277,122 @@ export class ILinkConnectionDO2 implements DurableObject {
           headers: { "Content-Type": "application/json" },
         });
     }
+  }
+
+  // ========== DO Alarm：定时消息 ==========
+
+  // DO 的 alarm() 方法：到点唤醒后投递到期定时消息
+  // 说明：本项目 DO 因轮询常驻，Alarm 的价值是"精确到点"而不是省资源
+  async alarm(): Promise<void> {
+    try {
+      // 等凭证/账号从 DO storage 恢复完成，避免冷启动时 accounts 为空导致无法投递
+      await this.initPromise;
+      await this.initSQLite();
+      if (!this.env.DB) return;
+      const due = await claimDueMessages(this.env.DB);
+      if (due.length === 0) return;
+
+      for (const task of due) {
+        try {
+          let creds: ILinkCredentials | null = null;
+          if (task.account_id && this.accounts.has(task.account_id)) {
+            creds = this.accounts.get(task.account_id)!.creds;
+          } else {
+            creds = this.ilinkCreds || Array.from(this.accounts.values())[0]?.creds || null;
+          }
+          if (creds && task.to_user_id) {
+            await sendTextMessage(creds, task.to_user_id, task.context_token || "", `⏰ ${task.content}`);
+            Logger.info("[DO] Alarm delivered", { id: task.id, to: task.to_user_id?.slice(0, 10) });
+          } else {
+            Logger.warn("[DO] Alarm skipped (no creds/user)", { id: task.id, hasCreds: !!creds, hasUser: !!task.to_user_id });
+          }
+          await requeueRecurring(this.env.DB, task);
+        } catch (e: any) {
+          Logger.error("[DO] Alarm delivery error", { id: task.id, error: e?.message });
+        }
+      }
+      await this.scheduleNextAlarm();
+    } catch (e: any) {
+      Logger.error("[DO] Alarm handler error", { error: e?.message });
+    }
+  }
+
+  // 查询下一条待执行任务并 setAlarm（增删改后调用）
+  private async scheduleNextAlarm(): Promise<void> {
+    try {
+      if (!this.env.DB) return;
+      const next = await nextPendingRunAt(this.env.DB);
+      if (next !== null) {
+        await this.doState.storage.setAlarm(next);
+      } else {
+        await this.doState.storage.deleteAlarm();
+      }
+    } catch (e: any) {
+      Logger.warn("[DO] scheduleNextAlarm failed", { error: e?.message });
+    }
+  }
+
+  // ========== 定时消息命令处理（微信侧）==========
+
+  // 返回 true 表示已处理（不需要走 AI）
+  private async handleReminderCommandFromWeChat(text: string, from: string, ctxToken: string, useCreds: ILinkCredentials | null): Promise<boolean> {
+    if (!this.env.DB) return false;
+    const trimmed = (text || "").trim();
+    // 识别触发：斜杠指令（/提醒、/定时提醒、/闹钟、/提醒列表、/提醒取消、/提醒清空）或自然语言（提醒我/帮我提醒 + 可解析时间）
+    const isSlashForm = /^[\/／](提醒|定时提醒|闹钟|提醒列表|提醒取消|提醒清空)/.test(trimmed);
+    const isNaturalForm = /^(提醒我|帮我提醒|提醒)/.test(trimmed) && parseReminderCommand(trimmed).kind === "create";
+    if (!isSlashForm && !isNaturalForm) return false;
+
+    const cmd = parseReminderCommand(trimmed);
+    if (!cmd.kind) {
+      await sendTextMessage(useCreds!, from, ctxToken, `📌 提醒用法：\n/提醒 30分钟后 该喝水了\n/提醒 明天早上8点 开会\n/提醒 每天早上8点 推送新闻\n/提醒列表\n/提醒取消 <编号>`).catch(() => {});
+      return true;
+    }
+
+    try {
+      if (cmd.kind === "list") {
+        const rows = await listScheduledMessages(this.env.DB, 20);
+        if (rows.length === 0) {
+          await sendTextMessage(useCreds!, from, ctxToken, "📭 当前没有待执行的提醒").catch(() => {});
+        } else {
+          const lines = rows.map((r, i) => `${i + 1}. [${r.id.slice(3, 9)}] ${formatRunAt(r.run_at)}${r.repeat_interval ? `（${formatRepeat(r.repeat_interval)}）` : ""} — ${r.content.slice(0, 40)}`).join("\n");
+          await sendTextChunked(useCreds!, from, ctxToken, `📌 待执行提醒：\n${lines}\n\n用「/提醒取消 编号」删除`).catch(() => {});
+        }
+        return true;
+      }
+      if (cmd.kind === "cancel" && cmd.cancelId) {
+        const fullId = cmd.cancelId.startsWith("rm_") ? cmd.cancelId : `rm_${cmd.cancelId}`;
+        const ok = await cancelScheduledMessage(this.env.DB, fullId);
+        await sendTextMessage(useCreds!, from, ctxToken, ok ? "✅ 提醒已取消" : "❌ 未找到该提醒（编号看 /提醒列表）").catch(() => {});
+        if (ok) await this.scheduleNextAlarm();
+        return true;
+      }
+      if (cmd.kind === "clear") {
+        const n = await clearScheduledMessages(this.env.DB);
+        await sendTextMessage(useCreds!, from, ctxToken, n > 0 ? `✅ 已清空 ${n} 条提醒` : "📭 当前没有待执行提醒").catch(() => {});
+        await this.scheduleNextAlarm();
+        return true;
+      }
+      if (cmd.kind === "create" && cmd.runAt !== undefined) {
+        const id = await createScheduledMessage(this.env.DB, {
+          accountId: useCreds?.accountId,
+          toUserId: from,
+          contextToken: ctxToken,
+          content: cmd.content || "定时提醒",
+          runAt: cmd.runAt,
+          repeatInterval: cmd.repeatInterval || 0,
+        });
+        await this.scheduleNextAlarm();
+        const repeatTxt = cmd.repeatInterval ? `（${formatRepeat(cmd.repeatInterval)}）` : "";
+        await sendTextMessage(useCreds!, from, ctxToken, `✅ 已设置提醒\n⏰ ${formatRunAt(cmd.runAt)}${repeatTxt}\n📝 ${cmd.content}\n\n编号: ${id.slice(3, 9)}（/提醒取消 ${id.slice(3, 9)} 可取消）`).catch(() => {});
+        return true;
+      }
+    } catch (e: any) {
+      Logger.error("[DO] Reminder command error", { error: e?.message });
+      await sendTextMessage(useCreds!, from, ctxToken, `❌ 提醒设置失败: ${e?.message || "未知错误"}`).catch(() => {});
+      return true;
+    }
+    return true;
   }
 
   // ========== 拉取消息（立即返回，不长轮询）==========
@@ -892,6 +1018,13 @@ export class ILinkConnectionDO2 implements DurableObject {
         await this.markMessageProcessed(messageId);
         processedCount++;
         Logger.info("[DO] Context reset", { from });
+        return;
+      }
+
+      // 定时提醒命令（/提醒 ...）—— 命中则不走 AI
+      if (await this.handleReminderCommandFromWeChat(text, from, ctxToken, useCreds)) {
+        await this.markMessageProcessed(messageId);
+        processedCount++;
         return;
       }
 
