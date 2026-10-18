@@ -404,7 +404,7 @@ async function executeNewsNow(source: string, baseUrl?: string): Promise<string>
     // 未指定源时，并行拉取几个主流中文源，选最成功的一个
     const requested = (source || "").trim();
     const sourceList = requested ? [requested] : ["weibo", "zhihu", "baidu", "toutiao", "thepaper"];
-    const results = await Promise.all(
+    const results = await Promise.allSettled(
       sourceList.map(async (src) => {
         try {
           const resp = await fetch(`${base}/api/s?id=${encodeURIComponent(src)}`, {
@@ -414,7 +414,8 @@ async function executeNewsNow(source: string, baseUrl?: string): Promise<string>
               "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
               "Referer": base + "/",
             },
-            signal: AbortSignal.timeout(8000),
+            // NewsNow 聚合源偶发慢响应：单源放宽到 20s，其余源不受影响（allSettled 容忍个别失败）
+            signal: AbortSignal.timeout(20000),
           });
           if (!resp.ok) return null;
           const data = await resp.json() as any;
@@ -426,7 +427,10 @@ async function executeNewsNow(source: string, baseUrl?: string): Promise<string>
         } catch { return null; }
       })
     );
-    const ok = results.filter(Boolean) as Array<{ src: string; items: any[] }>;
+    const ok = results
+      .filter((r): r is PromiseFulfilledResult<{ src: string; items: any[] } | null> => r.status === "fulfilled")
+      .map((r) => r.value)
+      .filter((v): v is { src: string; items: any[] } => v !== null);
     if (ok.length > 0) {
       // 合并所有成功源的新闻，去重
       const seen = new Set<string>();
